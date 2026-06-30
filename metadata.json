@@ -1,0 +1,6 @@
+{
+  "name": "Service Station Satisfaction Recovery System",
+  "description": "A dashboard to upload customer complaints, track dissatisfaction levels, and guide service station agents through empathetic resolution workflows using Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
