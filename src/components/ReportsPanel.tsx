@@ -34,6 +34,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
   const [endDate, setEndDate] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
+  const [selectedStationCode, setSelectedStationCode] = useState<string>("Rathmalana");
 
   const handleResetFilters = () => {
     setStationFilter("all");
@@ -158,7 +159,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
   // Calculate Service Station Wise Metrics
   const stationMetrics = STATIONS.map((station) => {
-    const stationComplaints = complaints.filter(c => c.station === station.code);
+    const stationComplaints = filteredComplaints.filter(c => c.station === station.code);
     const total = stationComplaints.length;
     const resolved = stationComplaints.filter(c => c.status === "Resolved").length;
     const pending = total - resolved;
@@ -171,9 +172,9 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
     });
     const avgAging = total > 0 ? Math.round(totalAgingDays / total) : 0;
 
-    let avgAgingColor = "text-emerald-600 font-bold";
-    if (avgAging > 5 && avgAging <= 14) avgAgingColor = "text-amber-600 font-bold";
-    else if (avgAging > 14) avgAgingColor = "text-rose-600 font-bold";
+    let avgAgingColor = "text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded text-[10px]";
+    if (avgAging > 5 && avgAging <= 14) avgAgingColor = "text-amber-600 font-bold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded text-[10px]";
+    else if (avgAging > 14) avgAgingColor = "text-rose-600 font-bold bg-rose-50 border border-rose-100 px-2 py-0.5 rounded text-[10px]";
 
     return {
       code: station.code,
@@ -309,69 +310,504 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
     return acc;
   }, {} as Record<string, number>);
 
-  // Graphical PDF generator
+  // Graphical PDF generator - High fidelity native vector layout
   const handleDownloadPDF = async () => {
     setIsGeneratingPDF(true);
     try {
-      const element = document.getElementById("reports-dashboard-view");
-      if (!element) {
-        alert("Dashboard element not found");
-        return;
+      const pdf = new jsPDF("p", "mm", "a4");
+      
+      const primaryBlue = [30, 64, 175];
+      const darkSlate = [51, 65, 85];
+      const borderSlate = [226, 232, 240];
+      const textSlate = [71, 85, 105];
+
+      // Draw Header for Page
+      const drawPageHeader = (pageNum: number, totalPages: number) => {
+        pdf.setFillColor(30, 64, 175); // Royal Blue
+        pdf.rect(0, 0, 210, 24, "F");
+        
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(13);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text("IDEAL CUSTOMER EXPERIENCE RECOVERY REPORT", 12, 10);
+        
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(191, 219, 254);
+        pdf.text("SLA Metrics, Station Performance & Response Scorecards", 12, 16);
+        
+        pdf.setFontSize(8);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text(`Page ${pageNum} of ${totalPages}`, 198, 13, { align: "right" });
+      };
+
+      const drawPageFooter = () => {
+        pdf.setDrawColor(226, 232, 240);
+        pdf.setLineWidth(0.3);
+        pdf.line(12, 282, 198, 282);
+        
+        pdf.setFont("helvetica", "italic");
+        pdf.setFontSize(7);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text("Ideal Group Customer Experience Recovery Engine • Confidential Report", 12, 287);
+        pdf.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 198, 287, { align: "right" });
+      };
+
+      const totalPages = 3;
+
+      // ==========================================
+      // PAGE 1: Executive KPI Summary & Visual Charts
+      // ==========================================
+      drawPageHeader(1, totalPages);
+
+      // Section Title
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text("EXECUTIVE PERFORMANCE SCORECARD", 12, 33);
+
+      // Metadata card
+      pdf.setFillColor(248, 250, 252); // light slate bg
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(12, 37, 186, 22, "FD");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text("REPORT FILTER METADATA", 16, 42);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(`Station Filter:  ${stationFilter === "all" ? "All Service Stations" : stationFilter}`, 16, 47);
+      pdf.text(`Category Filter: ${categoryFilter === "all" ? "All Categories" : categoryFilter}`, 16, 52);
+      pdf.text(`Status Filter:   ${statusFilter === "all" ? "All Operational Statuses" : statusFilter}`, 90, 47);
+      pdf.text(`Date Range:     ${startDate || "Beginning of time"} to ${endDate || "Today"}`, 90, 52);
+      pdf.text(`Total Records:  ${totalInScope} complaints`, 150, 47);
+
+      // 3 KPI Cards at Y=65
+      const cardW = 58;
+      const cardH = 22;
+      const cardY = 64;
+
+      // Card 1: Quick Resolution (Green)
+      pdf.setFillColor(236, 253, 245);
+      pdf.setDrawColor(167, 243, 208);
+      pdf.rect(12, cardY, cardW, cardH, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(6, 95, 70);
+      pdf.text("Quick (0-5 Days)", 16, cardY + 5);
+      pdf.setFontSize(16);
+      const greenPct = totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0;
+      pdf.text(`${greenCount}`, 16, cardY + 13);
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${greenPct}% of total complaints`, 16, cardY + 18);
+
+      // Card 2: Standard Processing (Yellow)
+      pdf.setFillColor(254, 243, 199);
+      pdf.setDrawColor(253, 230, 138);
+      pdf.rect(12 + cardW + 6, cardY, cardW, cardH, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(146, 64, 14);
+      pdf.text("Standard (5-14 Days)", 12 + cardW + 10, cardY + 5);
+      pdf.setFontSize(16);
+      const yellowPct = totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0;
+      pdf.text(`${yellowCount}`, 12 + cardW + 10, cardY + 13);
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${yellowPct}% of total complaints`, 12 + cardW + 10, cardY + 18);
+
+      // Card 3: Critical Overdue (Red)
+      pdf.setFillColor(254, 242, 242);
+      pdf.setDrawColor(254, 202, 202);
+      pdf.rect(12 + cardW * 2 + 12, cardY, cardW, cardH, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(153, 27, 27);
+      pdf.text("Critical (14+ Days)", 12 + cardW * 2 + 16, cardY + 5);
+      pdf.setFontSize(16);
+      const redPct = totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0;
+      pdf.text(`${redCount}`, 12 + cardW * 2 + 16, cardY + 13);
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${redPct}% high-priority overdue`, 12 + cardW * 2 + 16, cardY + 18);
+
+      // Visual Graphical progress charts Section at Y=92
+      const chartY = 92;
+      const chartW = 58;
+      const chartH = 75;
+
+      // CHART A: SLA Proportions (x=12)
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(12, chartY, chartW, chartH, "FD");
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("SLA AGING METRICS", 16, chartY + 6);
+      pdf.line(16, chartY + 9, 12 + chartW - 4, chartY + 9);
+
+      // Green bar
+      pdf.setFontSize(7);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`Quick (0-5 Days): ${greenCount} (${greenPct}%)`, 16, chartY + 16);
+      pdf.setFillColor(241, 245, 249);
+      pdf.rect(16, chartY + 18, 50, 4, "F");
+      if (greenPct > 0) {
+        pdf.setFillColor(16, 185, 129); // emerald-500
+        pdf.rect(16, chartY + 18, (greenPct / 100) * 50, 4, "F");
       }
-      
-      // Selectively hide buttons and controls that should not appear in a printed PDF report
-      const elementsToHide = element.querySelectorAll(".pdf-hide");
-      elementsToHide.forEach(el => el.classList.add("hidden"));
-      
-      // Temporarily expand height or make scrollable containers fully visible so everything is captured
-      const scrollableTables = element.querySelectorAll(".overflow-y-auto");
-      scrollableTables.forEach(el => {
-        const htmlEl = el as HTMLElement;
-        htmlEl.classList.add("overflow-visible");
-        htmlEl.style.maxHeight = "none";
-      });
-      
-      const canvas = await html2canvas(element, {
-        scale: 2, // High resolution
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#f8fafc", // nice slate bg
-      });
-      
-      // Restore hidden elements and scroll heights
-      elementsToHide.forEach(el => el.classList.remove("hidden"));
-      scrollableTables.forEach(el => {
-        const htmlEl = el as HTMLElement;
-        htmlEl.classList.remove("overflow-visible");
-        htmlEl.style.maxHeight = "";
-      });
-      
-      const imgData = canvas.toDataURL("image/jpeg", 0.95);
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-      
-      const imgWidth = 210; // A4 width in mm
-      const pageHeight = 295; // A4 height in mm
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-      
-      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      
-      while (heightLeft >= 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+
+      // Yellow bar
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`Standard (5-14 Days): ${yellowCount} (${yellowPct}%)`, 16, chartY + 28);
+      pdf.setFillColor(241, 245, 249);
+      pdf.rect(16, chartY + 30, 50, 4, "F");
+      if (yellowPct > 0) {
+        pdf.setFillColor(245, 158, 11); // amber-500
+        pdf.rect(16, chartY + 30, (yellowPct / 100) * 50, 4, "F");
       }
+
+      // Red bar
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`Critical (14+ Days): ${redCount} (${redPct}%)`, 16, chartY + 40);
+      pdf.setFillColor(241, 245, 249);
+      pdf.rect(16, chartY + 42, 50, 4, "F");
+      if (redPct > 0) {
+        pdf.setFillColor(239, 68, 68); // red-500
+        pdf.rect(16, chartY + 42, (redPct / 100) * 50, 4, "F");
+      }
+
+      // Small legend explanation
+      pdf.setFontSize(7);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(148, 163, 184);
+      pdf.text("Represents actual day differences", 16, chartY + 58);
+      pdf.text("between data entry and resolution.", 16, chartY + 62);
+
+
+      // CHART B: CSAT Breakdown (x=12+64=76)
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(12 + chartW + 6, chartY, chartW, chartH, "FD");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("CSAT BREAKDOWN", 12 + chartW + 10, chartY + 6);
+      pdf.line(12 + chartW + 10, chartY + 9, 12 + chartW * 2 + 2, chartY + 9);
+
+      pdf.setFontSize(7);
+      const levels: SatisfactionLevel[] = ["Very Dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very Satisfied"];
+      levels.forEach((lvl, idx) => {
+        const count = satisfactionCounts[lvl] || 0;
+        const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
+        const curY = chartY + 16 + idx * 11;
+        
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(`${lvl}: ${count} (${pct}%)`, 12 + chartW + 10, curY);
+        
+        pdf.setFillColor(241, 245, 249);
+        pdf.rect(12 + chartW + 10, curY + 2, 50, 3, "F");
+        
+        if (pct > 0) {
+          let col = [148, 163, 184]; // neutral gray
+          if (lvl.includes("Very Satisfied")) col = [5, 150, 105]; // dark green
+          else if (lvl.includes("Satisfied")) col = [16, 185, 129]; // green
+          else if (lvl.includes("Very Dissatisfied")) col = [220, 38, 38]; // red
+          else if (lvl.includes("Dissatisfied")) col = [245, 158, 11]; // orange
+          
+          pdf.setFillColor(col[0], col[1], col[2]);
+          pdf.rect(12 + chartW + 10, curY + 2, (pct / 100) * 50, 3, "F");
+        }
+      });
+
+
+      // CHART C: Resolution Velocity (x=12+128=140)
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(12 + chartW * 2 + 12, chartY, chartW, chartH, "FD");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("CURRENT STATUS", 12 + chartW * 2 + 16, chartY + 6);
+      pdf.line(12 + chartW * 2 + 16, chartY + 9, 12 + chartW * 3 + 8, chartY + 9);
+
+      pdf.setFontSize(7);
+      const statusLevels = ["Pending", "In Progress", "Contacted", "Resolved"];
+      statusLevels.forEach((status, idx) => {
+        const count = statusCounts[status] || 0;
+        const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
+        const curY = chartY + 16 + idx * 13;
+
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(`${status}: ${count} (${pct}%)`, 12 + chartW * 2 + 16, curY);
+
+        pdf.setFillColor(241, 245, 249);
+        pdf.rect(12 + chartW * 2 + 16, curY + 2, 50, 3.5, "F");
+
+        if (pct > 0) {
+          let col = [100, 116, 139];
+          if (status === "Resolved") col = [16, 185, 129];
+          else if (status === "Contacted") col = [14, 165, 233];
+          else if (status === "In Progress") col = [245, 158, 11];
+          else if (status === "Pending") col = [239, 68, 68];
+
+          pdf.setFillColor(col[0], col[1], col[2]);
+          pdf.rect(12 + chartW * 2 + 16, curY + 2, (pct / 100) * 50, 3.5, "F");
+        }
+      });
+
+
+      // Summary Insights and Recovery Rate at Y=175
+      const insightsY = 173;
+      pdf.setFillColor(248, 250, 252);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(12, insightsY, 186, 100, "FD");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("EXECUTIVE KEY INSIGHTS & SLA EVALUATIONS", 18, insightsY + 7);
+      pdf.line(18, insightsY + 10, 192, insightsY + 10);
+
+      const resolvedCount = statusCounts["Resolved"] || 0;
+      const recoveryRate = totalInScope > 0 ? Math.round((resolvedCount / totalInScope) * 100) : 0;
+
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(51, 65, 85);
+
+      const bullets = [
+        `• Total customer complaints identified and filtered within this reporting period: ${totalInScope}.`,
+        `• Overall Recovery Rate is ${recoveryRate}% (${resolvedCount} cases fully resolved out of ${totalInScope}).`,
+        `• Critical Overdue SLA alerts (> 14 days) are currently at ${redCount} unresolved cases.`,
+        `• Customer satisfaction surveys indicate that ${satisfactionCounts["Very Satisfied"] + satisfactionCounts["Satisfied"]} customers are Satisfied/Very Satisfied,`,
+        `  while ${satisfactionCounts["Very Dissatisfied"] + satisfactionCounts["Dissatisfied"]} customers remain Dissatisfied with the service station response.`,
+        `• Average turnaround response speed: Quick Resolution (0-5 days) is achieved in ${greenPct}% of incoming logs.`,
+        `• Station-level breakdowns and individual compliance tickets are outlined in detail on pages 2 and 3.`
+      ];
+
+      bullets.forEach((bullet, bidx) => {
+        pdf.text(bullet, 18, insightsY + 18 + bidx * 9);
+      });
+
+      // Highlight Box on the right of insights
+      pdf.setFillColor(30, 64, 175);
+      pdf.rect(156, insightsY + 54, 36, 38, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.text(`${recoveryRate}%`, 174, insightsY + 72, { align: "center" });
+      pdf.setFontSize(8);
+      pdf.text("RECOVERY RATE", 174, insightsY + 82, { align: "center" });
+
+      drawPageFooter();
+
+      // ==========================================
+      // PAGE 2: Service Station Performance Matrix
+      // ==========================================
+      pdf.addPage();
+      drawPageHeader(2, totalPages);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text("SERVICE STATION PERFORMANCE SCORECARD", 12, 33);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("This table outlines active complaint volume, recovery rates, and average resolution times for each Service Station.", 12, 38);
+
+      // Station Performance Table
+      let tableY = 44;
       
-      pdf.save(`CX_Graphical_Performance_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+      // Draw Table Header Background
+      pdf.setFillColor(51, 65, 85); // dark slate
+      pdf.rect(12, tableY, 186, 8, "F");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("SERVICE STATION", 16, tableY + 5);
+      pdf.text("LOCATION NAME", 45, tableY + 5);
+      pdf.text("CASE COUNT", 105, tableY + 5, { align: "center" });
+      pdf.text("RESOLVED", 130, tableY + 5, { align: "center" });
+      pdf.text("RECOVERY RATE", 160, tableY + 5, { align: "center" });
+      pdf.text("AVG SLA (DAYS)", 188, tableY + 5, { align: "center" });
+
+      tableY += 8;
+
+      stationMetrics.forEach((sm, idx) => {
+        // Alternating row color
+        if (idx % 2 === 0) {
+          pdf.setFillColor(248, 250, 252);
+        } else {
+          pdf.setFillColor(255, 255, 255);
+        }
+        pdf.rect(12, tableY, 186, 11, "F");
+        
+        pdf.setDrawColor(241, 245, 249);
+        pdf.line(12, tableY + 11, 198, tableY + 11);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(sm.code, 16, tableY + 7);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(sm.name, 45, tableY + 7);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.text(`${sm.total}`, 105, tableY + 7, { align: "center" });
+
+        pdf.setFont("helvetica", "normal");
+        pdf.text(`${sm.resolved}`, 130, tableY + 7, { align: "center" });
+
+        // Highlight Recovery Rate
+        if (sm.rate >= 80) {
+          pdf.setTextColor(5, 150, 105); // green
+          pdf.setFont("helvetica", "bold");
+        } else if (sm.rate < 50) {
+          pdf.setTextColor(220, 38, 38); // red
+          pdf.setFont("helvetica", "bold");
+        } else {
+          pdf.setTextColor(30, 41, 59); // dark text
+        }
+        pdf.text(`${sm.rate}%`, 160, tableY + 7, { align: "center" });
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(`${sm.avgAging}`, 188, tableY + 7, { align: "center" });
+
+        tableY += 11;
+      });
+
+      drawPageFooter();
+
+      // ==========================================
+      // PAGE 3: Detailed Case Recovery Logs
+      // ==========================================
+      pdf.addPage();
+      drawPageHeader(3, totalPages);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text("DETAILED CASE RECOVERY ACTION LOGS", 12, 33);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Below lists individual recovery tickets matching selected criteria, sorted by aging severity.", 12, 38);
+
+      // Detailed Logs Table
+      let logTableY = 44;
+      pdf.setFillColor(30, 64, 175); // Royal Blue
+      pdf.rect(12, logTableY, 186, 8, "F");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("CASE ID", 15, logTableY + 5.5);
+      pdf.text("CUSTOMER NAME", 38, logTableY + 5.5);
+      pdf.text("SERVICE STATION", 80, logTableY + 5.5);
+      pdf.text("SLA FEEDBACK STATUS", 112, logTableY + 5.5);
+      pdf.text("AGING", 163, logTableY + 5.5, { align: "center" });
+      pdf.text("STATUS", 186, logTableY + 5.5, { align: "center" });
+
+      logTableY += 8;
+
+      // Slice to list the top 20 complaints on Page 3 to fit perfectly on the page
+      const sliceOfComplaints = filteredComplaints.slice(0, 19);
+
+      sliceOfComplaints.forEach((c, idx) => {
+        if (idx % 2 === 0) {
+          pdf.setFillColor(248, 250, 252);
+        } else {
+          pdf.setFillColor(255, 255, 255);
+        }
+        pdf.rect(12, logTableY, 186, 11, "F");
+
+        pdf.setDrawColor(241, 245, 249);
+        pdf.line(12, logTableY + 11, 198, logTableY + 11);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text(c.id, 15, logTableY + 7);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(15, 23, 42);
+        // Truncate customer name if long
+        const name = c.customerName.length > 20 ? c.customerName.substring(0, 20) + "..." : c.customerName;
+        pdf.text(name, 38, logTableY + 7);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(c.station, 80, logTableY + 7);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(30, 64, 175);
+        pdf.text(c.feedbackStatus || "Follow Up Required", 112, logTableY + 7);
+
+        // Aging
+        const agingInfo = getComplaintAging(c);
+        if (agingInfo.days >= 14) {
+          pdf.setTextColor(220, 38, 38);
+          pdf.setFont("helvetica", "bold");
+        } else if (agingInfo.days >= 5) {
+          pdf.setTextColor(217, 119, 6);
+          pdf.setFont("helvetica", "bold");
+        } else {
+          pdf.setTextColor(5, 150, 105);
+          pdf.setFont("helvetica", "bold");
+        }
+        pdf.text(`${agingInfo.days} Days`, 163, logTableY + 7, { align: "center" });
+
+        // Operational Status color
+        if (c.status === "Resolved") {
+          pdf.setFillColor(209, 250, 229); // green bg
+          pdf.rect(176, logTableY + 2.5, 20, 6, "F");
+          pdf.setTextColor(6, 95, 70);
+        } else if (c.status === "In Progress") {
+          pdf.setFillColor(254, 243, 199); // orange bg
+          pdf.rect(176, logTableY + 2.5, 20, 6, "F");
+          pdf.setTextColor(146, 64, 14);
+        } else {
+          pdf.setFillColor(254, 242, 242); // red bg
+          pdf.rect(176, logTableY + 2.5, 20, 6, "F");
+          pdf.setTextColor(153, 27, 27);
+        }
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(6.5);
+        pdf.text(c.status, 186, logTableY + 6.5, { align: "center" });
+
+        logTableY += 11;
+      });
+
+      if (filteredComplaints.length > 19) {
+        pdf.setFont("helvetica", "italic");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(`... and ${filteredComplaints.length - 19} more records matching filters (Download detailed CSV logs for all active records)`, 12, logTableY + 6);
+      }
+
+      drawPageFooter();
+
+      // Save PDF
+      pdf.save(`Ideal_CX_Graphical_Performance_Report_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (error) {
-      console.error("Error generating PDF:", error);
+      console.error("Error generating Native PDF:", error);
+      alert("There was an issue generating your PDF. Please try again.");
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -609,6 +1045,262 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
           </span>
         </div>
 
+        {/* INTERACTIVE SERVICE STATION PERFORMANCE SCORECARD */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-100/50 p-4 rounded-2xl border border-slate-200">
+          {/* Left Column: Service Station Table List */}
+          <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                <div>
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <MapPin className="h-4 w-4 text-blue-600" />
+                    Service Station Performance
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                    Click any Service Station below to view its dynamic aging graphics & customer satisfaction score.
+                  </p>
+                </div>
+                <button
+                  id="btn-download-station-csv"
+                  type="button"
+                  onClick={handleDownloadStationReport}
+                  className="pdf-hide bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-[10px] py-1 px-2.5 rounded transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="h-3 w-3" />
+                  Download CSV
+                </button>
+              </div>
+
+              <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+                      <th className="py-2.5 px-3">Service Station</th>
+                      <th className="py-2.5 px-3 text-center">Case Count</th>
+                      <th className="py-2.5 px-3 text-center">Recovery Rate</th>
+                      <th className="py-2.5 px-3 text-right">Avg SLA</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {stationMetrics.map((sm) => {
+                      const isSelected = selectedStationCode === sm.code;
+                      return (
+                        <tr 
+                          key={sm.code} 
+                          onClick={() => setSelectedStationCode(sm.code)}
+                          className={`cursor-pointer transition-all ${
+                            isSelected 
+                              ? "bg-blue-50/70 border-l-4 border-l-blue-600" 
+                              : "hover:bg-slate-50/50"
+                          }`}
+                        >
+                          <td className="py-2.5 px-3">
+                            <p className="font-bold text-slate-800">{sm.code}</p>
+                            <p className="text-[9px] text-slate-400 font-bold">{sm.name}</p>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="font-black text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200 text-[11px]">{sm.total}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <p className="font-black text-blue-600 text-[11px]">{sm.rate}%</p>
+                            <p className="text-[9px] text-slate-400 font-semibold">{sm.resolved} of {sm.total}</p>
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <span className={sm.avgAgingColor}>
+                              {sm.avgAging} {sm.avgAging === 1 ? "day" : "days"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <p className="text-[9px] text-slate-400 font-bold mt-2.5 pt-2 border-t border-slate-100">
+              Select other filters above to slice data across all service stations dynamically.
+            </p>
+          </div>
+
+          {/* Right Column: Detailed Graphic Breakdown Panel */}
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col justify-between">
+            {(() => {
+              const selectedStation = STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
+              const activeStationComplaints = filteredComplaints.filter(c => c.station === selectedStation.code);
+              const activeStationTotal = activeStationComplaints.length;
+
+              // Aging breakdown
+              let stationGreenCount = 0;
+              let stationYellowCount = 0;
+              let stationRedCount = 0;
+
+              activeStationComplaints.forEach((c) => {
+                const { days } = getComplaintAging(c);
+                if (days <= 5) stationGreenCount++;
+                else if (days <= 14) stationYellowCount++;
+                else stationRedCount++;
+              });
+
+              const stationGreenPct = activeStationTotal > 0 ? Math.round((stationGreenCount / activeStationTotal) * 100) : 0;
+              const stationYellowPct = activeStationTotal > 0 ? Math.round((stationYellowCount / activeStationTotal) * 100) : 0;
+              const stationRedPct = activeStationTotal > 0 ? Math.round((stationRedCount / activeStationTotal) * 100) : 0;
+
+              // Satisfaction breakdown
+              const stationVerySatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Satisfied").length;
+              const stationSatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Satisfied").length;
+              const stationNeutral = activeStationComplaints.filter(c => c.currentSatisfaction === "Neutral").length;
+              const stationDissatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Dissatisfied").length;
+              const stationVeryDissatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Dissatisfied").length;
+
+              const stationSatisfiedTotal = stationVerySatisfied + stationSatisfied;
+              const stationDissatisfiedTotal = stationVeryDissatisfied + stationDissatisfied;
+
+              const stationSatisfactionRate = activeStationTotal > 0 ? Math.round((stationSatisfiedTotal / activeStationTotal) * 100) : 0;
+              const stationDissatisfiedRate = activeStationTotal > 0 ? Math.round((stationDissatisfiedTotal / activeStationTotal) * 100) : 0;
+              const stationNeutralRate = activeStationTotal > 0 ? Math.round((stationNeutral / activeStationTotal) * 100) : 0;
+
+              return (
+                <div className="space-y-4 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-2">
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1">
+                          <Activity className="h-3.5 w-3.5 text-blue-600" />
+                          {selectedStation.code} Graphics Breakdown
+                        </h4>
+                        <p className="text-[9px] text-slate-400 font-bold">{selectedStation.name}</p>
+                      </div>
+                      <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+                        {activeStationTotal} Case{activeStationTotal === 1 ? "" : "s"}
+                      </span>
+                    </div>
+
+                    {activeStationTotal === 0 ? (
+                      <div className="py-12 text-center bg-slate-50/50 rounded-lg border border-dashed border-slate-200 my-4">
+                        <p className="text-xs font-bold text-slate-400">No matching cases for this station.</p>
+                        <p className="text-[9px] text-slate-400 mt-1">Adjust filters or select another station.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        
+                        {/* SLA Aging Graphic Bar Chart */}
+                        <div>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
+                            SLA Aging breakdown
+                          </p>
+                          <div className="space-y-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                            {/* Green */}
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
+                                <span>0-5 Days (Quick)</span>
+                                <span className="font-black text-emerald-600">{stationGreenCount} ({stationGreenPct}%)</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                                <div 
+                                  className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${stationGreenPct}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Yellow */}
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
+                                <span>5-14 Days (Standard)</span>
+                                <span className="font-black text-amber-600">{stationYellowCount} ({stationYellowPct}%)</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                                <div 
+                                  className="bg-amber-500 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${stationYellowPct}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Red */}
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
+                                <span>14+ Days (Critical)</span>
+                                <span className="font-black text-rose-600">{stationRedCount} ({stationRedPct}%)</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                                <div 
+                                  className="bg-rose-500 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${stationRedPct}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Satisfaction & Dissatisfied Rates */}
+                        <div className="pt-2 border-t border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">
+                            CSAT & Dissatisfaction Metrics
+                          </p>
+                          <div className="grid grid-cols-2 gap-2 mb-2">
+                            <div className="bg-emerald-50/50 border border-emerald-100 rounded-lg p-2 text-center">
+                              <p className="text-[9px] font-black text-emerald-800 uppercase">Satisfaction Rate</p>
+                              <p className="text-base font-black text-emerald-600 mt-0.5">{stationSatisfactionRate}%</p>
+                              <p className="text-[8px] font-bold text-emerald-500">{stationSatisfiedTotal} cases</p>
+                            </div>
+
+                            <div className="bg-rose-50/50 border border-rose-100 rounded-lg p-2 text-center">
+                              <p className="text-[9px] font-black text-rose-800 uppercase">Dissatisfied Rate</p>
+                              <p className="text-base font-black text-rose-600 mt-0.5">{stationDissatisfiedRate}%</p>
+                              <p className="text-[8px] font-bold text-rose-500">{stationDissatisfiedTotal} cases</p>
+                            </div>
+                          </div>
+
+                          {/* Satisfaction/Dissatisfied Graphical Progress Meter */}
+                          <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                            {/* Satisfaction rate bar */}
+                            <div>
+                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
+                                <span>Satisfied (CSAT)</span>
+                                <span className="font-black text-emerald-600">{stationSatisfactionRate}%</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
+                                <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: `${stationSatisfactionRate}%` }} />
+                              </div>
+                            </div>
+
+                            {/* Dissatisfied rate bar */}
+                            <div>
+                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
+                                <span>Dissatisfied</span>
+                                <span className="font-black text-rose-600">{stationDissatisfiedRate}%</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
+                                <div className="bg-rose-500 h-1.5 rounded-full" style={{ width: `${stationDissatisfiedRate}%` }} />
+                              </div>
+                            </div>
+
+                            {/* Neutral rate bar */}
+                            <div>
+                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
+                                <span>Neutral</span>
+                                <span className="font-black text-slate-500">{stationNeutralRate}%</span>
+                              </div>
+                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
+                                <div className="bg-slate-400 h-1.5 rounded-full" style={{ width: `${stationNeutralRate}%` }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-[8px] text-slate-400 font-bold border-t border-slate-100 pt-1.5 mt-2">
+                    Data updates reactively with filters. Click any station in the table to swap metrics.
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
         {/* Aging Metric Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
@@ -751,7 +1443,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
             <div>
               <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-wider mb-3.5 border-b border-slate-100 pb-1.5">
-                Operational Resolution Velocity
+                Current Status
               </h4>
               <div className="space-y-3">
                 {statusLevels.map((level) => {
@@ -792,10 +1484,10 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
         </div>
 
         {/* Tabular Reports */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="grid grid-cols-1 gap-5">
           
-          {/* Left Column: Detailed Aging Log & Download */}
-          <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          {/* Full-width Column: Detailed Aging Log & Download */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div>
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
@@ -823,7 +1515,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                   <tr className="border-b border-slate-100 bg-slate-50/30 text-[9px] font-black text-slate-500 uppercase tracking-wider">
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Customer</th>
-                    <th className="py-3 px-4">Station</th>
+                    <th className="py-3 px-4">Service Station</th>
                     <th className="py-3 px-4">Received Date & Time</th>
                     <th className="py-3 px-4">SLA Feedback</th>
                     <th className="py-3 px-4">Final Status</th>
@@ -881,65 +1573,6 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                       );
                     })
                   )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Right Column: Station-wise Summary & Download */}
-          <div className="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div>
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <MapPin className="h-4.5 w-4.5 text-blue-600" />
-                  Service Station Performance
-                </h3>
-                <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                  Total volumes, recovery rates, and averages.
-                </p>
-              </div>
-              <button
-                id="btn-download-station-csv"
-                type="button"
-                onClick={handleDownloadStationReport}
-                className="pdf-hide bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-[10px] py-1 px-2 rounded transition-all flex items-center gap-1 cursor-pointer"
-              >
-                <Download className="h-3 w-3" />
-                Download CSV
-              </button>
-            </div>
-
-            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/30 text-[9px] font-black text-slate-500 uppercase tracking-wider">
-                    <th className="py-3 px-4">Station</th>
-                    <th className="py-3 px-4 text-center">Volume</th>
-                    <th className="py-3 px-4 text-center">Recovery</th>
-                    <th className="py-3 px-4 text-right">Avg SLA</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {stationMetrics.map((sm) => (
-                    <tr key={sm.code} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-3 px-4">
-                        <p className="font-bold text-slate-800">{sm.code}</p>
-                        <p className="text-[9px] text-slate-400 font-semibold">{sm.name}</p>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <span className="font-bold text-slate-700">{sm.total}</span>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <p className="font-black text-blue-600 text-[11px]">{sm.rate}%</p>
-                        <p className="text-[9px] text-slate-400 font-bold">{sm.resolved} of {sm.total}</p>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <span className={sm.avgAgingColor}>
-                          {sm.avgAging} {sm.avgAging === 1 ? "day" : "days"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
             </div>
