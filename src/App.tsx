@@ -31,7 +31,17 @@ import ReportsPanel from "./components/ReportsPanel";
 
 export default function App() {
   // State
-  const [currentUser, setCurrentUser] = useState<{ role: "admin" | "agent" | "callcenter"; station?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ role: "admin" | "agent" | "callcenter"; station?: string } | null>(() => {
+    const savedUser = localStorage.getItem("ideal_group_current_user");
+    if (savedUser) {
+      try {
+        return JSON.parse(savedUser);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"analytics" | "stations" | "upload" | "reports">("analytics");
@@ -90,7 +100,11 @@ export default function App() {
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  // Load complaints from localStorage or use defaults
+  // Supabase Database Connection State
+  const [supabaseActive, setSupabaseActive] = useState<boolean | null>(null);
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
+
+  // Load complaints on mount with optimistic local fallback
   useEffect(() => {
     const saved = localStorage.getItem("ideal_group_complaints");
     if (saved) {
@@ -102,19 +116,66 @@ export default function App() {
       }
     } else {
       setComplaints(DEMO_COMPLAINTS);
-      localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
     }
+
+    const fetchComplaints = async () => {
+      try {
+        const res = await fetch("/api/complaints");
+        const data = await res.json();
+        if (data.complaints) {
+          setComplaints(data.complaints);
+          localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+        }
+        setSupabaseActive(data.isSupabaseActive);
+        if (!data.isSupabaseActive && data.error) {
+          setSupabaseError(data.error);
+        } else {
+          setSupabaseError(null);
+        }
+      } catch (e: any) {
+        console.error("Failed to load complaints from backend:", e);
+        setSupabaseActive(false);
+        setSupabaseError(e.message);
+      }
+    };
+
+    fetchComplaints();
   }, []);
 
-  // Handle saving to localStorage on complaints change
-  const saveComplaints = (updatedList: Complaint[]) => {
+  // Handle saving to localStorage and syncing with Supabase on complaints change
+  const saveComplaints = async (updatedList: Complaint[]) => {
     setComplaints(updatedList);
     localStorage.setItem("ideal_group_complaints", JSON.stringify(updatedList));
+
+    try {
+      const res = await fetch("/api/complaints", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ complaints: updatedList })
+      });
+      const data = await res.json();
+      setSupabaseActive(data.isSupabaseActive);
+      if (!data.isSupabaseActive && data.error) {
+        setSupabaseError(data.error);
+      } else {
+        setSupabaseError(null);
+      }
+      if (data.complaints) {
+        setComplaints(data.complaints);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      }
+    } catch (e: any) {
+      console.error("Failed to sync complaints with server:", e);
+      setSupabaseActive(false);
+      setSupabaseError(e.message);
+    }
   };
 
   // Login handler
   const handleLoginSuccess = (role: "admin" | "agent" | "callcenter", stationCode?: string) => {
-    setCurrentUser({ role, station: stationCode });
+    const userObj = { role, station: stationCode };
+    setCurrentUser(userObj);
+    localStorage.setItem("ideal_group_current_user", JSON.stringify(userObj));
     // If agent, default station filter to their station
     if (role === "agent" && stationCode) {
       setStationFilter(stationCode);
@@ -131,6 +192,7 @@ export default function App() {
   // Logout handler
   const handleLogout = () => {
     setCurrentUser(null);
+    localStorage.removeItem("ideal_group_current_user");
     setSelectedComplaintId(null);
   };
 
@@ -217,18 +279,44 @@ export default function App() {
   };
 
   // Handle clearing all complaints
-  const handleDeleteAllComplaints = () => {
-    saveComplaints([]);
+  const handleDeleteAllComplaints = async () => {
+    setComplaints([]);
+    localStorage.setItem("ideal_group_complaints", JSON.stringify([]));
     setSelectedComplaintId(null);
     setDeletingId(null);
     setShowDeleteAllConfirm(false);
+
+    try {
+      const res = await fetch("/api/complaints/clear", { method: "POST" });
+      const data = await res.json();
+      setSupabaseActive(data.isSupabaseActive);
+      if (data.complaints) {
+        setComplaints(data.complaints);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      }
+    } catch (e: any) {
+      console.error("Failed to clear complaints on server:", e);
+    }
   };
 
   // Reset demo complaints data
-  const handleResetDemo = () => {
-    saveComplaints(DEMO_COMPLAINTS);
+  const handleResetDemo = async () => {
+    setComplaints(DEMO_COMPLAINTS);
+    localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
     setSelectedComplaintId(null);
     setShowResetConfirm(false);
+
+    try {
+      const res = await fetch("/api/complaints/reset", { method: "POST" });
+      const data = await res.json();
+      setSupabaseActive(data.isSupabaseActive);
+      if (data.complaints) {
+        setComplaints(data.complaints);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      }
+    } catch (e: any) {
+      console.error("Failed to reset complaints on server:", e);
+    }
   };
 
   // Handle AI analysis attachment
@@ -486,6 +574,21 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Supabase Status Indicator */}
+            {supabaseActive !== null && (
+              <div 
+                id="supabase-status-badge"
+                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold ${
+                  supabaseActive 
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700" 
+                    : "bg-amber-50 border-amber-200 text-amber-700"
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${supabaseActive ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+                <span>{supabaseActive ? "Supabase Active" : "Supabase: Offline Fallback"}</span>
+              </div>
+            )}
+
             <div className="hidden sm:flex items-center gap-2 bg-slate-50 py-1 px-2.5 rounded-md border border-slate-200">
               <User className="h-3.5 w-3.5 text-blue-600" />
               <span className="text-[11px] text-slate-700 font-bold">
@@ -512,6 +615,89 @@ export default function App() {
 
       {/* Main Workspace Frame */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 overflow-x-hidden">
+        
+        {/* Supabase Table Setup Warning Banner */}
+        {supabaseActive === false && (
+          <div 
+            id="supabase-warning-banner"
+            className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all"
+          >
+            <div className="space-y-1">
+              <h4 className="text-xs font-black text-amber-800 uppercase tracking-tight flex items-center gap-2">
+                ⚠️ Supabase complaints Table Needed
+              </h4>
+              <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
+                A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but the database table <code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">complaints</code> does not exist yet. Copy our DDL script, paste it into your Supabase SQL Editor, and run it to instantly sync all forms!
+              </p>
+              {supabaseError && (
+                <div className="mt-2 text-[10px] bg-red-50 border border-red-100 text-red-700 font-mono p-1.5 rounded font-bold">
+                  Connection Diagnostic: {supabaseError}
+                </div>
+              )}
+            </div>
+            <button
+              id="btn-copy-supabase-sql"
+              type="button"
+              onClick={() => {
+                const sqlText = `create table complaints (
+  id text primary key,
+  "customerName" text,
+  "customerPhone" text,
+  "customerEmail" text,
+  station text,
+  category text,
+  description text,
+  date text,
+  "receivedDateTime" text,
+  "initialSatisfaction" text,
+  "currentSatisfaction" text,
+  status text,
+  notes text,
+  "agentName" text,
+  "aiAnalysis" jsonb,
+  "updatedAt" text,
+  month text,
+  company text,
+  "woNo" text,
+  "woState" text,
+  "vehicleRegNo" text,
+  "mchCodeDescription" text,
+  "workType" text,
+  "customerNo" text,
+  "earliestStartDate" text,
+  "finishDate" text,
+  tel2 text,
+  mileage text,
+  "advisorName" text,
+  "chassiNo" text,
+  "npsScore" integer,
+  "stationContactedDate" text,
+  "stationResolutionNotes" text,
+  "callCenterContactedDate" text,
+  "callCenterFinalRemarks" text,
+  "callCenterFinalSatisfaction" text,
+  "feedbackStatus" text,
+  "finalStatus" text,
+  "solutionProvidedByAftermarket" text,
+  "solutionDate" text,
+  "followUpDate" text
+);
+
+-- Enable public row level security read/write policies
+alter table complaints enable row level security;
+create policy "Allow public read" on complaints for select using (true);
+create policy "Allow public insert" on complaints for insert with check (true);
+create policy "Allow public update" on complaints for update using (true);
+`;
+                navigator.clipboard.writeText(sqlText);
+                alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor and run it.");
+              }}
+              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-sm transition-all cursor-pointer uppercase tracking-wider"
+            >
+              Copy SQL Script
+            </button>
+          </div>
+        )}
         
         {/* National Manager & Call Center Tabs navigation */}
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && (

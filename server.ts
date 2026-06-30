@@ -3,8 +3,36 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+import { DEMO_COMPLAINTS } from "./src/demoData";
 
 dotenv.config();
+
+// Configure Supabase details provided by user
+let SUPABASE_URL = process.env.SUPABASE_URL || "https://qsistbvaukxuwebqupiy.supabase.co";
+let SUPABASE_KEY = process.env.SUPABASE_KEY || "sb_publishable_Npa3x5SHHp65jinonZFnKA_56lBMOQb";
+
+// Clean and normalize the Supabase URL (strip /rest/v1/ and trailing slashes to prevent SDK 404 errors)
+if (SUPABASE_URL) {
+  SUPABASE_URL = SUPABASE_URL.trim();
+  if (SUPABASE_URL.endsWith("/rest/v1/")) {
+    SUPABASE_URL = SUPABASE_URL.slice(0, -9);
+  } else if (SUPABASE_URL.endsWith("/rest/v1")) {
+    SUPABASE_URL = SUPABASE_URL.slice(0, -8);
+  }
+  if (SUPABASE_URL.endsWith("/")) {
+    SUPABASE_URL = SUPABASE_URL.slice(0, -1);
+  }
+}
+
+if (SUPABASE_KEY) {
+  SUPABASE_KEY = SUPABASE_KEY.trim();
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Memory cache fallback
+let localComplaintsCache = [...DEMO_COMPLAINTS];
 
 async function startServer() {
   const app = express();
@@ -86,6 +114,199 @@ Ensure your response is highly detailed, professional, and directly actionable f
     } catch (error: any) {
       console.error("Gemini Error:", error);
       res.status(500).json({ error: error.message || "An error occurred during AI analysis." });
+    }
+  });
+
+  // API Route to fetch all complaints from Supabase with fallback
+  app.get("/api/complaints", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("complaints")
+        .select("*")
+        .order("date", { ascending: false });
+
+      if (error) {
+        console.error("Supabase SELECT error:", error);
+        return res.json({
+          complaints: localComplaintsCache,
+          isSupabaseActive: false,
+          error: error.message,
+          code: error.code,
+          hint: "Table 'complaints' might not exist or lacks correct RLS policies. Run the DDL setup in your Supabase SQL Editor."
+        });
+      }
+
+      // If database is active but completely empty, pre-populate it with DEMO_COMPLAINTS
+      if (data && data.length === 0 && localComplaintsCache.length > 0) {
+        console.log("Supabase table is empty. Pre-populating with default complaints...");
+        const { error: insertError } = await supabase
+          .from("complaints")
+          .insert(DEMO_COMPLAINTS);
+        
+        if (!insertError) {
+          const { data: refreshedData } = await supabase
+            .from("complaints")
+            .select("*")
+            .order("date", { ascending: false });
+          return res.json({
+            complaints: refreshedData || DEMO_COMPLAINTS,
+            isSupabaseActive: true,
+            isSeeded: true
+          });
+        } else {
+          console.error("Failed to pre-populate Supabase:", insertError);
+        }
+      }
+
+      // Keep cache in sync with active db
+      if (data) {
+        localComplaintsCache = data;
+      }
+
+      res.json({
+        complaints: data || localComplaintsCache,
+        isSupabaseActive: true
+      });
+    } catch (err: any) {
+      console.error("Fetch complaints exception:", err);
+      res.json({
+        complaints: localComplaintsCache,
+        isSupabaseActive: false,
+        error: err.message
+      });
+    }
+  });
+
+  // API Route to upsert complaints in bulk or single
+  app.post("/api/complaints", async (req, res) => {
+    try {
+      const { complaints } = req.body;
+      if (!complaints) {
+        return res.status(400).json({ error: "No complaints provided to save." });
+      }
+
+      const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
+
+      // Update local memory cache first
+      complaintsArray.forEach(newC => {
+        const idx = localComplaintsCache.findIndex(c => c.id === newC.id);
+        if (idx !== -1) {
+          localComplaintsCache[idx] = newC;
+        } else {
+          localComplaintsCache.unshift(newC);
+        }
+      });
+
+      // Try writing to Supabase
+      const { data, error } = await supabase
+        .from("complaints")
+        .upsert(complaintsArray, { onConflict: "id" });
+
+      if (error) {
+        console.error("Supabase UPSERT error:", error);
+        return res.json({
+          success: true, // Mark true because we saved in local memory cache successfully
+          isSupabaseActive: false,
+          error: error.message,
+          code: error.code,
+          complaints: localComplaintsCache
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        complaints: localComplaintsCache
+      });
+    } catch (err: any) {
+      console.error("Save complaints exception:", err);
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        complaints: localComplaintsCache
+      });
+    }
+  });
+
+  // API Route to reset the database back to DEMO_COMPLAINTS
+  app.post("/api/complaints/reset", async (req, res) => {
+    try {
+      localComplaintsCache = [...DEMO_COMPLAINTS];
+
+      // Attempt to clear and insert in Supabase
+      const { error: deleteError } = await supabase
+        .from("complaints")
+        .delete()
+        .neq("id", "FORCE_NONE_MATCHING_ID");
+
+      if (deleteError) {
+        console.error("Supabase DELETE during reset error:", deleteError);
+      }
+
+      const { error: insertError } = await supabase
+        .from("complaints")
+        .insert(DEMO_COMPLAINTS);
+
+      if (insertError) {
+        console.error("Supabase INSERT during reset error:", insertError);
+        return res.json({
+          success: true,
+          isSupabaseActive: false,
+          error: insertError.message,
+          complaints: localComplaintsCache
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        complaints: localComplaintsCache
+      });
+    } catch (err: any) {
+      console.error("Reset complaints exception:", err);
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        complaints: localComplaintsCache
+      });
+    }
+  });
+
+  // API Route to delete all complaints
+  app.post("/api/complaints/clear", async (req, res) => {
+    try {
+      localComplaintsCache = [];
+
+      const { error: deleteError } = await supabase
+        .from("complaints")
+        .delete()
+        .neq("id", "FORCE_NONE_MATCHING_ID");
+
+      if (deleteError) {
+        console.error("Supabase clear error:", deleteError);
+        return res.json({
+          success: true,
+          isSupabaseActive: false,
+          error: deleteError.message,
+          complaints: []
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        complaints: []
+      });
+    } catch (err: any) {
+      console.error("Clear complaints exception:", err);
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        complaints: []
+      });
     }
   });
 
