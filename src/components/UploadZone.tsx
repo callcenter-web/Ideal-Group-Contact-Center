@@ -23,7 +23,7 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
     const now = new Date();
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   });
-  const [applyMode, setApplyMode] = useState<"fallback" | "force">("fallback");
+  const [applyMode, setApplyMode] = useState<"fallback" | "force">("force");
 
   const getFormattedEntryDateTime = () => {
     if (!entryDate) return "";

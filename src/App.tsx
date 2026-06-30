@@ -583,7 +583,7 @@ export default function App() {
       // Load custom fields
       setFormStationContactedDate(selectedComplaint.stationContactedDate || new Date().toISOString().split("T")[0]);
       setFormStationResolutionNotes(selectedComplaint.stationResolutionNotes || "");
-      setFormCallCenterContactedDate(selectedComplaint.callCenterContactedDate || new Date().toISOString().split("T")[0]);
+      setFormCallCenterContactedDate(new Date().toISOString().split("T")[0]);
       setFormCallCenterFinalRemarks(selectedComplaint.callCenterFinalRemarks || "");
       setFormCallCenterFinalSatisfaction(selectedComplaint.callCenterFinalSatisfaction || "Neutral");
       setFormAssignedStation(selectedComplaint.station || "");
