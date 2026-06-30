@@ -15,6 +15,29 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [entryDate, setEntryDate] = useState(() => {
+    const now = new Date();
+    return now.toISOString().split("T")[0];
+  });
+  const [entryTime, setEntryTime] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
+  const [applyMode, setApplyMode] = useState<"fallback" | "force">("fallback");
+
+  const getFormattedEntryDateTime = () => {
+    if (!entryDate) return "";
+    const [year, month, day] = entryDate.split("-");
+    if (!entryTime) return `${year}-${month}-${day} 12:00 AM`;
+    const [hoursStr, minutesStr] = entryTime.split(":");
+    let hours = parseInt(hoursStr, 10);
+    const minutes = minutesStr;
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    return `${year}-${month}-${day} ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+  };
+
   const processFile = (file: File) => {
     setUploadError("");
     setSuccessCount(null);
@@ -125,6 +148,17 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
 
           const station = normalizeStation(site);
 
+          const customDate = entryDate || new Date().toISOString().split("T")[0];
+          const customDateTime = getFormattedEntryDateTime();
+
+          const finalDate = (applyMode === "force" || !(finishDate || earliestStartDate))
+            ? customDate
+            : (finishDate || earliestStartDate);
+
+          const finalReceivedDateTime = (applyMode === "force" || !(finishDate || earliestStartDate))
+            ? customDateTime
+            : `${finishDate || earliestStartDate} 08:00 AM`;
+
           return {
             id: woNo ? `COMP-${woNo}` : `COMP-UP-${Date.now()}-${index}`,
             customerName: customerName || "Unknown Customer",
@@ -133,21 +167,8 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
             station: station,
             category: workType || "General Service",
             description: descriptionStr || "No feedback details provided.",
-            date: finishDate || earliestStartDate || new Date().toISOString().split("T")[0],
-            receivedDateTime: (finishDate || earliestStartDate) 
-              ? `${finishDate || earliestStartDate} 08:00 AM` 
-              : (() => {
-                  const now = new Date();
-                  const yyyy = now.getFullYear();
-                  const mm = String(now.getMonth() + 1).padStart(2, '0');
-                  const dd = String(now.getDate()).padStart(2, '0');
-                  let h = now.getHours();
-                  const m = String(now.getMinutes()).padStart(2, '0');
-                  const ampm = h >= 12 ? 'PM' : 'AM';
-                  h = h % 12;
-                  h = h ? h : 12;
-                  return `${yyyy}-${mm}-${dd} ${String(h).padStart(2, '0')}:${m} ${ampm}`;
-                })(),
+            date: finalDate,
+            receivedDateTime: finalReceivedDateTime,
             initialSatisfaction: initialSat,
             currentSatisfaction: initialSat,
             status: "Pending",
@@ -297,6 +318,58 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
               </button>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Data Entry Date & Time Configuration */}
+      <div id="data-entry-timestamp-config" className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 mb-4">
+        <div className="text-slate-800 text-xs font-bold mb-2 flex items-center justify-between">
+          <span className="uppercase tracking-wider text-[10px] text-slate-500 font-black">Data Entry Timestamp Configuration</span>
+          <span className="text-[10px] text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded font-black">
+            Selected Entry: {getFormattedEntryDateTime()}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+              Data Entry Date *
+            </label>
+            <input
+              id="input-entry-date"
+              type="date"
+              required
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
+              className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-semibold"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+              Data Entry Time *
+            </label>
+            <input
+              id="input-entry-time"
+              type="time"
+              required
+              value={entryTime}
+              onChange={(e) => setEntryTime(e.target.value)}
+              className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-semibold"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+              Timestamp Rule *
+            </label>
+            <select
+              id="select-override-strategy"
+              value={applyMode}
+              onChange={(e) => setApplyMode(e.target.value as "fallback" | "force")}
+              className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-3 text-xs text-slate-800 focus:outline-none cursor-pointer font-bold"
+            >
+              <option value="fallback">Use as fallback only (if empty in file)</option>
+              <option value="force">Force override all uploaded complaints</option>
+            </select>
+          </div>
         </div>
       </div>
 

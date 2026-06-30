@@ -100,6 +100,14 @@ export default function App() {
   const [newMileage, setNewMileage] = useState("");
   const [newAdvisorName, setNewAdvisorName] = useState("");
   const [newChassiNo, setNewChassiNo] = useState("");
+  const [newReceivedDate, setNewReceivedDate] = useState(() => {
+    const now = new Date();
+    return now.toISOString().split("T")[0];
+  });
+  const [newReceivedTime, setNewReceivedTime] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
 
   // State-based delete confirmation state
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -310,16 +318,17 @@ export default function App() {
     }
 
     const newId = `M-${Math.floor(100000 + Math.random() * 900000)}`;
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    let h = now.getHours();
-    const m = String(now.getMinutes()).padStart(2, '0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12;
-    h = h ? h : 12;
-    const receivedDateTimeStr = `${yyyy}-${mm}-${dd} ${String(h).padStart(2, '0')}:${m} ${ampm}`;
+    
+    const dateToUse = newReceivedDate || new Date().toISOString().split("T")[0];
+    const timeToUse = newReceivedTime || "08:00";
+    
+    const [year, month, day] = dateToUse.split("-");
+    const [hoursStr, minutesStr] = timeToUse.split(":");
+    let hours = parseInt(hoursStr, 10);
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const receivedDateTimeStr = `${year}-${month}-${day} ${String(hours).padStart(2, '0')}:${minutesStr} ${ampm}`;
 
     const newComplaint: Complaint = {
       id: newId,
@@ -329,7 +338,7 @@ export default function App() {
       station: newStation,
       category: newCategory,
       description: newDescription,
-      date: yyyy + "-" + mm + "-" + dd,
+      date: dateToUse,
       receivedDateTime: receivedDateTimeStr,
       initialSatisfaction: "Dissatisfied",
       currentSatisfaction: "Dissatisfied",
@@ -360,6 +369,9 @@ export default function App() {
     setNewMileage("");
     setNewAdvisorName("");
     setNewChassiNo("");
+    const now = new Date();
+    setNewReceivedDate(now.toISOString().split("T")[0]);
+    setNewReceivedTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
   };
 
   // Handle manual removal of a complaint (Admin only)
@@ -541,7 +553,7 @@ export default function App() {
             callCenterFinalRemarks: formCallCenterFinalRemarks,
             callCenterFinalSatisfaction: formCallCenterFinalSatisfaction,
             currentSatisfaction: formCallCenterFinalSatisfaction, // promote to main satisfaction
-            status: "Resolved" as FollowUpStatus, // auto mark Resolved on Call Center save
+            status: (formFeedbackStatus === "Satisfied" ? "Resolved" : "Pending") as FollowUpStatus, // mark Resolved only on "Satisfied" feedback, otherwise keep as "Pending"
             feedbackStatus: formFeedbackStatus,
             finalStatus: formFinalStatus,
             solutionProvidedByAftermarket: formSolutionProvided,
@@ -686,6 +698,7 @@ export default function App() {
     else if (val === "Not Satisfied") colorClass = "bg-red-50 text-red-700 border-red-200";
     else if (val === "No solution Received") colorClass = "bg-amber-50 text-amber-700 border-amber-200";
     else if (val === "Customer Unreachable") colorClass = "bg-purple-50 text-purple-700 border-purple-200";
+    else if (val === "Not Interested to Talk") colorClass = "bg-slate-100 text-slate-700 border-slate-300";
     else if (val === "Escalated") colorClass = "bg-rose-50 text-rose-700 border-rose-200";
     
     return (
@@ -1627,54 +1640,42 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                             />
                           </div>
 
-                          <div className="grid grid-cols-2 gap-3 bg-slate-50 p-2.5 rounded border border-slate-200">
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                                Feedback Status *
-                              </label>
-                              <select
-                                value={formFeedbackStatus}
-                                onChange={(e) => setFormFeedbackStatus(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
-                              >
-                                <option value="Satisfied">Satisfied</option>
-                                <option value="Not Satisfied">Not Satisfied</option>
-                                <option value="No solution Received">No solution Received</option>
-                                <option value="Customer Unreachable">Customer Unreachable</option>
-                                <option value="Follow Up Required">Follow Up Required</option>
-                                <option value="Escalated">Escalated</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                                Operational Status *
-                              </label>
-                              <select
-                                value={formFinalStatus}
-                                onChange={(e) => setFormFinalStatus(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
-                              >
-                                <option value="Open">Open</option>
-                                <option value="Pending with Aftermarket">Pending with Aftermarket</option>
-                                <option value="Solution Received">Solution Received</option>
-                                <option value="Pending Customer Verification">Pending Customer Verification</option>
-                                <option value="Closed">Closed</option>
-                                <option value="Unreachable">Unreachable</option>
-                              </select>
-                            </div>
+                          <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Feedback Status *
+                            </label>
+                            <select
+                              value={formFeedbackStatus}
+                              onChange={(e) => setFormFeedbackStatus(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold"
+                            >
+                              <option value="Satisfied">Satisfied</option>
+                              <option value="Not Satisfied">Not Satisfied</option>
+                              <option value="No solution Received">No solution Received</option>
+                              <option value="Customer Unreachable">Customer Unreachable</option>
+                              <option value="Not Interested to Talk">Not Interested to Talk</option>
+                              <option value="Follow Up Required">Follow Up Required</option>
+                              <option value="Escalated">Escalated</option>
+                            </select>
                           </div>
 
                           {saveSuccess && (
                             <div className="text-green-700 text-xs font-semibold bg-green-50 p-2 rounded border border-green-200 text-center">
-                              Call center feedback saved & marked as Resolved!
+                              {formFeedbackStatus === "Satisfied"
+                                ? "Call center feedback saved & marked as Resolved!"
+                                : "Call center feedback saved & kept in Pending Recovery!"}
                             </div>
                           )}
 
                           <button
                             type="submit"
-                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold text-xs py-2 px-4 rounded-md transition-all shadow-sm cursor-pointer"
+                            className={`w-full text-white font-bold text-xs py-2 px-4 rounded-md transition-all shadow-sm cursor-pointer ${
+                              formFeedbackStatus === "Satisfied"
+                                ? "bg-green-600 hover:bg-green-700"
+                                : "bg-amber-600 hover:bg-amber-700"
+                            }`}
                           >
-                            Save Final Remarks & Resolve
+                            {formFeedbackStatus === "Satisfied" ? "Save & Resolve" : "Save Final Remarks & Keep Pending"}
                           </button>
                         </form>
                       )}
@@ -1804,6 +1805,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                 <option value="Not Satisfied">Not Satisfied</option>
                                 <option value="No solution Received">No solution Received</option>
                                 <option value="Customer Unreachable">Customer Unreachable</option>
+                                <option value="Not Interested to Talk">Not Interested to Talk</option>
                                 <option value="Follow Up Required">Follow Up Required</option>
                                 <option value="Escalated">Escalated</option>
                               </select>
@@ -1983,6 +1985,33 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">
+                    Data Entry Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newReceivedDate}
+                    onChange={(e) => setNewReceivedDate(e.target.value)}
+                    className="w-full bg-slate-50 hover:bg-slate-50/50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-md py-1.5 px-3 text-xs text-slate-800 focus:outline-none transition-all font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">
+                    Data Entry Time *
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={newReceivedTime}
+                    onChange={(e) => setNewReceivedTime(e.target.value)}
+                    className="w-full bg-slate-50 hover:bg-slate-50/50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-md py-1.5 px-3 text-xs text-slate-800 focus:outline-none transition-all font-medium"
+                  />
                 </div>
               </div>
 
