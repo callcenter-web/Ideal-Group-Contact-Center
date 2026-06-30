@@ -20,6 +20,7 @@ import {
   Settings,
   HelpCircle
 } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis } from "./types";
 import { DEMO_COMPLAINTS, STATIONS } from "./demoData";
 import LoginScreen from "./components/LoginScreen";
@@ -28,6 +29,11 @@ import StationOverview from "./components/StationOverview";
 import MetricCard from "./components/MetricCard";
 import AIRecoveryAssistant from "./components/AIRecoveryAssistant";
 import ReportsPanel from "./components/ReportsPanel";
+
+// Initialize client-side Supabase client with safe publishable credentials
+const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Npa3x5SHHp65jinonZFnKA_56lBMOQb";
+export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export default function App() {
   // State
@@ -118,10 +124,68 @@ export default function App() {
       setComplaints(DEMO_COMPLAINTS);
     }
 
+    const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
+      try {
+        console.log("Contacting Supabase directly from the browser...");
+        const { data, error } = await supabaseClient
+          .from("complaints")
+          .select("*")
+          .order("date", { ascending: false });
+
+        if (error) {
+          console.error("Direct Supabase select error:", error);
+          setSupabaseActive(false);
+          setSupabaseError(error.message);
+          return;
+        }
+
+        if (data) {
+          if (data.length === 0) {
+            console.log("Direct Supabase: Database is empty. Seeding DEMO_COMPLAINTS...");
+            const { error: seedError } = await supabaseClient
+              .from("complaints")
+              .insert(DEMO_COMPLAINTS);
+            
+            if (!seedError) {
+              const { data: refreshed } = await supabaseClient
+                .from("complaints")
+                .select("*")
+                .order("date", { ascending: false });
+              if (refreshed) {
+                setComplaints(refreshed);
+                localStorage.setItem("ideal_group_complaints", JSON.stringify(refreshed));
+              }
+            } else {
+              console.error("Direct Supabase seed error:", seedError);
+              setComplaints(DEMO_COMPLAINTS);
+              localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
+            }
+          } else {
+            setComplaints(data);
+            localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
+          }
+        }
+        setSupabaseActive(true);
+        setSupabaseError(null);
+      } catch (err: any) {
+        console.error("Direct Supabase connection exception:", err);
+        setSupabaseActive(false);
+        setSupabaseError(originalErrorMsg || err.message);
+      }
+    };
+
     const fetchComplaints = async () => {
       try {
         const res = await fetch("/api/complaints");
-        const data = await res.json();
+        const text = await res.text();
+        
+        if (text.trim().startsWith("<!DOCTYPE")) {
+          console.warn("Backend API not found (HTML response). Falling back to client-side direct Supabase connection...");
+          await fetchComplaintsDirectly();
+          return;
+        }
+
+        const data = JSON.parse(text);
         if (data.complaints) {
           setComplaints(data.complaints);
           localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
@@ -133,14 +197,35 @@ export default function App() {
           setSupabaseError(null);
         }
       } catch (e: any) {
-        console.error("Failed to load complaints from backend:", e);
-        setSupabaseActive(false);
-        setSupabaseError(e.message);
+        console.warn("Backend API call failed, falling back to client-side direct Supabase connection:", e);
+        await fetchComplaintsDirectly(e.message);
       }
     };
 
     fetchComplaints();
   }, []);
+
+  const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
+    try {
+      console.log("Upserting directly to Supabase client-side...");
+      const { error } = await supabaseClient
+        .from("complaints")
+        .upsert(updatedList, { onConflict: "id" });
+
+      if (error) {
+        console.error("Direct Supabase upsert error:", error);
+        setSupabaseActive(false);
+        setSupabaseError(error.message);
+      } else {
+        setSupabaseActive(true);
+        setSupabaseError(null);
+      }
+    } catch (err: any) {
+      console.error("Direct Supabase upsert failed:", err);
+      setSupabaseActive(false);
+      setSupabaseError(err.message);
+    }
+  };
 
   // Handle saving to localStorage and syncing with Supabase on complaints change
   const saveComplaints = async (updatedList: Complaint[]) => {
@@ -153,7 +238,15 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ complaints: updatedList })
       });
-      const data = await res.json();
+      const text = await res.text();
+
+      if (text.trim().startsWith("<!DOCTYPE")) {
+        console.warn("Backend API not found (HTML response). Saving directly to Supabase client-side...");
+        await saveComplaintsDirectly(updatedList);
+        return;
+      }
+
+      const data = JSON.parse(text);
       setSupabaseActive(data.isSupabaseActive);
       if (!data.isSupabaseActive && data.error) {
         setSupabaseError(data.error);
@@ -165,9 +258,8 @@ export default function App() {
         localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
       }
     } catch (e: any) {
-      console.error("Failed to sync complaints with server:", e);
-      setSupabaseActive(false);
-      setSupabaseError(e.message);
+      console.warn("Backend API save failed, saving directly to Supabase client-side:", e);
+      await saveComplaintsDirectly(updatedList);
     }
   };
 
@@ -278,6 +370,29 @@ export default function App() {
     setDeletingId(null);
   };
 
+  const clearComplaintsDirectly = async () => {
+    try {
+      console.log("Clearing all complaints directly from Supabase client-side...");
+      const { error } = await supabaseClient
+        .from("complaints")
+        .delete()
+        .neq("id", "FORCE_NONE_MATCHING_ID");
+
+      if (error) {
+        console.error("Direct Supabase clear error:", error);
+        setSupabaseActive(false);
+        setSupabaseError(error.message);
+      } else {
+        setSupabaseActive(true);
+        setSupabaseError(null);
+      }
+    } catch (err: any) {
+      console.error("Direct Supabase clear exception:", err);
+      setSupabaseActive(false);
+      setSupabaseError(err.message);
+    }
+  };
+
   // Handle clearing all complaints
   const handleDeleteAllComplaints = async () => {
     setComplaints([]);
@@ -288,14 +403,52 @@ export default function App() {
 
     try {
       const res = await fetch("/api/complaints/clear", { method: "POST" });
-      const data = await res.json();
+      const text = await res.text();
+
+      if (text.trim().startsWith("<!DOCTYPE")) {
+        console.warn("Backend API clear not found (HTML response). Clearing directly from Supabase client-side...");
+        await clearComplaintsDirectly();
+        return;
+      }
+
+      const data = JSON.parse(text);
       setSupabaseActive(data.isSupabaseActive);
       if (data.complaints) {
         setComplaints(data.complaints);
         localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
       }
     } catch (e: any) {
-      console.error("Failed to clear complaints on server:", e);
+      console.warn("Backend clear failed, clearing directly from Supabase client-side:", e);
+      await clearComplaintsDirectly();
+    }
+  };
+
+  const resetComplaintsDirectly = async () => {
+    try {
+      console.log("Resetting complaints directly from Supabase client-side...");
+      // First clear all
+      await supabaseClient
+        .from("complaints")
+        .delete()
+        .neq("id", "FORCE_NONE_MATCHING_ID");
+
+      // Then insert default ones
+      const { error } = await supabaseClient
+        .from("complaints")
+        .insert(DEMO_COMPLAINTS);
+
+      if (error) {
+        console.error("Direct Supabase insert during reset error:", error);
+        setSupabaseActive(false);
+        setSupabaseError(error.message);
+      } else {
+        setSupabaseActive(true);
+        setSupabaseError(null);
+      }
+    } catch (err: any) {
+      console.error("Direct Supabase reset exception:", err);
+      setSupabaseActive(false);
+      setSupabaseError(err.message);
     }
   };
 
@@ -308,14 +461,23 @@ export default function App() {
 
     try {
       const res = await fetch("/api/complaints/reset", { method: "POST" });
-      const data = await res.json();
+      const text = await res.text();
+
+      if (text.trim().startsWith("<!DOCTYPE")) {
+        console.warn("Backend API reset not found (HTML response). Resetting directly on Supabase client-side...");
+        await resetComplaintsDirectly();
+        return;
+      }
+
+      const data = JSON.parse(text);
       setSupabaseActive(data.isSupabaseActive);
       if (data.complaints) {
         setComplaints(data.complaints);
         localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
       }
     } catch (e: any) {
-      console.error("Failed to reset complaints on server:", e);
+      console.warn("Backend reset failed, resetting directly on Supabase client-side:", e);
+      await resetComplaintsDirectly();
     }
   };
 
