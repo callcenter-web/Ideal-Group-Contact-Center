@@ -624,10 +624,10 @@ export default function App() {
           >
             <div className="space-y-1">
               <h4 className="text-xs font-black text-amber-800 uppercase tracking-tight flex items-center gap-2">
-                ⚠️ Supabase complaints Table Needed
+                ⚠️ Supabase Setup or RLS Policies Required
               </h4>
               <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but the database table <code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">complaints</code> does not exist yet. Copy our DDL script, paste it into your Supabase SQL Editor, and run it to instantly sync all forms!
+                A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but there is a table or policy configuration issue. Since your <code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">complaints</code> table already exists, copy our complete drop-and-recreate script below to safely re-create the table and configure all required public read/write permissions so that other PCs can sync instantly!
               </p>
               {supabaseError && (
                 <div className="mt-2 text-[10px] bg-red-50 border border-red-100 text-red-700 font-mono p-1.5 rounded font-bold">
@@ -639,7 +639,10 @@ export default function App() {
               id="btn-copy-supabase-sql"
               type="button"
               onClick={() => {
-                const sqlText = `create table complaints (
+                const sqlText = `-- CLEAR AND RECREATE COMPLAINTS TABLE (Saves form feeding & tracking)
+DROP TABLE IF EXISTS complaints CASCADE;
+
+CREATE TABLE complaints (
   id text primary key,
   "customerName" text,
   "customerPhone" text,
@@ -683,14 +686,23 @@ export default function App() {
   "followUpDate" text
 );
 
--- Enable public row level security read/write policies
-alter table complaints enable row level security;
-create policy "Allow public read" on complaints for select using (true);
-create policy "Allow public insert" on complaints for insert with check (true);
-create policy "Allow public update" on complaints for update using (true);
+-- ENABLE ROW LEVEL SECURITY FOR MULTI-PC COLLABORATION
+ALTER TABLE complaints ENABLE ROW LEVEL SECURITY;
+
+-- REMOVE EXISTING POLICIES TO AVOID CONFLICTS
+DROP POLICY IF EXISTS "Allow public read" ON complaints;
+DROP POLICY IF EXISTS "Allow public insert" ON complaints;
+DROP POLICY IF EXISTS "Allow public update" ON complaints;
+DROP POLICY IF EXISTS "Allow public delete" ON complaints;
+
+-- CREATE FRESH SECURE PERMISSIVE POLICIES
+CREATE POLICY "Allow public read" ON complaints FOR SELECT USING (true);
+CREATE POLICY "Allow public insert" ON complaints FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update" ON complaints FOR UPDATE USING (true);
+CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
 `;
                 navigator.clipboard.writeText(sqlText);
-                alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor and run it.");
+                alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, and refresh the browser.");
               }}
               className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-sm transition-all cursor-pointer uppercase tracking-wider"
             >
