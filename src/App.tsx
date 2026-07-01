@@ -839,21 +839,32 @@ export default function App() {
     );
   };
 
+  const isDark = theme === "dark";
+  const cardBg = isDark ? "bg-slate-900/80 backdrop-blur-md border-slate-800 text-slate-100 shadow-md" : "bg-white border-slate-200 text-slate-900 shadow-sm";
+  const textTitle = isDark ? "text-slate-100" : "text-slate-800";
+  const textSub = isDark ? "text-slate-400" : "text-slate-500";
+  const bgSub = isDark ? "bg-slate-950" : "bg-slate-50";
+  const borderColor = isDark ? "border-slate-800" : "border-slate-200";
+
   return (
-    <div id="app-root" className="min-h-screen bg-luxury-light-grid text-slate-900 flex flex-col font-sans animate-fade-in-scale">
+    <div id="app-root" className={`min-h-screen flex flex-col font-sans animate-fade-in-scale transition-colors duration-500 ${
+      isDark ? "bg-luxury-grid text-slate-100" : "bg-luxury-light-grid text-slate-900"
+    }`}>
       
       {/* Top Corporate Nav */}
-      <header id="app-header" className="bg-white border-b border-slate-200 shrink-0 sticky top-0 z-30">
+      <header id="app-header" className={`shrink-0 sticky top-0 z-30 transition-all duration-500 border-b ${
+        isDark ? "bg-slate-900/90 backdrop-blur-md border-slate-800" : "bg-white border-slate-200"
+      }`}>
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-slate-950 hover:bg-black px-3 py-1.5 rounded-lg border border-slate-800 flex items-center justify-center transition-all shadow-xs">
               <IdealMotorsLogo className="h-7 w-auto" />
             </div>
-            <div className="border-l border-slate-200 pl-3">
-              <h1 id="header-title" className="text-xs font-black tracking-wider text-slate-800 uppercase font-sans">
+            <div className={`border-l pl-3 ${isDark ? "border-slate-800" : "border-slate-200"}`}>
+              <h1 id="header-title" className={`text-xs font-black tracking-wider uppercase font-sans ${textTitle}`}>
                 CX Recovery Terminal
               </h1>
-              <p className="text-[9px] text-slate-500 font-extrabold">
+              <p className={`text-[9px] font-extrabold ${textSub}`}>
                 {currentUser.role === "admin" 
                   ? "National Management Terminal" 
                   : currentUser.role === "callcenter" 
@@ -870,8 +881,12 @@ export default function App() {
                 id="supabase-status-badge"
                 className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold ${
                   supabaseActive 
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-700" 
-                    : "bg-amber-50 border-amber-200 text-amber-700"
+                    ? isDark 
+                      ? "bg-emerald-950/30 border-emerald-900/40 text-emerald-300" 
+                      : "bg-emerald-50 border-emerald-200 text-emerald-700" 
+                    : isDark 
+                      ? "bg-amber-950/30 border-amber-900/40 text-amber-300" 
+                      : "bg-amber-50 border-amber-200 text-amber-700"
                 }`}
               >
                 <span className={`h-2 w-2 rounded-full ${supabaseActive ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
@@ -879,9 +894,11 @@ export default function App() {
               </div>
             )}
 
-            <div className="hidden sm:flex items-center gap-2 bg-slate-50 py-1 px-2.5 rounded-md border border-slate-200">
+            <div className={`hidden sm:flex items-center gap-2 py-1 px-2.5 rounded-md border ${
+              isDark ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-700"
+            }`}>
               <User className="h-3.5 w-3.5 text-blue-600" />
-              <span className="text-[11px] text-slate-700 font-bold">
+              <span className="text-[11px] font-bold">
                 {currentUser.role === "admin" 
                   ? "National Manager" 
                   : currentUser.role === "callcenter" 
@@ -894,7 +911,11 @@ export default function App() {
               id="btn-logout"
               type="button"
               onClick={handleLogout}
-              className="flex items-center gap-1.5 text-slate-600 hover:text-red-700 font-bold text-[11px] bg-white hover:bg-red-50 py-1.5 px-3 rounded-md border border-slate-200 hover:border-red-200 transition-all cursor-pointer"
+              className={`flex items-center gap-1.5 font-bold text-[11px] py-1.5 px-3 rounded-md border transition-all cursor-pointer ${
+                isDark
+                  ? "text-slate-300 hover:text-red-400 bg-slate-950 hover:bg-red-950/20 border-slate-800 hover:border-red-900/55"
+                  : "text-slate-600 hover:text-red-700 bg-white hover:bg-red-50 border-slate-200 hover:border-red-200"
+              }`}
             >
               <LogOut className="h-3.5 w-3.5" />
               Sign Out
@@ -2041,6 +2062,39 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
         )}
 
       </main>
+
+      {/* Universal Footer */}
+      <footer className={`w-full max-w-7xl mx-auto px-4 py-4 mt-auto border-t flex flex-col sm:flex-row items-center justify-between gap-3 text-center transition-all duration-500 ${
+        isDark ? "border-slate-800 text-slate-400" : "border-slate-200 text-slate-500"
+      }`}>
+        <p className="text-[10px] font-mono uppercase tracking-widest">
+          Solution by Yash (All Rights Reserved) • Passwords Protected
+        </p>
+        <div className="flex items-center gap-3">
+          <span className="text-[9px] uppercase tracking-wider font-bold">Theme Mode:</span>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-xs cursor-pointer ${
+              isDark 
+                ? "bg-slate-900 border-slate-800 text-amber-400 hover:text-amber-300 hover:bg-slate-800" 
+                : "bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            {isDark ? (
+              <>
+                <Sun className="h-3.5 w-3.5" />
+                <span>Light Mode</span>
+              </>
+            ) : (
+              <>
+                <Moon className="h-3.5 w-3.5" />
+                <span>Dark Mode</span>
+              </>
+            )}
+          </button>
+        </div>
+      </footer>
 
       {/* Manual Add Complaint Modal Overlay */}
       {showAddModal && (
