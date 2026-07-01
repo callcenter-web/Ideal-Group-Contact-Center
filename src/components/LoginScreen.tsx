@@ -65,31 +65,6 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
         isDark ? "bg-luxury-grid text-slate-100" : "bg-luxury-light-grid text-slate-900"
       }`}
     >
-      {/* Absolute Header with Luxury Theme Switcher */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-xs cursor-pointer ${
-            isDark 
-              ? "bg-slate-900/80 border-slate-800 text-amber-400 hover:text-amber-300 hover:border-slate-700" 
-              : "bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50"
-          }`}
-        >
-          {isDark ? (
-            <>
-              <Sun className="h-3.5 w-3.5" />
-              <span>Light Mode</span>
-            </>
-          ) : (
-            <>
-              <Moon className="h-3.5 w-3.5" />
-              <span>Dark Mode</span>
-            </>
-          )}
-        </button>
-      </div>
-
       {/* Main Container Card */}
       <div 
         className={`w-full max-w-md rounded-2xl border transition-all duration-500 overflow-hidden relative shadow-2xl ${
@@ -273,66 +248,35 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
             </button>
           </form>
 
-          {/* Quick Access Helper - Exquisite Developer Panel */}
-          <div 
-            className={`border-t pt-5 space-y-3 ${
-              isDark ? "border-slate-800/80" : "border-slate-200"
-            }`}
-          >
-            <p 
-              className={`text-[9px] text-center font-black uppercase tracking-widest ${
-                isDark ? "text-slate-500" : "text-slate-400"
-              }`}
-            >
-              Authorized Access Quick Keys
-            </p>
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              <button 
-                type="button" 
-                onClick={() => handleQuickLogin("admin")}
-                className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer ${
-                  isDark 
-                    ? "bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-white" 
-                    : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Admin
-              </button>
-              <button 
-                type="button" 
-                onClick={() => handleQuickLogin("agent", "Rathmalana")}
-                className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer ${
-                  isDark 
-                    ? "bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-white" 
-                    : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Rathmalana
-              </button>
-              <button 
-                type="button" 
-                onClick={() => handleQuickLogin("callcenter")}
-                className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer ${
-                  isDark 
-                    ? "bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-white" 
-                    : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Center
-              </button>
-            </div>
-          </div>
-
         </div>
       </div>
       
-      <p 
-        className={`text-[10px] mt-6 font-sans font-black uppercase tracking-widest transition-colors duration-500 ${
-          isDark ? "text-slate-600" : "text-slate-400"
-        }`}
-      >
-        Ideal Group Customer Experience Recovery Platform
-      </p>
+      <footer className="mt-8 flex flex-col items-center gap-3 text-center">
+        <p className={`text-[10px] font-mono uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+          Solution by Yash (All Rights Reserved) • Passwords Protected
+        </p>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-xs cursor-pointer ${
+            isDark 
+              ? "bg-slate-900 border-slate-800 text-amber-400 hover:text-amber-300 hover:bg-slate-800" 
+              : "bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50"
+          }`}
+        >
+          {isDark ? (
+            <>
+              <Sun className="h-3.5 w-3.5" />
+              <span>Light Mode</span>
+            </>
+          ) : (
+            <>
+              <Moon className="h-3.5 w-3.5" />
+              <span>Dark Mode</span>
+            </>
+          )}
+        </button>
+      </footer>
     </div>
   );
 }
