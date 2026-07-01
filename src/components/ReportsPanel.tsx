@@ -22,9 +22,17 @@ import { STATIONS } from "../demoData";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
+  theme?: "light" | "dark";
 }
 
-export default function ReportsPanel({ complaints }: ReportsPanelProps) {
+export default function ReportsPanel({ complaints, theme = "light" }: ReportsPanelProps) {
+  const isDark = theme === "dark";
+  const cardBg = isDark ? "bg-slate-900/90 border-slate-800 text-slate-100 shadow-inner" : "bg-white border-slate-200 text-slate-800 shadow-sm";
+  const textTitle = isDark ? "text-slate-100" : "text-slate-800";
+  const textSub = isDark ? "text-slate-400" : "text-slate-500";
+  const bgSub = isDark ? "bg-slate-950/40 border-slate-800/60" : "bg-slate-50 border-slate-100";
+  const borderCol = isDark ? "border-slate-800/80" : "border-slate-200";
+  const textSec = isDark ? "text-slate-300" : "text-slate-700";
   const [stationFilter, setStationFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -448,7 +456,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
       pdf.setTextColor(30, 41, 59);
-      pdf.text("SLA AGING METRICS", 16, chartY + 6);
+      pdf.text("AGING SLA METRICS", 16, chartY + 6);
       pdf.line(16, chartY + 9, 12 + chartW - 4, chartY + 9);
 
       // Green bar
@@ -814,16 +822,16 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in text-slate-800">
+    <div className={`space-y-6 animate-fade-in transition-colors duration-500 ${isDark ? "text-slate-100" : "text-slate-800"}`}>
       
       {/* Upper Control Bar (Actions and Title) */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl border transition-all duration-500 ${cardBg}`}>
         <div>
-          <h2 className="text-base font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+          <h2 className={`text-base font-black uppercase tracking-wider flex items-center gap-2 ${textTitle}`}>
             <BarChart3 className="h-5 w-5 text-blue-600" />
             Ideal Customer Experience Analytics
           </h2>
-          <p className="text-xs text-slate-500 font-bold mt-1">
+          <p className={`text-xs font-bold mt-1 ${textSub}`}>
             Generate graphical performance scorecards, SLA metrics, and high-resolution PDF summaries.
           </p>
         </div>
@@ -852,16 +860,18 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
       </div>
 
       {/* Advanced Filter Control Panel (Interactive, hidden in PDF printout) */}
-      <div className="pdf-hide bg-slate-50 p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
-          <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+      <div className={`pdf-hide p-5 rounded-2xl border shadow-xs space-y-4 transition-all duration-500 ${
+        isDark ? "bg-slate-900/60 border-slate-800" : "bg-slate-50 border-slate-200"
+      }`}>
+        <div className={`flex items-center justify-between border-b pb-2.5 ${isDark ? "border-slate-800" : "border-slate-200"}`}>
+          <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${textTitle}`}>
             <Filter className="h-4 w-4 text-blue-600" />
             Filter Database Engine
           </h3>
           {(stationFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all" || feedbackStatusFilter !== "all" || satisfactionFilter !== "all" || startDate || endDate || searchQuery) && (
             <button
               onClick={handleResetFilters}
-              className="text-slate-500 hover:text-blue-600 text-xs font-black flex items-center gap-1 cursor-pointer transition-all uppercase tracking-wider"
+              className="text-slate-500 hover:text-blue-500 text-xs font-black flex items-center gap-1 cursor-pointer transition-all uppercase tracking-wider"
             >
               <RotateCcw className="h-3 w-3" />
               Reset All Filters
@@ -880,34 +890,46 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search customer, vehicle, WO..."
-              className="w-full bg-white border border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 rounded-lg py-1.5 pl-9 pr-3 text-xs text-slate-700 focus:outline-none transition-all font-bold"
+              className={`w-full rounded-lg py-1.5 pl-9 pr-3 text-xs focus:outline-none transition-all font-bold ${
+                isDark 
+                  ? "bg-slate-950 text-slate-100 border border-slate-800 focus:border-red-500 placeholder-slate-700" 
+                  : "bg-white text-slate-700 border border-slate-200 focus:border-blue-500 placeholder-slate-400"
+              }`}
             />
           </div>
 
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <div className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-white border-slate-200"
+          }`}>
             <MapPin className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={stationFilter}
               onChange={(e) => setStationFilter(e.target.value)}
-              className="w-full bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className={`w-full bg-transparent text-xs font-bold focus:outline-none cursor-pointer ${
+                isDark ? "text-slate-100" : "text-slate-700"
+              }`}
             >
-              <option value="all">All Service Stations</option>
+              <option value="all" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>All Service Stations</option>
               {STATIONS.map(st => (
-                <option key={st.code} value={st.code}>{st.name}</option>
+                <option key={st.code} value={st.code} className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>{st.name}</option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <div className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-white border-slate-200"
+          }`}>
             <Filter className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="w-full bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className={`w-full bg-transparent text-xs font-bold focus:outline-none cursor-pointer ${
+                isDark ? "text-slate-100" : "text-slate-700"
+              }`}
             >
-              <option value="all">All Categories</option>
+              <option value="all" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>All Categories</option>
               {categories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+                <option key={cat} value={cat} className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>{cat}</option>
               ))}
             </select>
           </div>
@@ -915,82 +937,98 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
         {/* Row 2: Statuses and Satisfaction */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <div className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-white border-slate-200"
+          }`}>
             <Activity className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className={`w-full bg-transparent text-xs font-bold focus:outline-none cursor-pointer ${
+                isDark ? "text-slate-100" : "text-slate-700"
+              }`}
             >
-              <option value="all">All Operational Statuses</option>
-              <option value="Pending">Pending</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Contacted">Contacted</option>
-              <option value="Resolved">Resolved</option>
+              <option value="all" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>All Operational Statuses</option>
+              <option value="Pending" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Pending</option>
+              <option value="In Progress" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>In Progress</option>
+              <option value="Contacted" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Contacted</option>
+              <option value="Resolved" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Resolved</option>
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <div className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-white border-slate-200"
+          }`}>
             <TrendingUp className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={feedbackStatusFilter}
               onChange={(e) => setFeedbackStatusFilter(e.target.value)}
-              className="w-full bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className={`w-full bg-transparent text-xs font-bold focus:outline-none cursor-pointer ${
+                isDark ? "text-slate-100" : "text-slate-700"
+              }`}
             >
-              <option value="all">All SLA Feedback Statuses</option>
+              <option value="all" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>All SLA Feedback Statuses</option>
               {feedbackStatuses.map(status => (
-                <option key={status} value={status}>{status}</option>
+                <option key={status} value={status} className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>{status}</option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <div className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-white border-slate-200"
+          }`}>
             <CheckCircle className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={satisfactionFilter}
               onChange={(e) => setSatisfactionFilter(e.target.value)}
-              className="w-full bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              className={`w-full bg-transparent text-xs font-bold focus:outline-none cursor-pointer ${
+                isDark ? "text-slate-100" : "text-slate-700"
+              }`}
             >
-              <option value="all">All Satisfaction Levels</option>
-              <option value="Very Dissatisfied">Very Dissatisfied</option>
-              <option value="Dissatisfied">Dissatisfied</option>
-              <option value="Neutral">Neutral</option>
-              <option value="Satisfied">Satisfied</option>
-              <option value="Very Satisfied">Very Satisfied</option>
+              <option value="all" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>All Satisfaction Levels</option>
+              <option value="Very Dissatisfied" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Very Dissatisfied</option>
+              <option value="Dissatisfied" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Dissatisfied</option>
+              <option value="Neutral" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Neutral</option>
+              <option value="Satisfied" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Satisfied</option>
+              <option value="Very Satisfied" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Very Satisfied</option>
             </select>
           </div>
         </div>
 
         {/* Row 3: Dates */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 col-span-1 md:col-span-2">
+          <div className={`flex items-center gap-2 border rounded-lg px-2.5 py-1.5 col-span-1 md:col-span-2 ${
+            isDark ? "bg-slate-950 border-slate-800 text-slate-100" : "bg-white border-slate-200 text-slate-700"
+          }`}>
             <Calendar className="h-3.5 w-3.5 text-slate-400" />
-            <span className="text-[10px] font-black uppercase text-slate-400">Range:</span>
+            <span className={`text-[10px] font-black uppercase ${isDark ? "text-slate-500" : "text-slate-400"}`}>Range:</span>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer w-full"
+              className={`bg-transparent text-xs font-bold focus:outline-none cursor-pointer w-full ${isDark ? "text-slate-100" : "text-slate-700"}`}
               placeholder="Start Date"
             />
-            <span className="text-slate-300 font-bold">to</span>
+            <span className="text-slate-400 font-bold">to</span>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer w-full"
+              className={`bg-transparent text-xs font-bold focus:outline-none cursor-pointer w-full ${isDark ? "text-slate-100" : "text-slate-700"}`}
               placeholder="End Date"
             />
           </div>
           
-          <div className="flex items-center justify-end px-1 text-[11px] text-slate-500 font-extrabold uppercase">
+          <div className={`flex items-center justify-end px-1 text-[11px] font-extrabold uppercase ${isDark ? "text-slate-400" : "text-slate-500"}`}>
             Filtered Match: <span className="text-blue-600 ml-1 bg-blue-50 border border-blue-200 rounded-md px-1.5 py-0.5">{totalInScope} records</span>
           </div>
         </div>
       </div>
 
       {/* RENDER VIEW CAPTURED BY PDF (Dashboard with high contrast white bg for printing) */}
-      <div id="reports-dashboard-view" className="bg-slate-50 p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+      <div id="reports-dashboard-view" className={`p-6 rounded-2xl border shadow-xs space-y-6 transition-all duration-500 ${
+        isDark ? "bg-slate-950/60 border-slate-900" : "bg-slate-50 border-slate-200"
+      }`}>
         
         {/* PDF Heading Block (Only rendered clearly when downloaded) */}
         <div className="hidden border-b-2 border-slate-200 pb-4 mb-4" style={{ display: 'none' }} id="pdf-report-header">
@@ -1007,56 +1045,76 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
         </div>
 
         {/* Filter Badges Bar (Shows active criteria in PDF printout) */}
-        <div className="flex flex-wrap items-center gap-1.5 bg-white p-3 rounded-xl border border-slate-100">
+        <div className={`flex flex-wrap items-center gap-1.5 p-3 rounded-xl border transition-all duration-500 ${
+          isDark ? "bg-slate-900/90 border-slate-800" : "bg-white border-slate-100"
+        }`}>
           <span className="text-[10px] font-black uppercase text-slate-400 mr-1 flex items-center gap-1">
             <Filter className="h-3 w-3 text-slate-400" /> Filter Criteria:
           </span>
-          <span className="bg-slate-100 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+          <span className={`${
+            isDark ? "bg-slate-950 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+          } font-bold text-[10px] px-2 py-0.5 rounded border`}>
             Station: {stationFilter === "all" ? "All Stations" : stationFilter}
           </span>
-          <span className="bg-slate-100 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+          <span className={`${
+            isDark ? "bg-slate-950 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+          } font-bold text-[10px] px-2 py-0.5 rounded border`}>
             Category: {categoryFilter === "all" ? "All Categories" : categoryFilter}
           </span>
-          <span className="bg-slate-100 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+          <span className={`${
+            isDark ? "bg-slate-950 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+          } font-bold text-[10px] px-2 py-0.5 rounded border`}>
             Status: {statusFilter === "all" ? "All Statuses" : statusFilter}
           </span>
           {feedbackStatusFilter !== "all" && (
-            <span className="bg-slate-100 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+            <span className={`${
+              isDark ? "bg-slate-950 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+            } font-bold text-[10px] px-2 py-0.5 rounded border`}>
               SLA: {feedbackStatusFilter}
             </span>
           )}
           {satisfactionFilter !== "all" && (
-            <span className="bg-slate-100 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+            <span className={`${
+              isDark ? "bg-slate-950 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+            } font-bold text-[10px] px-2 py-0.5 rounded border`}>
               CSAT: {satisfactionFilter}
             </span>
           )}
           {(startDate || endDate) && (
-            <span className="bg-blue-50 text-blue-700 font-bold text-[10px] px-2 py-0.5 rounded border border-blue-200">
+            <span className={`${
+              isDark ? "bg-blue-950/40 text-blue-300 border-blue-900/30" : "bg-blue-50 text-blue-700 border-blue-200"
+            } font-bold text-[10px] px-2 py-0.5 rounded border`}>
               Period: {startDate || "Beg"} to {endDate || "End"}
             </span>
           )}
           {searchQuery && (
-            <span className="bg-amber-50 text-amber-700 font-bold text-[10px] px-2 py-0.5 rounded border border-amber-200">
+            <span className={`${
+              isDark ? "bg-amber-950/40 text-amber-300 border-amber-900/30" : "bg-amber-50 text-amber-700 border-amber-200"
+            } font-bold text-[10px] px-2 py-0.5 rounded border`}>
               Search: "{searchQuery}"
             </span>
           )}
-          <span className="ml-auto text-[10px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+          <span className={`ml-auto text-[10px] font-black uppercase rounded px-2 py-0.5 border ${
+            isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-600 bg-blue-50 border-blue-200"
+          }`}>
             {totalInScope} Matching Case{totalInScope === 1 ? "" : "s"}
           </span>
         </div>
 
         {/* INTERACTIVE SERVICE STATION PERFORMANCE SCORECARD */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-100/50 p-4 rounded-2xl border border-slate-200">
+        <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 rounded-2xl border transition-all duration-500 ${
+          isDark ? "bg-slate-900/40 border-slate-800" : "bg-slate-100/50 border-slate-200"
+        }`}>
           {/* Left Column: Service Station Table List */}
-          <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+          <div className={`lg:col-span-7 rounded-xl border p-4 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+              <div className={`flex items-center justify-between border-b pb-3 mb-3 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
                 <div>
-                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${textTitle}`}>
                     <MapPin className="h-4 w-4 text-blue-600" />
                     Service Station Performance
                   </h3>
-                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                  <p className={`text-[10px] font-bold mt-0.5 ${textSub}`}>
                     Click any Service Station below to view its dynamic aging graphics & customer satisfaction score.
                   </p>
                 </div>
@@ -1064,7 +1122,11 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                   id="btn-download-station-csv"
                   type="button"
                   onClick={handleDownloadStationReport}
-                  className="pdf-hide bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-[10px] py-1 px-2.5 rounded transition-all flex items-center gap-1 cursor-pointer"
+                  className={`pdf-hide border font-bold text-[10px] py-1 px-2.5 rounded transition-all flex items-center gap-1 cursor-pointer ${
+                    isDark 
+                      ? "bg-slate-950 border-slate-800 hover:bg-slate-900 text-slate-200" 
+                      : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
+                  }`}
                 >
                   <Download className="h-3 w-3" />
                   Download CSV
@@ -1074,14 +1136,16 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
               <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-[9px] font-black text-slate-500 uppercase tracking-wider">
-                      <th className="py-2.5 px-3">Service Station</th>
+                    <tr className={`border-b text-[9px] font-black uppercase tracking-wider transition-colors duration-500 ${
+                      isDark ? "border-slate-800 bg-slate-950/80 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"
+                    }`}>
+                      <th className="py-2.5 px-3">Filter</th>
                       <th className="py-2.5 px-3 text-center">Case Count</th>
                       <th className="py-2.5 px-3 text-center">Recovery Rate</th>
                       <th className="py-2.5 px-3 text-right">Avg SLA</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
+                  <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
                     {stationMetrics.map((sm) => {
                       const isSelected = selectedStationCode === sm.code;
                       return (
@@ -1090,20 +1154,25 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                           onClick={() => setSelectedStationCode(sm.code)}
                           className={`cursor-pointer transition-all ${
                             isSelected 
-                              ? "bg-blue-50/70 border-l-4 border-l-blue-600" 
-                              : "hover:bg-slate-50/50"
+                              ? isDark 
+                                ? "bg-red-950/20 border-l-4 border-l-red-600" 
+                                : "bg-blue-50/70 border-l-4 border-l-blue-600" 
+                              : isDark 
+                                ? "hover:bg-slate-950/30 text-slate-300" 
+                                : "hover:bg-slate-50/50 text-slate-700"
                           }`}
                         >
                           <td className="py-2.5 px-3">
-                            <p className="font-bold text-slate-800">{sm.code}</p>
-                            <p className="text-[9px] text-slate-400 font-bold">{sm.name}</p>
+                            <p className={`font-bold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{sm.name}</p>
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <span className="font-black text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200 text-[11px]">{sm.total}</span>
+                            <span className={`font-black px-2.5 py-0.5 rounded border text-[11px] ${
+                              isDark ? "text-slate-300 bg-slate-950 border-slate-800" : "text-slate-700 bg-slate-100 border-slate-200"
+                            }`}>{sm.total}</span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <p className="font-black text-blue-600 text-[11px]">{sm.rate}%</p>
-                            <p className="text-[9px] text-slate-400 font-semibold">{sm.resolved} of {sm.total}</p>
+                            <p className={`font-black text-[11px] ${isDark ? "text-red-400" : "text-blue-600"}`}>{sm.rate}%</p>
+                            <p className={`text-[9px] font-semibold ${isDark ? "text-slate-500" : "text-slate-400"}`}>{sm.resolved} of {sm.total}</p>
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <span className={sm.avgAgingColor}>
@@ -1123,7 +1192,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
           </div>
 
           {/* Right Column: Detailed Graphic Breakdown Panel */}
-          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col justify-between">
+          <div className={`lg:col-span-5 rounded-xl border p-4 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             {(() => {
               const selectedStation = STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
               const activeStationComplaints = filteredComplaints.filter(c => c.station === selectedStation.code);
@@ -1162,33 +1231,37 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
               return (
                 <div className="space-y-4 h-full flex flex-col justify-between">
                   <div>
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-2">
+                    <div className={`flex items-center justify-between border-b pb-2 mb-2 ${isDark ? "border-slate-800" : "border-slate-200"}`}>
                       <div>
-                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1">
+                        <h4 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1 ${textTitle}`}>
                           <Activity className="h-3.5 w-3.5 text-blue-600" />
                           {selectedStation.code} Graphics Breakdown
                         </h4>
-                        <p className="text-[9px] text-slate-400 font-bold">{selectedStation.name}</p>
+                        <p className={`text-[9px] font-bold ${textSub}`}>{selectedStation.name}</p>
                       </div>
-                      <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+                      <span className={`text-[10px] font-black uppercase rounded px-2 py-0.5 border ${
+                        isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-600 bg-blue-50 border-blue-200"
+                      }`}>
                         {activeStationTotal} Case{activeStationTotal === 1 ? "" : "s"}
                       </span>
                     </div>
 
                     {activeStationTotal === 0 ? (
-                      <div className="py-12 text-center bg-slate-50/50 rounded-lg border border-dashed border-slate-200 my-4">
+                      <div className={`py-12 text-center rounded-lg border border-dashed my-4 ${
+                        isDark ? "bg-slate-950/40 border-slate-800" : "bg-slate-50/50 border-slate-200"
+                      }`}>
                         <p className="text-xs font-bold text-slate-400">No matching cases for this station.</p>
                         <p className="text-[9px] text-slate-400 mt-1">Adjust filters or select another station.</p>
                       </div>
                     ) : (
                       <div className="space-y-3">
                         
-                        {/* SLA Aging Graphic Bar Chart */}
+                        {/* Aging SLA Graphic Bar Chart */}
                         <div>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
-                            SLA Aging breakdown
+                          <p className={`text-[10px] font-black uppercase tracking-wider mb-1.5 ${isDark ? "text-slate-400" : "text-slate-400"}`}>
+                            Aging SLA breakdown
                           </p>
-                          <div className="space-y-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                          <div className={`space-y-2 p-2.5 rounded-lg border transition-all duration-500 ${bgSub}`}>
                             {/* Green */}
                             <div>
                               <div className="flex justify-between text-[10px] font-bold text-slate-700">
@@ -1303,41 +1376,59 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
         {/* Aging Metric Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
+          <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
+            isDark 
+              ? "bg-emerald-950/20 border-emerald-900/40 text-emerald-300 shadow-inner" 
+              : "bg-emerald-50 border-emerald-200 text-emerald-900 shadow-xs"
+          }`}>
             <div>
-              <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-emerald-400/80" : "text-emerald-800"}`}>
                 Quick Resolutions (0-5 Days)
               </span>
-              <p className="text-2xl font-black text-emerald-900 mt-1">{greenCount}</p>
-              <p className="text-[10px] text-emerald-700 font-bold mt-0.5">Satisfactory speed recovery</p>
+              <p className={`text-2xl font-black mt-1 ${isDark ? "text-emerald-400" : "text-emerald-900"}`}>{greenCount}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Satisfactory speed recovery</p>
             </div>
-            <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
+              isDark ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-500/10 border-emerald-500/20"
+            }`}>
               <CheckCircle className="h-5 w-5 text-emerald-600" />
             </div>
           </div>
 
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
+          <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
+            isDark 
+              ? "bg-amber-950/20 border-amber-900/40 text-amber-300 shadow-inner" 
+              : "bg-amber-50 border-amber-200 text-amber-900 shadow-xs"
+          }`}>
             <div>
-              <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider">
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-800"}`}>
                 Standard Processing (5-14 Days)
               </span>
-              <p className="text-2xl font-black text-amber-900 mt-1">{yellowCount}</p>
-              <p className="text-[10px] text-amber-700 font-bold mt-0.5">Intermediate resolution duration</p>
+              <p className={`text-2xl font-black mt-1 ${isDark ? "text-amber-400" : "text-amber-900"}`}>{yellowCount}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Intermediate resolution duration</p>
             </div>
-            <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
+              isDark ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-500/10 border-amber-500/20"
+            }`}>
               <Clock className="h-5 w-5 text-amber-600" />
             </div>
           </div>
 
-          <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
+          <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
+            isDark 
+              ? "bg-rose-950/20 border-rose-900/40 text-rose-300 shadow-inner" 
+              : "bg-rose-50 border-rose-200 text-rose-900 shadow-xs"
+          }`}>
             <div>
-              <span className="text-[10px] font-black uppercase text-rose-800 tracking-wider">
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-rose-400/80" : "text-rose-800"}`}>
                 Critical Overdue (14+ Days)
               </span>
-              <p className="text-2xl font-black text-rose-900 mt-1">{redCount}</p>
-              <p className="text-[10px] text-rose-700 font-bold mt-0.5">High-priority aging cases</p>
+              <p className={`text-2xl font-black mt-1 ${isDark ? "text-rose-400" : "text-rose-900"}`}>{redCount}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>High-priority aging cases</p>
             </div>
-            <div className="h-10 w-10 rounded-lg bg-rose-500/10 flex items-center justify-center border border-rose-500/20">
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
+              isDark ? "bg-rose-500/10 border-rose-500/20" : "bg-rose-500/10 border-rose-500/20"
+            }`}>
               <AlertTriangle className="h-5 w-5 text-rose-600" />
             </div>
           </div>
@@ -1346,20 +1437,20 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
         {/* Graphical Insights Visual Charts Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           
-          {/* Chart 1: SLA Aging Distribution (Horizontal Progress Bars) */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          {/* Chart 1: Aging SLA Distribution (Horizontal Progress Bars) */}
+          <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-wider mb-3.5 border-b border-slate-100 pb-1.5">
-                SLA Aging Proportions
+              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                Aging SLA Proportions
               </h4>
               <div className="space-y-3.5">
                 {/* 0-5 Days */}
                 <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                  <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>0-5 Days (Quick)</span>
                     <span>{greenCount} ({totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0}%)</span>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2">
+                  <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
                       style={{ width: `${totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0}%` }}
@@ -1369,11 +1460,11 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
                 {/* 5-14 Days */}
                 <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                  <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>5-14 Days (Standard)</span>
                     <span>{yellowCount} ({totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0}%)</span>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2">
+                  <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-amber-500 h-2 rounded-full transition-all duration-500"
                       style={{ width: `${totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0}%` }}
@@ -1383,11 +1474,11 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
                 {/* 14+ Days */}
                 <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                  <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>14+ Days (Critical)</span>
                     <span>{redCount} ({totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0}%)</span>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2">
+                  <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-rose-500 h-2 rounded-full transition-all duration-500"
                       style={{ width: `${totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0}%` }}
@@ -1396,15 +1487,15 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                 </div>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 font-bold mt-4 pt-1.5 border-t border-slate-100">
+            <p className={`text-[9px] font-bold mt-4 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
               SLA levels represent date-to-date aging analysis thresholds.
             </p>
           </div>
 
           {/* Chart 2: Customer Satisfaction Breakdown */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-wider mb-3.5 border-b border-slate-100 pb-1.5">
+              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
                 Current Satisfaction Breakdown (CSAT)
               </h4>
               <div className="space-y-2">
@@ -1421,28 +1512,28 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
                   return (
                     <div key={level} className="flex items-center text-xs">
-                      <span className="w-24 font-bold text-slate-600 truncate text-[10px]">{level}</span>
-                      <div className="flex-1 bg-slate-100 rounded-full h-2 mx-2">
+                      <span className={`w-24 font-bold truncate text-[10px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>{level}</span>
+                      <div className={`flex-1 rounded-full h-2 mx-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                         <div 
                           className={`${barColor} h-2 rounded-full transition-all duration-500`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <span className="w-10 text-right font-black text-slate-700 text-[10px]">{count} ({pct}%)</span>
+                      <span className={`w-10 text-right font-black text-[10px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>{count} ({pct}%)</span>
                     </div>
                   );
                 })}
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 font-bold mt-3 pt-1.5 border-t border-slate-100">
+            <p className={`text-[9px] font-bold mt-3 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
               Evaluates final call-center follow-up satisfaction levels.
             </p>
           </div>
 
           {/* Chart 3: Operational Status Distribution */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-wider mb-3.5 border-b border-slate-100 pb-1.5">
+              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
                 Current Status
               </h4>
               <div className="space-y-3">
@@ -1458,14 +1549,14 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
 
                   return (
                     <div key={level}>
-                      <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-0.5">
+                      <div className={`flex justify-between text-[11px] font-bold mb-0.5 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                         <span className="flex items-center gap-1">
                           <span className={`inline-block w-2 h-2 rounded-full ${barColor}`} />
                           {level}
                         </span>
                         <span>{count} ({pct}%)</span>
                       </div>
-                      <div className="w-full bg-slate-100 rounded-full h-1.5">
+                      <div className={`w-full rounded-full h-1.5 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                         <div 
                           className={`${barColor} h-1.5 rounded-full transition-all duration-500`}
                           style={{ width: `${pct}%` }}
@@ -1476,7 +1567,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                 })}
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 font-bold mt-4 pt-1.5 border-t border-slate-100">
+            <p className={`text-[9px] font-bold mt-4 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
               Resolution lifecycle velocity metrics.
             </p>
           </div>
@@ -1487,14 +1578,16 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
         <div className="grid grid-cols-1 gap-5">
           
           {/* Full-width Column: Detailed Aging Log & Download */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className={`rounded-xl border shadow-sm overflow-hidden flex flex-col transition-all duration-500 ${cardBg}`}>
+            <div className={`px-5 py-4 border-b flex items-center justify-between transition-all duration-500 ${
+              isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50/50"
+            }`}>
               <div>
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${textTitle}`}>
                   <FileSpreadsheet className="h-4.5 w-4.5 text-blue-600" />
                   Detailed Aging Logs ({totalInScope})
                 </h3>
-                <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                <p className={`text-[10px] font-bold mt-0.5 ${textSub}`}>
                   Individual complaint timestamps and color-coded SLA levels.
                 </p>
               </div>
@@ -1512,7 +1605,9 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
             <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/30 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+                  <tr className={`border-b text-[9px] font-black uppercase tracking-wider transition-colors duration-500 ${
+                    isDark ? "border-slate-800 bg-slate-950/80 text-slate-400" : "border-slate-100 bg-slate-50/30 text-slate-500"
+                  }`}>
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Service Station</th>
@@ -1523,7 +1618,7 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                     <th className="py-3 px-4 text-right">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
+                <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
                   {filteredComplaints.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-10 text-center text-slate-400 font-bold">
@@ -1534,22 +1629,36 @@ export default function ReportsPanel({ complaints }: ReportsPanelProps) {
                     filteredComplaints.map((c) => {
                       const aging = getComplaintAging(c);
                       return (
-                        <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-2.5 px-4 font-mono text-[10px] font-black text-slate-500">{c.id}</td>
-                          <td className="py-2.5 px-4 font-bold text-slate-800">{c.customerName}</td>
+                        <tr key={c.id} className={`transition-colors ${
+                          isDark ? "hover:bg-slate-950/30 text-slate-300" : "hover:bg-slate-50/50 text-slate-700"
+                        }`}>
+                          <td className={`py-2.5 px-4 font-mono text-[10px] font-black ${isDark ? "text-slate-400" : "text-slate-500"}`}>{c.id}</td>
+                          <td className={`py-2.5 px-4 font-bold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{c.customerName}</td>
                           <td className="py-2.5 px-4">
-                            <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                              isDark ? "text-slate-300 bg-slate-950 border-slate-800" : "text-slate-600 bg-slate-100 border-slate-200"
+                            }`}>
                               {c.station}
                             </span>
                           </td>
-                          <td className="py-2.5 px-4 text-slate-700 font-mono text-[10px] font-bold">{c.receivedDateTime || `${c.date} 08:00 AM`}</td>
+                          <td className={`py-2.5 px-4 font-mono text-[10px] font-bold ${isDark ? "text-slate-400" : "text-slate-700"}`}>
+                            {c.receivedDateTime || `${c.date} 08:00 AM`}
+                          </td>
                           <td className="py-2.5 px-4">
-                            <span className="inline-block text-[10px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full text-center">
+                            <span className={`inline-block text-[10px] font-extrabold px-2 py-0.5 rounded-full text-center border ${
+                              isDark 
+                                ? "text-blue-400 bg-blue-950/40 border-blue-900/30" 
+                                : "text-blue-700 bg-blue-50 border-blue-200"
+                            }`}>
                               {c.feedbackStatus || "Follow Up Required"}
                             </span>
                           </td>
                           <td className="py-2.5 px-4">
-                            <span className="inline-block text-[10px] font-extrabold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-center">
+                            <span className={`inline-block text-[10px] font-extrabold px-2 py-0.5 rounded-full text-center border ${
+                              isDark 
+                                ? "text-slate-300 bg-slate-950 border-slate-800" 
+                                : "text-slate-700 bg-slate-100 border-slate-200"
+                            }`}>
                               {c.finalStatus || "Open"}
                             </span>
                           </td>

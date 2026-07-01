@@ -18,7 +18,11 @@ import {
   Calendar,
   FileSpreadsheet,
   Settings,
-  HelpCircle
+  HelpCircle,
+  X,
+  Trash2,
+  Sun,
+  Moon
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis } from "./types";
@@ -27,8 +31,8 @@ import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
 import StationOverview from "./components/StationOverview";
 import MetricCard from "./components/MetricCard";
-import AIRecoveryAssistant from "./components/AIRecoveryAssistant";
 import ReportsPanel from "./components/ReportsPanel";
+import IdealMotorsLogo from "./components/IdealMotorsLogo";
 
 // Initialize client-side Supabase client with safe publishable credentials
 const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
@@ -37,6 +41,17 @@ export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export default function App() {
   // State
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("ideal_theme");
+    return (saved as "light" | "dark") || "light";
+  });
+
+  const toggleTheme = () => {
+    const nextTheme = theme === "light" ? "dark" : "light";
+    setTheme(nextTheme);
+    localStorage.setItem("ideal_theme", nextTheme);
+  };
+
   const [currentUser, setCurrentUser] = useState<{ role: "admin" | "agent" | "callcenter"; station?: string } | null>(() => {
     const savedUser = localStorage.getItem("ideal_group_current_user");
     if (savedUser) {
@@ -117,6 +132,12 @@ export default function App() {
   // Supabase Database Connection State
   const [supabaseActive, setSupabaseActive] = useState<boolean | null>(null);
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
+
+  // Unreachable and Connection alert states
+  const [autoLoggedUnreachable, setAutoLoggedUnreachable] = useState(false);
+  const [showConnectedAlert, setShowConnectedAlert] = useState(false);
+  const [connectedCustomerName, setConnectedCustomerName] = useState("");
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // Load complaints on mount with optimistic local fallback
   useEffect(() => {
@@ -505,14 +526,35 @@ export default function App() {
     saveComplaints(updated);
   };
 
-  // Handle follow-up submission
+  // Handle follow-up submission (triggers confirm popup)
   const handleUpdateFollowUp = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedComplaintId) return;
+    setShowConfirmModal(true);
+  };
+
+  // Actual follow-up submission after user confirms
+  const executeUpdateFollowUp = () => {
+    if (!selectedComplaintId) return;
+    setShowConfirmModal(false);
+
+    let wasUnreachableBefore = false;
+    let isConnectedNow = false;
 
     const updated = complaints.map((c) => {
       if (c.id === selectedComplaintId) {
+        // Check if previously marked as Customer Unreachable or Unreachable or Pending
+        wasUnreachableBefore = 
+          c.feedbackStatus === "Customer Unreachable" || 
+          c.finalStatus === "Unreachable" || 
+          c.status === "Pending";
+
         if (currentUser?.role === "admin") {
+          isConnectedNow = 
+            formStatus !== "Pending" && 
+            formFeedbackStatus !== "Customer Unreachable" && 
+            formFinalStatus !== "Unreachable";
+
           return {
             ...c,
             station: formAssignedStation,
@@ -531,6 +573,10 @@ export default function App() {
         
         if (currentUser?.role === "agent") {
           const submitDate = new Date().toISOString().split("T")[0];
+          isConnectedNow = 
+            formFeedbackStatus !== "Customer Unreachable" && 
+            formFinalStatus !== "Unreachable";
+
           return {
             ...c,
             stationContactedDate: submitDate,
@@ -547,6 +593,10 @@ export default function App() {
         }
 
         if (currentUser?.role === "callcenter") {
+          isConnectedNow = 
+            formFeedbackStatus !== "Customer Unreachable" && 
+            formFinalStatus !== "Unreachable";
+
           return {
             ...c,
             callCenterContactedDate: formCallCenterContactedDate || new Date().toISOString().split("T")[0],
@@ -569,6 +619,71 @@ export default function App() {
     saveComplaints(updated);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
+
+    if (wasUnreachableBefore && isConnectedNow) {
+      setConnectedCustomerName(selectedComplaint?.customerName || "Customer");
+      setShowConnectedAlert(true);
+    }
+  };
+
+  // Quick Action to auto-log customer unreachable and add to pending list
+  const handleMarkUnreachable = async () => {
+    if (!selectedComplaintId || !currentUser) return;
+    
+    const now = new Date();
+    const timestamp = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
+    const autoRemark = `[Auto-Logged Contact Issue: Customer was unreachable at ${timestamp}]`;
+
+    const updated = complaints.map((c) => {
+      if (c.id === selectedComplaintId) {
+        let updatedNotes = c.notes || "";
+        let updatedStationNotes = c.stationResolutionNotes || "";
+        let updatedCallCenterRemarks = c.callCenterFinalRemarks || "";
+
+        if (currentUser.role === "agent") {
+          updatedStationNotes = updatedStationNotes 
+            ? `${updatedStationNotes}\n${autoRemark}` 
+            : autoRemark;
+        } else if (currentUser.role === "callcenter") {
+          updatedCallCenterRemarks = updatedCallCenterRemarks 
+            ? `${updatedCallCenterRemarks}\n${autoRemark}` 
+            : autoRemark;
+        } else {
+          updatedNotes = updatedNotes 
+            ? `${updatedNotes}\n${autoRemark}` 
+            : autoRemark;
+        }
+
+        return {
+          ...c,
+          status: "Pending" as FollowUpStatus, // Add back to pending list!
+          feedbackStatus: "Customer Unreachable",
+          finalStatus: "Unreachable",
+          notes: updatedNotes,
+          stationResolutionNotes: updatedStationNotes,
+          callCenterFinalRemarks: updatedCallCenterRemarks,
+          updatedAt: now.toISOString().split("T")[0]
+        };
+      }
+      return c;
+    });
+
+    await saveComplaints(updated);
+    
+    // Instantly sync local form state fields so the active view matches the new values
+    setFormFeedbackStatus("Customer Unreachable");
+    setFormFinalStatus("Unreachable");
+    setFormStatus("Pending");
+    if (currentUser.role === "agent") {
+      setFormStationResolutionNotes((prev) => prev ? `${prev}\n${autoRemark}` : autoRemark);
+    } else if (currentUser.role === "callcenter") {
+      setFormCallCenterFinalRemarks((prev) => prev ? `${prev}\n${autoRemark}` : autoRemark);
+    } else {
+      setFormNotes((prev) => prev ? `${prev}\n${autoRemark}` : autoRemark);
+    }
+
+    setAutoLoggedUnreachable(true);
+    setTimeout(() => setAutoLoggedUnreachable(false), 4000);
   };
 
   // Pre-fill form when selected complaint changes
@@ -607,7 +722,7 @@ export default function App() {
   }, [selectedComplaintId, currentUser]);
 
   if (!currentUser) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} theme={theme} toggleTheme={toggleTheme} />;
   }
 
   // Filter complaints based on search and selected filter values
@@ -666,15 +781,15 @@ export default function App() {
   const getSatisfactionBadge = (level: SatisfactionLevel) => {
     switch (level) {
       case "Very Dissatisfied":
-        return <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded">😡 Very Dissatisfied</span>;
+        return <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Very Dissatisfied</span>;
       case "Dissatisfied":
-        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🙁 Dissatisfied</span>;
+        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Dissatisfied</span>;
       case "Neutral":
-        return <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded">😐 Neutral</span>;
+        return <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Neutral</span>;
       case "Satisfied":
-        return <span className="bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🙂 Satisfied</span>;
+        return <span className="bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Satisfied</span>;
       case "Very Satisfied":
-        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded">😄 Very Satisfied</span>;
+        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Very Satisfied</span>;
     }
   };
 
@@ -725,20 +840,20 @@ export default function App() {
   };
 
   return (
-    <div id="app-root" className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div id="app-root" className="min-h-screen bg-luxury-light-grid text-slate-900 flex flex-col font-sans animate-fade-in-scale">
       
       {/* Top Corporate Nav */}
       <header id="app-header" className="bg-white border-b border-slate-200 shrink-0 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-slate-100 border border-slate-200 p-2 rounded-lg">
-              <Car id="header-logo" className="h-5 w-5 text-blue-600" />
+            <div className="bg-slate-950 hover:bg-black px-3 py-1.5 rounded-lg border border-slate-800 flex items-center justify-center transition-all shadow-xs">
+              <IdealMotorsLogo className="h-7 w-auto" />
             </div>
-            <div>
-              <h1 id="header-title" className="text-xs font-black tracking-tight text-slate-800 uppercase">
-                Ideal Group CX Recovery
+            <div className="border-l border-slate-200 pl-3">
+              <h1 id="header-title" className="text-xs font-black tracking-wider text-slate-800 uppercase font-sans">
+                CX Recovery Terminal
               </h1>
-              <p className="text-[9px] text-slate-500 font-bold">
+              <p className="text-[9px] text-slate-500 font-extrabold">
                 {currentUser.role === "admin" 
                   ? "National Management Terminal" 
                   : currentUser.role === "callcenter" 
@@ -799,7 +914,8 @@ export default function App() {
           >
             <div className="space-y-1">
               <h4 className="text-xs font-black text-amber-800 uppercase tracking-tight flex items-center gap-2">
-                ⚠️ Supabase Setup or RLS Policies Required
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                Supabase Setup or RLS Policies Required
               </h4>
               <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
                 A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but there is a table or policy configuration issue. Since your <code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">complaints</code> table already exists, copy our complete drop-and-recreate script below to safely re-create the table and configure all required public read/write permissions so that other PCs can sync instantly!
@@ -950,6 +1066,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && currentTab === "stations" && (
           <StationOverview 
             complaints={complaints} 
+            theme={theme}
             onSelectStation={(stationCode) => {
               setStationFilter(stationCode);
               setCurrentTab("analytics");
@@ -967,7 +1084,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
 
         {/* REPORTS & AGING TAB */}
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && currentTab === "reports" && (
-          <ReportsPanel complaints={complaints} />
+          <ReportsPanel complaints={complaints} theme={theme} />
         )}
 
         {/* CORE ANALYTICS BOARD / WORKSPACE VIEW */}
@@ -977,6 +1094,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
             {/* KPI Metrics Strip */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               <MetricCard
+                theme={theme}
                 title="Total Dissatisfied"
                 value={totalCount}
                 subtitle="From current search scope"
@@ -989,6 +1107,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                 }}
               />
               <MetricCard
+                theme={theme}
                 title="Pending Recovery"
                 value={pendingCount}
                 subtitle="Immediate action required"
@@ -996,6 +1115,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                 colorClass="bg-red-50 border-red-200 text-red-700 shadow-sm"
               />
               <MetricCard
+                theme={theme}
                 title="In Progress"
                 value={progressCount}
                 subtitle="Currently being investigated"
@@ -1003,6 +1123,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                 colorClass="bg-orange-50 border-orange-200 text-orange-700 shadow-sm"
               />
               <MetricCard
+                theme={theme}
                 title="Successfully Resolved"
                 value={resolvedCount}
                 subtitle="Satisfaction restored"
@@ -1010,6 +1131,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                 colorClass="bg-green-50 border-green-200 text-green-700 shadow-sm"
               />
               <MetricCard
+                theme={theme}
                 title="CX Recovery Score"
                 value={`${recoveryRate}%`}
                 subtitle="Converted to Neutral/Satisfied"
@@ -1156,7 +1278,8 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                             className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-[10px] py-1 px-2.5 rounded-md transition-all shadow-xs flex items-center gap-1 cursor-pointer"
                             title="Delete all complaints from local storage"
                           >
-                            🗑️ Delete All
+                            <Trash2 className="h-3 w-3" />
+                            Delete All
                           </button>
                         ) : (
                           <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-md p-0.5">
@@ -1296,7 +1419,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 hover:border-red-200 text-[10px] font-bold px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 shrink-0"
                                   title="Delete this complaint"
                                 >
-                                  <span>🗑️</span> Remove
+                                  <Trash2 className="h-3 w-3" /> Remove
                                 </button>
                               ) : (
                                 <div className="bg-red-50 p-1.5 rounded border border-red-200 flex flex-col gap-1 items-end">
@@ -1401,6 +1524,31 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                       </div>
                     </div>
 
+                    {/* Quick Unreachable Action Component */}
+                    <div className="flex flex-col gap-1.5 bg-red-50/40 border border-red-100 p-2.5 rounded-lg text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-red-800 text-[10px] uppercase tracking-wider">Contact Attempt Issue?</span>
+                        <span className="text-[9px] font-bold text-slate-400">Did not connect?</span>
+                      </div>
+                      <button
+                        id="btn-mark-unreachable"
+                        type="button"
+                        onClick={handleMarkUnreachable}
+                        className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs py-1.5 px-3 rounded-md transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer w-full"
+                        title="Auto-log Customer Unreachable and keep/add to pending list without manually clicking save"
+                      >
+                        <Phone className="h-3.5 w-3.5 animate-pulse" />
+                        Mark Unreachable (Auto-Save)
+                      </button>
+                      
+                      {autoLoggedUnreachable && (
+                        <div className="text-red-700 text-[10px] font-black bg-red-50 p-1.5 rounded border border-red-200 text-center animate-pulse uppercase tracking-wider flex items-center justify-center gap-1">
+                          <CheckCircle className="h-3 w-3 text-red-600 shrink-0" />
+                          Unreachable remark logged & kept on pending list
+                        </div>
+                      )}
+                    </div>
+
                     {/* Full Comprehensive Excel Work Order details block */}
                     <div className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden text-xs">
                       <div className="bg-slate-100/80 px-3 py-2 border-b border-slate-200 flex justify-between items-center">
@@ -1494,12 +1642,6 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                         {selectedComplaint.description}
                       </div>
                     </div>
-
-                    {/* Gemini AI Assistant Component */}
-                    <AIRecoveryAssistant 
-                      complaint={selectedComplaint} 
-                      onAnalysisSuccess={handleAIAnalysisSuccess} 
-                    />
 
                     {/* Role-Specific Action Forms */}
                     <div className="border-t border-slate-100 pt-4 space-y-4">
@@ -1617,11 +1759,11 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                 onChange={(e) => setFormCallCenterFinalSatisfaction(e.target.value as SatisfactionLevel)}
                                 className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
                               >
-                                <option value="Very Dissatisfied">😡 Very Dissatisfied (No change)</option>
-                                <option value="Dissatisfied">🙁 Dissatisfied (Still unhappy)</option>
-                                <option value="Neutral">😐 Neutral (Acceptable outcome)</option>
-                                <option value="Satisfied">🙂 Satisfied (Successfully converted)</option>
-                                <option value="Very Satisfied">😄 Very Satisfied (Extremely happy)</option>
+                                <option value="Very Dissatisfied">Very Dissatisfied (No change)</option>
+                                <option value="Dissatisfied">Dissatisfied (Still unhappy)</option>
+                                <option value="Neutral">Neutral (Acceptable outcome)</option>
+                                <option value="Satisfied">Satisfied (Successfully converted)</option>
+                                <option value="Very Satisfied">Very Satisfied (Extremely happy)</option>
                               </select>
                             </div>
                           </div>
@@ -1756,11 +1898,11 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                 onChange={(e) => setFormSatisfaction(e.target.value as SatisfactionLevel)}
                                 className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
                               >
-                                <option value="Very Dissatisfied">😡 Very Dissatisfied</option>
-                                <option value="Dissatisfied">🙁 Dissatisfied</option>
-                                <option value="Neutral">😐 Neutral</option>
-                                <option value="Satisfied">🙂 Satisfied</option>
-                                <option value="Very Satisfied">😄 Very Satisfied</option>
+                                <option value="Very Dissatisfied">Very Dissatisfied</option>
+                                <option value="Dissatisfied">Dissatisfied</option>
+                                <option value="Neutral">Neutral</option>
+                                <option value="Satisfied">Satisfied</option>
+                                <option value="Very Satisfied">Very Satisfied</option>
                               </select>
                             </div>
                             <div>
@@ -2133,6 +2275,130 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Nice Connected Alert Custom Modal */}
+      {showConnectedAlert && (
+        <div id="connected-alert-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 text-center space-y-4 animate-scale-in">
+            <div className="w-16 h-16 bg-green-50 border border-green-100 rounded-full flex items-center justify-center mx-auto text-green-600 animate-bounce">
+              <CheckCircle className="h-10 w-10" />
+            </div>
+            
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-800 uppercase tracking-wider">
+                Customer Connected
+              </h3>
+              <p className="text-xs text-slate-500 font-semibold">
+                Successfully re-established communication with customer:
+              </p>
+              <p className="text-sm font-extrabold text-blue-600 font-sans mt-1 bg-blue-50 py-1.5 px-3 rounded-md border border-blue-100 inline-block">
+                {connectedCustomerName}
+              </p>
+            </div>
+            
+            <p className="text-xs text-slate-600 leading-relaxed font-medium">
+              The customer was previously flagged as unreachable. The updated follow-up details and recovery status have been logged and synced successfully. Great job restoring the customer relationship!
+            </p>
+            
+            <button
+              type="button"
+              onClick={() => {
+                setShowConnectedAlert(false);
+                setConnectedCustomerName("");
+              }}
+              className="w-full bg-green-600 hover:bg-green-700 active:bg-green-800 text-white font-extrabold text-xs py-2 px-4 rounded-lg transition-all shadow-md cursor-pointer"
+            >
+              Wonderful, Continue!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Update Follow Up Actions */}
+      {showConfirmModal && (
+        <div id="confirm-action-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-scale-in">
+            {/* Header */}
+            <div className="bg-slate-900 px-6 py-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="h-5 w-5 text-amber-400 animate-pulse" />
+                <h3 className="text-sm font-black uppercase tracking-wider">Confirm Action Update</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConfirmModal(false)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer p-1"
+                aria-label="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              <div className="flex gap-4 items-start">
+                <div className="bg-amber-50 p-2.5 rounded-full border border-amber-100 text-amber-600 shrink-0">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Are you sure you want to save?</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                    You are updating the recovery status and logging adviser notes for complaint <strong className="text-slate-800">{selectedComplaintId}</strong> ({selectedComplaint?.customerName}). This action will immediately sync with the main database.
+                  </p>
+                </div>
+              </div>
+
+              {/* Summary details review box */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-2">
+                <p className="font-bold text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200 pb-1.5">Action Preview Summary</p>
+                {currentUser?.role === "agent" && (
+                  <div className="space-y-1">
+                    <p className="text-slate-600"><strong>Adviser Name:</strong> {formAgentName || "Not set"}</p>
+                    <p className="text-slate-600 truncate"><strong>Resolution Notes:</strong> {formStationResolutionNotes || "Not set"}</p>
+                    <p className="text-slate-600"><strong>Feedback Status:</strong> {formFeedbackStatus}</p>
+                    <p className="text-slate-600"><strong>Final Status:</strong> {formFinalStatus}</p>
+                  </div>
+                )}
+                {currentUser?.role === "callcenter" && (
+                  <div className="space-y-1">
+                    <p className="text-slate-600"><strong>Contact Date:</strong> {formCallCenterContactedDate || "Not set"}</p>
+                    <p className="text-slate-600"><strong>Verified Satisfaction:</strong> {formCallCenterFinalSatisfaction}</p>
+                    <p className="text-slate-600 truncate"><strong>Final Remarks:</strong> {formCallCenterFinalRemarks || "Not set"}</p>
+                    <p className="text-slate-600"><strong>Feedback Status:</strong> {formFeedbackStatus}</p>
+                    <p className="text-slate-600"><strong>Final Status:</strong> {formFinalStatus}</p>
+                  </div>
+                )}
+                {currentUser?.role === "admin" && (
+                  <div className="space-y-1">
+                    <p className="text-slate-600"><strong>Status:</strong> {formStatus}</p>
+                    <p className="text-slate-600"><strong>Satisfaction:</strong> {formSatisfaction}</p>
+                    <p className="text-slate-600"><strong>Feedback Status:</strong> {formFeedbackStatus}</p>
+                    <p className="text-slate-600"><strong>Final Status:</strong> {formFinalStatus}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowConfirmModal(false)}
+                className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-extrabold text-xs py-2 px-4 rounded-lg transition-all shadow-xs cursor-pointer"
+              >
+                No, Cancel & Close
+              </button>
+              <button
+                type="button"
+                onClick={executeUpdateFollowUp}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs py-2 px-4 rounded-lg transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                Yes, Save & Sync
+              </button>
+            </div>
           </div>
         </div>
       )}
