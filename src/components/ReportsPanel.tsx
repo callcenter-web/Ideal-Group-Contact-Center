@@ -255,7 +255,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
         c.station,
         c.category,
         c.status,
-        c.feedbackStatus || "Follow Up Required",
+        c.feedbackStatus || "Follow-up Required",
         c.finalStatus || "Open",
         c.receivedDateTime || `${c.date} 08:00 AM`, // Received Date and Time
         c.callCenterContactedDate || "N/A", // Date Contacted by Call Center
@@ -330,6 +330,38 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
     acc[level] = filteredComplaints.filter(c => c.currentSatisfaction === level).length;
     return acc;
   }, {} as Record<SatisfactionLevel, number>);
+
+  // Feedback Status Breakdown (Call Center Response)
+  const feedbackStatusLevels = [
+    "Satisfied After Resolution",
+    "Still Dissatisfied",
+    "No Solution Received",
+    "Customer Unreachable",
+    "Follow-up Required"
+  ];
+
+  const feedbackStatusCounts = feedbackStatusLevels.reduce((acc, level) => {
+    acc[level] = filteredComplaints.filter(c => {
+      const status = c.feedbackStatus;
+      if (level === "Satisfied After Resolution") {
+        return status === "Satisfied After Resolution" || status === "Satisfied";
+      }
+      if (level === "Still Dissatisfied") {
+        return status === "Still Dissatisfied" || status === "Not Satisfied";
+      }
+      if (level === "No Solution Received") {
+        return status === "No Solution Received" || status === "No solution Received";
+      }
+      if (level === "Customer Unreachable") {
+        return status === "Customer Unreachable";
+      }
+      if (level === "Follow-up Required") {
+        return status === "Follow-up Required" || status === "Follow Up Required" || !status;
+      }
+      return status === level;
+    }).length;
+    return acc;
+  }, {} as Record<string, number>);
 
   // Status Breakdown
   const statusLevels = ["Pending", "In Progress", "Contacted", "Resolved"];
@@ -544,36 +576,36 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
       pdf.text("between data entry and resolution.", 16, chartY + 62);
 
 
-      // CHART B: CSAT Breakdown (x=12+64=76)
+      // CHART B: Call Center Feedback Breakdown (x=12+64=76)
       pdf.setFillColor(255, 255, 255);
       pdf.setDrawColor(226, 232, 240);
       pdf.rect(12 + chartW + 6, chartY, chartW, chartH, "FD");
 
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(9);
+      pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
-      pdf.text("CSAT BREAKDOWN", 12 + chartW + 10, chartY + 6);
+      pdf.text("FEEDBACK STATUS", 12 + chartW + 10, chartY + 6);
       pdf.line(12 + chartW + 10, chartY + 9, 12 + chartW * 2 + 2, chartY + 9);
 
-      pdf.setFontSize(7);
-      const levels: SatisfactionLevel[] = ["Very Dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very Satisfied"];
-      levels.forEach((lvl, idx) => {
-        const count = satisfactionCounts[lvl] || 0;
+      pdf.setFontSize(6.2);
+      feedbackStatusLevels.forEach((lvl, idx) => {
+        const count = feedbackStatusCounts[lvl] || 0;
         const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
         const curY = chartY + 16 + idx * 11;
         
         pdf.setTextColor(71, 85, 105);
-        pdf.text(`${lvl}: ${count} (${pct}%)`, 12 + chartW + 10, curY);
+        const displayLabel = lvl.length > 25 ? lvl.substring(0, 22) + "..." : lvl;
+        pdf.text(`${displayLabel}: ${count} (${pct}%)`, 12 + chartW + 10, curY);
         
         pdf.setFillColor(241, 245, 249);
         pdf.rect(12 + chartW + 10, curY + 2, 50, 3, "F");
         
         if (pct > 0) {
-          let col = [148, 163, 184]; // neutral gray
-          if (lvl.includes("Very Satisfied")) col = [5, 150, 105]; // dark green
-          else if (lvl.includes("Satisfied")) col = [16, 185, 129]; // green
-          else if (lvl.includes("Very Dissatisfied")) col = [220, 38, 38]; // red
-          else if (lvl.includes("Dissatisfied")) col = [245, 158, 11]; // orange
+          let col = [59, 130, 246]; // blue-500
+          if (lvl === "Satisfied After Resolution") col = [16, 185, 129]; // emerald-500
+          else if (lvl === "Still Dissatisfied") col = [239, 68, 68]; // rose-500
+          else if (lvl === "No Solution Received") col = [245, 158, 11]; // amber-500
+          else if (lvl === "Customer Unreachable") col = [168, 85, 247]; // purple-500
           
           pdf.setFillColor(col[0], col[1], col[2]);
           pdf.rect(12 + chartW + 10, curY + 2, (pct / 100) * 50, 3, "F");
@@ -811,7 +843,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
 
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(30, 64, 175);
-        pdf.text(c.feedbackStatus || "Follow Up Required", 112, logTableY + 7);
+        pdf.text(c.feedbackStatus || "Follow-up Required", 112, logTableY + 7);
 
         // Aging
         const agingInfo = getComplaintAging(c);
@@ -1595,41 +1627,45 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
             </p>
           </div>
 
-          {/* Chart 2: Customer Satisfaction Breakdown */}
+          {/* Chart 2: Call Center Feedback Status Breakdown */}
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
               <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                Current Satisfaction Breakdown (CSAT)
+                Call Center Feedback Status
               </h4>
               <div className="space-y-2">
-                {satisfactionLevels.map((level) => {
-                  const count = satisfactionCounts[level] || 0;
+                {feedbackStatusLevels.map((level) => {
+                  const count = feedbackStatusCounts[level] || 0;
                   const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
                   
                   let barColor = "bg-blue-500";
-                  if (level.includes("Very Satisfied")) barColor = "bg-emerald-600";
-                  else if (level.includes("Satisfied")) barColor = "bg-emerald-400";
-                  else if (level.includes("Neutral")) barColor = "bg-slate-400";
-                  else if (level.includes("Very Dissatisfied")) barColor = "bg-rose-600";
-                  else if (level.includes("Dissatisfied")) barColor = "bg-orange-400";
+                  if (level === "Satisfied After Resolution") barColor = "bg-emerald-500";
+                  else if (level === "Still Dissatisfied") barColor = "bg-rose-500";
+                  else if (level === "No Solution Received") barColor = "bg-amber-500";
+                  else if (level === "Customer Unreachable") barColor = "bg-purple-500";
+                  else if (level === "Follow-up Required") barColor = "bg-blue-500";
 
                   return (
                     <div key={level} className="flex items-center text-xs">
-                      <span className={`w-24 font-bold truncate text-[10px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>{level}</span>
+                      <span className={`w-36 font-bold truncate text-[10px] ${isDark ? "text-slate-400" : "text-slate-600"}`} title={level}>
+                        {level}
+                      </span>
                       <div className={`flex-1 rounded-full h-2 mx-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                         <div 
                           className={`${barColor} h-2 rounded-full transition-all duration-500`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <span className={`w-10 text-right font-black text-[10px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>{count} ({pct}%)</span>
+                      <span className={`w-12 text-right font-black text-[10px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                        {count} ({pct}%)
+                      </span>
                     </div>
                   );
                 })}
               </div>
             </div>
             <p className={`text-[9px] font-bold mt-3 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
-              Evaluates final call-center follow-up satisfaction levels.
+              Evaluates current call center response status classifications.
             </p>
           </div>
 
@@ -1753,7 +1789,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
                                 ? "text-blue-400 bg-blue-950/40 border-blue-900/30" 
                                 : "text-blue-700 bg-blue-50 border-blue-200"
                             }`}>
-                              {c.feedbackStatus || "Follow Up Required"}
+                              {c.feedbackStatus || "Follow-up Required"}
                             </span>
                           </td>
                           <td className="py-2.5 px-4">

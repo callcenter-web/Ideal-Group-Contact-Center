@@ -93,7 +93,7 @@ export default function App() {
   const [formCallCenterFinalSatisfaction, setFormCallCenterFinalSatisfaction] = useState<SatisfactionLevel>("Satisfied");
   
   // Parallel track status fields
-  const [formFeedbackStatus, setFormFeedbackStatus] = useState("Follow Up Required");
+  const [formFeedbackStatus, setFormFeedbackStatus] = useState("Follow-up Required");
   const [formFinalStatus, setFormFinalStatus] = useState("Open");
   const [formSolutionProvided, setFormSolutionProvided] = useState("");
   const [formSolutionDate, setFormSolutionDate] = useState("");
@@ -705,7 +705,7 @@ export default function App() {
 
       // Intelligent fallbacks for custom parallel status fields
       const initialFeedbackStatus = selectedComplaint.feedbackStatus || (
-        selectedComplaint.status === "Resolved" ? "Satisfied" : "Follow Up Required"
+        selectedComplaint.status === "Resolved" ? "Satisfied After Resolution" : "Follow-up Required"
       );
       const initialFinalStatus = selectedComplaint.finalStatus || (
         selectedComplaint.status === "Resolved" ? "Closed" :
@@ -807,12 +807,13 @@ export default function App() {
   };
 
   const getFeedbackStatusBadge = (status?: string) => {
-    const val = status || "Follow Up Required";
+    const val = status || "Follow-up Required";
     let colorClass = "bg-blue-50 text-blue-700 border-blue-200";
-    if (val === "Satisfied") colorClass = "bg-green-50 text-green-700 border-green-200";
-    else if (val === "Not Satisfied") colorClass = "bg-red-50 text-red-700 border-red-200";
-    else if (val === "No solution Received") colorClass = "bg-amber-50 text-amber-700 border-amber-200";
+    if (val === "Satisfied After Resolution" || val === "Satisfied") colorClass = "bg-green-50 text-green-700 border-green-200";
+    else if (val === "Still Dissatisfied" || val === "Not Satisfied") colorClass = "bg-red-50 text-red-700 border-red-200";
+    else if (val === "No Solution Received" || val === "No solution Received") colorClass = "bg-amber-50 text-amber-700 border-amber-200";
     else if (val === "Customer Unreachable") colorClass = "bg-purple-50 text-purple-700 border-purple-200";
+    else if (val === "Follow-up Required" || val === "Follow Up Required") colorClass = "bg-blue-50 text-blue-700 border-blue-200";
     else if (val === "Not Interested to Talk") colorClass = "bg-slate-100 text-slate-700 border-slate-300";
     else if (val === "Escalated") colorClass = "bg-rose-50 text-rose-700 border-rose-200";
     
@@ -1812,19 +1813,17 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                               onChange={(e) => setFormFeedbackStatus(e.target.value)}
                               className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold"
                             >
-                              <option value="Satisfied">Satisfied</option>
-                              <option value="Not Satisfied">Not Satisfied</option>
-                              <option value="No solution Received">No solution Received</option>
+                              <option value="Satisfied After Resolution">Satisfied After Resolution</option>
+                              <option value="Still Dissatisfied">Still Dissatisfied</option>
+                              <option value="No Solution Received">No Solution Received</option>
                               <option value="Customer Unreachable">Customer Unreachable</option>
-                              <option value="Not Interested to Talk">Not Interested to Talk</option>
-                              <option value="Follow Up Required">Follow Up Required</option>
-                              <option value="Escalated">Escalated</option>
+                              <option value="Follow-up Required">Follow-up Required</option>
                             </select>
                           </div>
 
                           {saveSuccess && (
                             <div className="text-green-700 text-xs font-semibold bg-green-50 p-2 rounded border border-green-200 text-center">
-                              {formFeedbackStatus === "Satisfied"
+                              {formFeedbackStatus === "Satisfied" || formFeedbackStatus === "Satisfied After Resolution"
                                 ? "Call center feedback saved & marked as Resolved!"
                                 : "Call center feedback saved & kept in Pending Recovery!"}
                             </div>
@@ -1964,13 +1963,11 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                 onChange={(e) => setFormFeedbackStatus(e.target.value)}
                                 className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
                               >
-                                <option value="Satisfied">Satisfied</option>
-                                <option value="Not Satisfied">Not Satisfied</option>
-                                <option value="No solution Received">No solution Received</option>
+                                <option value="Satisfied After Resolution">Satisfied After Resolution</option>
+                                <option value="Still Dissatisfied">Still Dissatisfied</option>
+                                <option value="No Solution Received">No Solution Received</option>
                                 <option value="Customer Unreachable">Customer Unreachable</option>
-                                <option value="Not Interested to Talk">Not Interested to Talk</option>
-                                <option value="Follow Up Required">Follow Up Required</option>
-                                <option value="Escalated">Escalated</option>
+                                <option value="Follow-up Required">Follow-up Required</option>
                               </select>
                             </div>
                             <div>

@@ -51,7 +51,7 @@ export interface Complaint {
   callCenterFinalSatisfaction?: SatisfactionLevel; // Call Center logged final satisfaction
   
   // Custom data fields for parallel tracking
-  feedbackStatus?: string; // Satisfied, Not Satisfied, No solution Received, Customer Unreachable, Follow Up Required, Escalated
+  feedbackStatus?: string; // Satisfied After Resolution, Still Dissatisfied, No Solution Received, Customer Unreachable, Follow-up Required
   finalStatus?: string; // Open, Pending with Aftermarket, Solution Received, Pending Customer Verification, Closed, Unreachable
   solutionProvidedByAftermarket?: string;
   solutionDate?: string;
