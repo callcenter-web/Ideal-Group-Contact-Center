@@ -2457,6 +2457,34 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
         </div>
       )}
 
+      {/* Unified Footer: Signature & Theme Switcher */}
+      <footer className="shrink-0 mt-8 mb-6 flex flex-col items-center gap-3 text-center border-t pt-6 border-slate-200/30 dark:border-slate-800/30">
+        <p className={`text-[10px] font-mono uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+          Solution by Yash (All Rights Reserved) • Passwords Protected
+        </p>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-xs cursor-pointer ${
+            isDark 
+              ? "bg-slate-900 border-slate-800 text-amber-400 hover:text-amber-300 hover:bg-slate-800" 
+              : "bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50"
+          }`}
+        >
+          {isDark ? (
+            <>
+              <Sun className="h-3.5 w-3.5" />
+              <span>Light Mode</span>
+            </>
+          ) : (
+            <>
+              <Moon className="h-3.5 w-3.5" />
+              <span>Dark Mode</span>
+            </>
+          )}
+        </button>
+      </footer>
+
     </div>
   );
 }

@@ -84,21 +84,26 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
     let bgClass = "";
     let label = "";
 
-    if (days <= 5) {
+    if (days <= 3) {
       colorClass = "border-emerald-200 text-emerald-700 bg-emerald-50";
       textClass = "text-emerald-600";
       bgClass = "bg-emerald-500";
-      label = "0-5 Days (Green)";
-    } else if (days <= 14) {
+      label = "0-3 Days (New)";
+    } else if (days <= 5) {
       colorClass = "border-amber-200 text-amber-700 bg-amber-50";
       textClass = "text-amber-600";
       bgClass = "bg-amber-500";
-      label = "5-14 Days (Yellow)";
+      label = "3-5 Days (Pending)";
+    } else if (days <= 10) {
+      colorClass = "border-orange-200 text-orange-700 bg-orange-50";
+      textClass = "text-orange-600";
+      bgClass = "bg-orange-500";
+      label = "6-10 Days (Escalated)";
     } else {
       colorClass = "border-rose-200 text-rose-700 bg-rose-50";
       textClass = "text-rose-600";
       bgClass = "bg-rose-500";
-      label = "14+ Days (Red)";
+      label = ">10 Days (Critical)";
     }
 
     return { days, colorClass, textClass, bgClass, label };
@@ -154,14 +159,16 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
   // Calculate high-level stats for the active filtered scope
   const totalInScope = filteredComplaints.length;
   
-  let greenCount = 0;
-  let yellowCount = 0;
-  let redCount = 0;
+  let greenCount = 0; // 0-3 Days (New)
+  let yellowCount = 0; // 3-5 Days (Pending)
+  let orangeCount = 0; // 6-10 Days (Escalated)
+  let redCount = 0; // >10 Days (Critical)
 
   filteredComplaints.forEach((c) => {
     const { days } = getComplaintAging(c);
-    if (days <= 5) greenCount++;
-    else if (days <= 14) yellowCount++;
+    if (days <= 3) greenCount++;
+    else if (days <= 5) yellowCount++;
+    else if (days <= 10) orangeCount++;
     else redCount++;
   });
 
@@ -180,9 +187,22 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
     });
     const avgAging = total > 0 ? Math.round(totalAgingDays / total) : 0;
 
-    let avgAgingColor = "text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded text-[10px]";
-    if (avgAging > 5 && avgAging <= 14) avgAgingColor = "text-amber-600 font-bold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded text-[10px]";
-    else if (avgAging > 14) avgAgingColor = "text-rose-600 font-bold bg-rose-50 border border-rose-100 px-2 py-0.5 rounded text-[10px]";
+    let avgAgingColor = isDark 
+      ? "text-emerald-300 font-bold bg-emerald-950/40 border border-emerald-900/30 px-2 py-0.5 rounded text-[10px]"
+      : "text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded text-[10px]";
+    if (avgAging > 3 && avgAging <= 5) {
+      avgAgingColor = isDark
+        ? "text-amber-300 font-bold bg-amber-950/40 border border-amber-900/30 px-2 py-0.5 rounded text-[10px]"
+        : "text-amber-600 font-bold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded text-[10px]";
+    } else if (avgAging > 5 && avgAging <= 10) {
+      avgAgingColor = isDark
+        ? "text-orange-300 font-bold bg-orange-950/40 border border-orange-900/30 px-2 py-0.5 rounded text-[10px]"
+        : "text-orange-600 font-bold bg-orange-50 border border-orange-100 px-2 py-0.5 rounded text-[10px]";
+    } else if (avgAging > 10) {
+      avgAgingColor = isDark
+        ? "text-rose-300 font-bold bg-rose-950/40 border border-rose-900/30 px-2 py-0.5 rounded text-[10px]"
+        : "text-rose-600 font-bold bg-rose-50 border border-rose-100 px-2 py-0.5 rounded text-[10px]";
+    }
 
     return {
       code: station.code,
@@ -393,55 +413,71 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
       pdf.text(`Date Range:     ${startDate || "Beginning of time"} to ${endDate || "Today"}`, 90, 52);
       pdf.text(`Total Records:  ${totalInScope} complaints`, 150, 47);
 
-      // 3 KPI Cards at Y=65
-      const cardW = 58;
+      // 4 KPI Cards at Y=64
+      const cardW = 44;
       const cardH = 22;
       const cardY = 64;
+      const gap = 3;
 
-      // Card 1: Quick Resolution (Green)
+      // Card 1: New (0-3 Days)
       pdf.setFillColor(236, 253, 245);
       pdf.setDrawColor(167, 243, 208);
       pdf.rect(12, cardY, cardW, cardH, "FD");
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8);
+      pdf.setFontSize(7.5);
       pdf.setTextColor(6, 95, 70);
-      pdf.text("Quick (0-5 Days)", 16, cardY + 5);
-      pdf.setFontSize(16);
+      pdf.text("New (0-3 Days)", 15, cardY + 5);
+      pdf.setFontSize(14);
       const greenPct = totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0;
-      pdf.text(`${greenCount}`, 16, cardY + 13);
-      pdf.setFontSize(8);
+      pdf.text(`${greenCount}`, 15, cardY + 13);
+      pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${greenPct}% of total complaints`, 16, cardY + 18);
+      pdf.text(`${greenPct}% of total`, 15, cardY + 18);
 
-      // Card 2: Standard Processing (Yellow)
+      // Card 2: Pending (3-5 Days)
       pdf.setFillColor(254, 243, 199);
       pdf.setDrawColor(253, 230, 138);
-      pdf.rect(12 + cardW + 6, cardY, cardW, cardH, "FD");
+      pdf.rect(12 + cardW + gap, cardY, cardW, cardH, "FD");
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8);
+      pdf.setFontSize(7.5);
       pdf.setTextColor(146, 64, 14);
-      pdf.text("Standard (5-14 Days)", 12 + cardW + 10, cardY + 5);
-      pdf.setFontSize(16);
+      pdf.text("Pending (3-5 Days)", 12 + cardW + gap + 3, cardY + 5);
+      pdf.setFontSize(14);
       const yellowPct = totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0;
-      pdf.text(`${yellowCount}`, 12 + cardW + 10, cardY + 13);
-      pdf.setFontSize(8);
+      pdf.text(`${yellowCount}`, 12 + cardW + gap + 3, cardY + 13);
+      pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${yellowPct}% of total complaints`, 12 + cardW + 10, cardY + 18);
+      pdf.text(`${yellowPct}% of total`, 12 + cardW + gap + 3, cardY + 18);
 
-      // Card 3: Critical Overdue (Red)
+      // Card 3: Escalated (6-10 Days)
+      pdf.setFillColor(255, 247, 237);
+      pdf.setDrawColor(254, 215, 170);
+      pdf.rect(12 + (cardW + gap) * 2, cardY, cardW, cardH, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(194, 65, 12);
+      pdf.text("Escalated (6-10 Days)", 12 + (cardW + gap) * 2 + 3, cardY + 5);
+      pdf.setFontSize(14);
+      const orangePct = totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0;
+      pdf.text(`${orangeCount}`, 12 + (cardW + gap) * 2 + 3, cardY + 13);
+      pdf.setFontSize(7);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${orangePct}% of total`, 12 + (cardW + gap) * 2 + 3, cardY + 18);
+
+      // Card 4: Critical (>10 Days)
       pdf.setFillColor(254, 242, 242);
       pdf.setDrawColor(254, 202, 202);
-      pdf.rect(12 + cardW * 2 + 12, cardY, cardW, cardH, "FD");
+      pdf.rect(12 + (cardW + gap) * 3, cardY, cardW, cardH, "FD");
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8);
+      pdf.setFontSize(7.5);
       pdf.setTextColor(153, 27, 27);
-      pdf.text("Critical (14+ Days)", 12 + cardW * 2 + 16, cardY + 5);
-      pdf.setFontSize(16);
+      pdf.text("Critical (>10 Days)", 12 + (cardW + gap) * 3 + 3, cardY + 5);
+      pdf.setFontSize(14);
       const redPct = totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0;
-      pdf.text(`${redCount}`, 12 + cardW * 2 + 16, cardY + 13);
-      pdf.setFontSize(8);
+      pdf.text(`${redCount}`, 12 + (cardW + gap) * 3 + 3, cardY + 13);
+      pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${redPct}% high-priority overdue`, 12 + cardW * 2 + 16, cardY + 18);
+      pdf.text(`${redPct}% of total`, 12 + (cardW + gap) * 3 + 3, cardY + 18);
 
       // Visual Graphical progress charts Section at Y=92
       const chartY = 92;
@@ -459,35 +495,45 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
       pdf.text("AGING SLA METRICS", 16, chartY + 6);
       pdf.line(16, chartY + 9, 12 + chartW - 4, chartY + 9);
 
-      // Green bar
+      // Green bar (New)
       pdf.setFontSize(7);
       pdf.setTextColor(71, 85, 105);
-      pdf.text(`Quick (0-5 Days): ${greenCount} (${greenPct}%)`, 16, chartY + 16);
+      pdf.text(`New (0-3 Days): ${greenCount} (${greenPct}%)`, 16, chartY + 14);
       pdf.setFillColor(241, 245, 249);
-      pdf.rect(16, chartY + 18, 50, 4, "F");
+      pdf.rect(16, chartY + 16, 50, 3, "F");
       if (greenPct > 0) {
         pdf.setFillColor(16, 185, 129); // emerald-500
-        pdf.rect(16, chartY + 18, (greenPct / 100) * 50, 4, "F");
+        pdf.rect(16, chartY + 16, (greenPct / 100) * 50, 3, "F");
       }
 
-      // Yellow bar
+      // Yellow bar (Pending)
       pdf.setTextColor(71, 85, 105);
-      pdf.text(`Standard (5-14 Days): ${yellowCount} (${yellowPct}%)`, 16, chartY + 28);
+      pdf.text(`Pending (3-5 Days): ${yellowCount} (${yellowPct}%)`, 16, chartY + 24);
       pdf.setFillColor(241, 245, 249);
-      pdf.rect(16, chartY + 30, 50, 4, "F");
+      pdf.rect(16, chartY + 26, 50, 3, "F");
       if (yellowPct > 0) {
         pdf.setFillColor(245, 158, 11); // amber-500
-        pdf.rect(16, chartY + 30, (yellowPct / 100) * 50, 4, "F");
+        pdf.rect(16, chartY + 26, (yellowPct / 100) * 50, 3, "F");
       }
 
-      // Red bar
+      // Orange bar (Escalated)
       pdf.setTextColor(71, 85, 105);
-      pdf.text(`Critical (14+ Days): ${redCount} (${redPct}%)`, 16, chartY + 40);
+      pdf.text(`Escalated (6-10 Days): ${orangeCount} (${orangePct}%)`, 16, chartY + 34);
       pdf.setFillColor(241, 245, 249);
-      pdf.rect(16, chartY + 42, 50, 4, "F");
+      pdf.rect(16, chartY + 36, 50, 3, "F");
+      if (orangePct > 0) {
+        pdf.setFillColor(249, 115, 22); // orange-500
+        pdf.rect(16, chartY + 36, (orangePct / 100) * 50, 3, "F");
+      }
+
+      // Red bar (Critical)
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`Critical (>10 Days): ${redCount} (${redPct}%)`, 16, chartY + 44);
+      pdf.setFillColor(241, 245, 249);
+      pdf.rect(16, chartY + 46, 50, 3, "F");
       if (redPct > 0) {
         pdf.setFillColor(239, 68, 68); // red-500
-        pdf.rect(16, chartY + 42, (redPct / 100) * 50, 4, "F");
+        pdf.rect(16, chartY + 46, (redPct / 100) * 50, 3, "F");
       }
 
       // Small legend explanation
@@ -594,10 +640,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
       const bullets = [
         `• Total customer complaints identified and filtered within this reporting period: ${totalInScope}.`,
         `• Overall Recovery Rate is ${recoveryRate}% (${resolvedCount} cases fully resolved out of ${totalInScope}).`,
-        `• Critical Overdue SLA alerts (> 14 days) are currently at ${redCount} unresolved cases.`,
+        `• Critical Overdue SLA alerts (> 10 days) are currently at ${redCount} unresolved cases.`,
         `• Customer satisfaction surveys indicate that ${satisfactionCounts["Very Satisfied"] + satisfactionCounts["Satisfied"]} customers are Satisfied/Very Satisfied,`,
         `  while ${satisfactionCounts["Very Dissatisfied"] + satisfactionCounts["Dissatisfied"]} customers remain Dissatisfied with the service station response.`,
-        `• Average turnaround response speed: Quick Resolution (0-5 days) is achieved in ${greenPct}% of incoming logs.`,
+        `• Average turnaround response speed: New Status (0-3 days) is achieved in ${greenPct}% of incoming logs.`,
         `• Station-level breakdowns and individual compliance tickets are outlined in detail on pages 2 and 3.`
       ];
 
@@ -769,14 +815,17 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
 
         // Aging
         const agingInfo = getComplaintAging(c);
-        if (agingInfo.days >= 14) {
-          pdf.setTextColor(220, 38, 38);
+        if (agingInfo.days > 10) {
+          pdf.setTextColor(220, 38, 38); // Critical (Red)
           pdf.setFont("helvetica", "bold");
-        } else if (agingInfo.days >= 5) {
-          pdf.setTextColor(217, 119, 6);
+        } else if (agingInfo.days > 5) {
+          pdf.setTextColor(234, 88, 12); // Escalated (Orange)
+          pdf.setFont("helvetica", "bold");
+        } else if (agingInfo.days > 3) {
+          pdf.setTextColor(217, 119, 6); // Pending (Amber)
           pdf.setFont("helvetica", "bold");
         } else {
-          pdf.setTextColor(5, 150, 105);
+          pdf.setTextColor(5, 150, 105); // New (Green)
           pdf.setFont("helvetica", "bold");
         }
         pdf.text(`${agingInfo.days} Days`, 163, logTableY + 7, { align: "center" });
@@ -1199,20 +1248,23 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
               const activeStationTotal = activeStationComplaints.length;
 
               // Aging breakdown
-              let stationGreenCount = 0;
-              let stationYellowCount = 0;
-              let stationRedCount = 0;
+              let stationNewCount = 0;
+              let stationPendingCount = 0;
+              let stationEscalatedCount = 0;
+              let stationCriticalCount = 0;
 
               activeStationComplaints.forEach((c) => {
                 const { days } = getComplaintAging(c);
-                if (days <= 5) stationGreenCount++;
-                else if (days <= 14) stationYellowCount++;
-                else stationRedCount++;
+                if (days <= 3) stationNewCount++;
+                else if (days <= 5) stationPendingCount++;
+                else if (days <= 10) stationEscalatedCount++;
+                else stationCriticalCount++;
               });
 
-              const stationGreenPct = activeStationTotal > 0 ? Math.round((stationGreenCount / activeStationTotal) * 100) : 0;
-              const stationYellowPct = activeStationTotal > 0 ? Math.round((stationYellowCount / activeStationTotal) * 100) : 0;
-              const stationRedPct = activeStationTotal > 0 ? Math.round((stationRedCount / activeStationTotal) * 100) : 0;
+              const stationNewPct = activeStationTotal > 0 ? Math.round((stationNewCount / activeStationTotal) * 100) : 0;
+              const stationPendingPct = activeStationTotal > 0 ? Math.round((stationPendingCount / activeStationTotal) * 100) : 0;
+              const stationEscalatedPct = activeStationTotal > 0 ? Math.round((stationEscalatedCount / activeStationTotal) * 100) : 0;
+              const stationCriticalPct = activeStationTotal > 0 ? Math.round((stationCriticalCount / activeStationTotal) * 100) : 0;
 
               // Satisfaction breakdown
               const stationVerySatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Satisfied").length;
@@ -1262,44 +1314,58 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
                             Aging SLA breakdown
                           </p>
                           <div className={`space-y-2 p-2.5 rounded-lg border transition-all duration-500 ${bgSub}`}>
-                            {/* Green */}
+                            {/* New */}
                             <div>
-                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
-                                <span>0-5 Days (Quick)</span>
-                                <span className="font-black text-emerald-600">{stationGreenCount} ({stationGreenPct}%)</span>
+                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                <span>0-3 Days (New)</span>
+                                <span className="font-black text-emerald-600">{stationNewCount} ({stationNewPct}%)</span>
                               </div>
-                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
                                 <div 
                                   className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationGreenPct}%` }}
+                                  style={{ width: `${stationNewPct}%` }}
                                 />
                               </div>
                             </div>
 
-                            {/* Yellow */}
+                            {/* Pending */}
                             <div>
-                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
-                                <span>5-14 Days (Standard)</span>
-                                <span className="font-black text-amber-600">{stationYellowCount} ({stationYellowPct}%)</span>
+                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                <span>3-5 Days (Pending)</span>
+                                <span className="font-black text-amber-600">{stationPendingCount} ({stationPendingPct}%)</span>
                               </div>
-                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
                                 <div 
                                   className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationYellowPct}%` }}
+                                  style={{ width: `${stationPendingPct}%` }}
                                 />
                               </div>
                             </div>
 
-                            {/* Red */}
+                            {/* Escalated */}
                             <div>
-                              <div className="flex justify-between text-[10px] font-bold text-slate-700">
-                                <span>14+ Days (Critical)</span>
-                                <span className="font-black text-rose-600">{stationRedCount} ({stationRedPct}%)</span>
+                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                <span>6-10 Days (Escalated)</span>
+                                <span className="font-black text-orange-600">{stationEscalatedCount} ({stationEscalatedPct}%)</span>
                               </div>
-                              <div className="w-full bg-slate-200 rounded-full h-2 mt-0.5">
+                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
+                                <div 
+                                  className="bg-orange-500 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${stationEscalatedPct}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Critical */}
+                            <div>
+                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                <span>&gt;10 Days (Critical)</span>
+                                <span className="font-black text-rose-600">{stationCriticalCount} ({stationCriticalPct}%)</span>
+                              </div>
+                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
                                 <div 
                                   className="bg-rose-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationRedPct}%` }}
+                                  style={{ width: `${stationCriticalPct}%` }}
                                 />
                               </div>
                             </div>
@@ -1375,7 +1441,8 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
         </div>
 
         {/* Aging Metric Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: New */}
           <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
             isDark 
               ? "bg-emerald-950/20 border-emerald-900/40 text-emerald-300 shadow-inner" 
@@ -1383,10 +1450,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
           }`}>
             <div>
               <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-emerald-400/80" : "text-emerald-800"}`}>
-                Quick Resolutions (0-5 Days)
+                New (0-3 Days)
               </span>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-emerald-400" : "text-emerald-900"}`}>{greenCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Satisfactory speed recovery</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Immediate initial response speed</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-500/10 border-emerald-500/20"
@@ -1395,6 +1462,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
             </div>
           </div>
 
+          {/* Card 2: Pending */}
           <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
             isDark 
               ? "bg-amber-950/20 border-amber-900/40 text-amber-300 shadow-inner" 
@@ -1402,10 +1470,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
           }`}>
             <div>
               <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-800"}`}>
-                Standard Processing (5-14 Days)
+                Pending (3-5 Days)
               </span>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-amber-400" : "text-amber-900"}`}>{yellowCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Intermediate resolution duration</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Active customer interactions</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-500/10 border-amber-500/20"
@@ -1414,6 +1482,27 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
             </div>
           </div>
 
+          {/* Card 3: Escalated */}
+          <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
+            isDark 
+              ? "bg-orange-950/20 border-orange-900/40 text-orange-300 shadow-inner" 
+              : "bg-orange-50 border-orange-200 text-orange-900 shadow-xs"
+          }`}>
+            <div>
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-orange-400/80" : "text-orange-850"}`}>
+                Escalated (6-10 Days)
+              </span>
+              <p className={`text-2xl font-black mt-1 ${isDark ? "text-orange-400" : "text-orange-900"}`}>{orangeCount}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-orange-500" : "text-orange-700"}`}>Forwarded for management view</p>
+            </div>
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
+              isDark ? "bg-orange-500/10 border-orange-500/20" : "bg-orange-500/10 border-orange-500/20"
+            }`}>
+              <Activity className="h-5 w-5 text-orange-600" />
+            </div>
+          </div>
+
+          {/* Card 4: Critical */}
           <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
             isDark 
               ? "bg-rose-950/20 border-rose-900/40 text-rose-300 shadow-inner" 
@@ -1421,10 +1510,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
           }`}>
             <div>
               <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-rose-400/80" : "text-rose-800"}`}>
-                Critical Overdue (14+ Days)
+                {"Critical (>10 Days)"}
               </span>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-rose-400" : "text-rose-900"}`}>{redCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>High-priority aging cases</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>High-priority aging tickets</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-rose-500/10 border-rose-500/20" : "bg-rose-500/10 border-rose-500/20"
@@ -1444,10 +1533,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
                 Aging SLA Proportions
               </h4>
               <div className="space-y-3.5">
-                {/* 0-5 Days */}
+                {/* 0-3 Days (New) */}
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                    <span>0-5 Days (Quick)</span>
+                    <span>0-3 Days (New)</span>
                     <span>{greenCount} ({totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
@@ -1458,10 +1547,10 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
                   </div>
                 </div>
 
-                {/* 5-14 Days */}
+                {/* 3-5 Days (Pending) */}
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                    <span>5-14 Days (Standard)</span>
+                    <span>3-5 Days (Pending)</span>
                     <span>{yellowCount} ({totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
@@ -1472,10 +1561,24 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
                   </div>
                 </div>
 
-                {/* 14+ Days */}
+                {/* 6-10 Days (Escalated) */}
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                    <span>14+ Days (Critical)</span>
+                    <span>6-10 Days (Escalated)</span>
+                    <span>{orangeCount} ({totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0}%)</span>
+                  </div>
+                  <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
+                    <div 
+                      className="bg-orange-500 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* >10 Days (Critical) */}
+                <div>
+                  <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                    <span>&gt;10 Days (Critical)</span>
                     <span>{redCount} ({totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
