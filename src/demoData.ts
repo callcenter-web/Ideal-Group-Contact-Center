@@ -1,4 +1,4 @@
-import { Complaint, StationProfile } from "./types";
+import { Complaint, StationProfile, CallCenterOfficer } from "./types";
 
 export const STATIONS: StationProfile[] = [
   { name: "Rathmalana (CWS)", code: "Rathmalana", passwordHash: "rathmalana123" },
@@ -9,6 +9,55 @@ export const STATIONS: StationProfile[] = [
   { name: "Jaffna", code: "Jaffna", passwordHash: "jaffna123" },
   { name: "Tissamaharama", code: "Tissamaharama", passwordHash: "tissamaharama123" }
 ];
+
+export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
+  {
+    id: "CC-101",
+    name: "Usha",
+    title: "Senior CX Call Center Executive",
+    email: "usha@idealgroup.lk",
+    phone: "+94 77 111 2233",
+    avatar: "US",
+    department: "Ideal Motors Central CX Call Center"
+  },
+  {
+    id: "CC-102",
+    name: "Irshana",
+    title: "CX Resolution Specialist",
+    email: "irshana@idealgroup.lk",
+    phone: "+94 77 222 3344",
+    avatar: "IR",
+    department: "Ideal Motors Central CX Call Center"
+  },
+  {
+    id: "CC-103",
+    name: "Yathish",
+    title: "Aftermarket Follow-Up Officer",
+    email: "yathish@idealgroup.lk",
+    phone: "+94 77 333 4455",
+    avatar: "YA",
+    department: "Ideal Motors Central CX Call Center"
+  },
+  {
+    id: "CC-104",
+    name: "Pawani",
+    title: "Customer Verification Executive",
+    email: "pawani@idealgroup.lk",
+    phone: "+94 77 444 5566",
+    avatar: "PA",
+    department: "Ideal Motors Central CX Call Center"
+  },
+  {
+    id: "CC-105",
+    name: "Shevon",
+    title: "Call Center Operations Lead",
+    email: "shevon@idealgroup.lk",
+    phone: "+94 77 555 6677",
+    avatar: "SH",
+    department: "Ideal Motors Central CX Call Center"
+  }
+];
+
 
 export const DEMO_COMPLAINTS: Complaint[] = [
   {

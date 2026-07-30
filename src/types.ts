@@ -63,3 +63,25 @@ export interface StationProfile {
   code: string;
   passwordHash: string; // Plain password check for simple secure demo
 }
+
+export interface CallCenterOfficer {
+  id: string;
+  name: string;
+  title: string;
+  email: string;
+  phone: string;
+  avatar: string;
+  department: string;
+}
+
+export interface UserProfile {
+  role: "admin" | "agent" | "callcenter";
+  station?: string;
+  name?: string;
+  officerId?: string;
+  title?: string;
+  email?: string;
+  phone?: string;
+  avatar?: string;
+  department?: string;
+}

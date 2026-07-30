@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO_COMPLAINTS } from "./src/demoData";
+import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./src/utils/supabaseSanitizer";
 
 dotenv.config();
 
@@ -139,9 +140,10 @@ Ensure your response is highly detailed, professional, and directly actionable f
       // If database is active but completely empty, pre-populate it with DEMO_COMPLAINTS
       if (data && data.length === 0 && localComplaintsCache.length > 0) {
         console.log("Supabase table is empty. Pre-populating with default complaints...");
+        const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
         const { error: insertError } = await supabase
           .from("complaints")
-          .insert(DEMO_COMPLAINTS);
+          .insert(cleanDemo);
         
         if (!insertError) {
           const { data: refreshedData } = await supabase
@@ -197,10 +199,11 @@ Ensure your response is highly detailed, professional, and directly actionable f
         }
       });
 
-      // Try writing to Supabase
+      // Try writing to Supabase with deduplicated and sanitized data
+      const cleanComplaints = deduplicateAndSanitizeComplaints(complaintsArray);
       const { data, error } = await supabase
         .from("complaints")
-        .upsert(complaintsArray, { onConflict: "id" });
+        .upsert(cleanComplaints, { onConflict: "id" });
 
       if (error) {
         console.error("Supabase UPSERT error:", error);
@@ -244,9 +247,10 @@ Ensure your response is highly detailed, professional, and directly actionable f
         console.error("Supabase DELETE during reset error:", deleteError);
       }
 
+      const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
       const { error: insertError } = await supabase
         .from("complaints")
-        .insert(DEMO_COMPLAINTS);
+        .insert(cleanDemo);
 
       if (insertError) {
         console.error("Supabase INSERT during reset error:", insertError);

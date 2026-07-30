@@ -1,21 +1,32 @@
 import React, { useState } from "react";
-import { Shield, Key, Car, MapPin, CheckCircle2, Phone, Sun, Moon } from "lucide-react";
-import { STATIONS } from "../demoData";
+import { Shield, Key, MapPin, Phone, Sun, Moon, User, Users, Eye, EyeOff } from "lucide-react";
+import { STATIONS, CALL_CENTER_OFFICERS as DEFAULT_OFFICERS } from "../demoData";
+import { CallCenterOfficer } from "../types";
 import IdealMotorsLogo from "./IdealMotorsLogo";
 
 interface LoginProps {
-  onLoginSuccess: (role: "admin" | "agent" | "callcenter", stationCode?: string) => void;
+  onLoginSuccess: (
+    role: "admin" | "agent" | "callcenter",
+    stationCode?: string,
+    officerDetails?: CallCenterOfficer
+  ) => void;
   theme?: "light" | "dark";
   toggleTheme?: () => void;
+  officersList?: CallCenterOfficer[];
 }
 
-export default function LoginScreen({ onLoginSuccess, theme = "light", toggleTheme }: LoginProps) {
-  const [activeTab, setActiveTab] = useState<"admin" | "agent" | "callcenter">("admin");
+export default function LoginScreen({ onLoginSuccess, theme = "light", toggleTheme, officersList }: LoginProps) {
+  const [activeTab, setActiveTab] = useState<"admin" | "agent" | "callcenter">("callcenter");
   const [selectedStation, setSelectedStation] = useState<string>("Rathmalana");
+  const [selectedOfficerId, setSelectedOfficerId] = useState<string>("CC-101"); // Default Usha
   const [password, setPassword] = useState<string>("");
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
   const isDark = theme === "dark";
+
+  const availableOfficers = officersList && officersList.length > 0 ? officersList : DEFAULT_OFFICERS;
+  const selectedOfficer = availableOfficers.find((o) => o.id === selectedOfficerId) || availableOfficers[0];
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,9 +40,9 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
       }
     } else if (activeTab === "callcenter") {
       if (password === "callcenter123") {
-        onLoginSuccess("callcenter");
+        onLoginSuccess("callcenter", undefined, selectedOfficer);
       } else {
-        setError("Invalid Call Center security code.");
+        setError(`Invalid security passkey for Call Center (${selectedOfficer.name}).`);
       }
     } else {
       const station = STATIONS.find((s) => s.code === selectedStation);
@@ -41,21 +52,6 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
         setError(`Incorrect password for ${selectedStation} station.`);
       }
     }
-  };
-
-  const handleQuickLogin = (role: "admin" | "agent" | "callcenter", stationCode?: string) => {
-    if (role === "admin") {
-      setPassword("admin123");
-    } else if (role === "callcenter") {
-      setPassword("callcenter123");
-    } else {
-      setPassword("rathmalana123");
-    }
-    
-    if (stationCode) {
-      setSelectedStation(stationCode);
-    }
-    setActiveTab(role);
   };
 
   return (
@@ -170,6 +166,67 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
           </div>
 
           <form id="login-form" onSubmit={handleLogin} className="space-y-4 pt-1">
+            {activeTab === "callcenter" && (
+              <div className="space-y-2">
+                <label 
+                  id="officer-select-label" 
+                  className={`block text-[10px] font-black uppercase tracking-widest flex items-center justify-between ${
+                    isDark ? "text-slate-400" : "text-slate-500"
+                  }`}
+                >
+                  <span className="flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5 text-red-500" />
+                    Call Center Team Member
+                  </span>
+                  <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-wider flex items-center gap-1">
+                    <Shield className="h-3 w-3" /> Protected Login
+                  </span>
+                </label>
+
+                {/* Quick Selection Pills for Call Center Members */}
+                <div className="flex flex-wrap gap-1.5 pb-1">
+                  {availableOfficers.map((officer) => {
+                    const isSelected = selectedOfficerId === officer.id;
+                    return (
+                      <button
+                        key={officer.id}
+                        type="button"
+                        onClick={() => setSelectedOfficerId(officer.id)}
+                        className={`px-2.5 py-1 text-[11px] font-black rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                          isSelected
+                            ? "bg-red-600 text-white border-red-600 shadow-sm"
+                            : isDark
+                              ? "bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800"
+                              : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200"
+                        }`}
+                      >
+                        <span className={`h-2 w-2 rounded-full ${isSelected ? "bg-white animate-pulse" : "bg-slate-400"}`} />
+                        {officer.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Dropdown for detailed selection */}
+                <select
+                  id="officer-select"
+                  value={selectedOfficerId}
+                  onChange={(e) => setSelectedOfficerId(e.target.value)}
+                  className={`w-full rounded-lg py-2 px-3 text-xs font-bold focus:outline-none focus:ring-1 transition-all cursor-pointer ${
+                    isDark 
+                      ? "bg-slate-950 text-slate-100 border border-slate-800 focus:border-red-500 focus:ring-red-500" 
+                      : "bg-slate-50 text-slate-800 border border-slate-200 focus:border-red-600 focus:ring-red-600"
+                  }`}
+                >
+                  {availableOfficers.map((officer) => (
+                    <option key={officer.id} value={officer.id} className={isDark ? "bg-slate-900 text-slate-100" : "bg-white text-slate-800"}>
+                      {officer.name} — {officer.title} ({officer.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {activeTab === "agent" && (
               <div className="space-y-1.5">
                 <label 
@@ -206,23 +263,38 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
                   isDark ? "text-slate-400" : "text-slate-500"
                 }`}
               >
-                {activeTab === "admin" ? "National Security Code" : activeTab === "callcenter" ? "Call Center Passkey" : "Station Passkey"}
+                {activeTab === "admin" 
+                  ? "National Security Code" 
+                  : activeTab === "callcenter" 
+                    ? `Passkey for ${selectedOfficer.name}` 
+                    : "Station Passkey"}
               </label>
               <div className="relative">
                 <input
                   id="password-input"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className={`w-full rounded-lg py-2 pl-9 pr-3 text-xs focus:outline-none focus:ring-1 transition-all font-mono ${
+                  className={`w-full rounded-lg py-2 pl-9 pr-10 text-xs focus:outline-none focus:ring-1 transition-all font-mono ${
                     isDark 
                       ? "bg-slate-950 text-slate-100 border border-slate-800 focus:border-red-500 focus:ring-red-500 placeholder-slate-700" 
                       : "bg-slate-50 text-slate-800 border border-slate-200 focus:border-red-600 focus:ring-red-600 placeholder-slate-400"
                   }`}
                 />
                 <Key className={`absolute left-3 top-2.5 h-4 w-4 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                <button
+                  id="toggle-password-visibility-btn"
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className={`absolute right-3 top-2.5 p-0.5 rounded transition-colors cursor-pointer ${
+                    isDark ? "text-slate-400 hover:text-slate-100" : "text-slate-500 hover:text-slate-900"
+                  }`}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
             </div>
 
@@ -244,7 +316,7 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
               type="submit"
               className="w-full bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-black text-xs py-2.5 px-4 rounded-lg transition-all shadow-md hover:shadow-lg shadow-red-900/20 active:scale-98 cursor-pointer uppercase tracking-wider"
             >
-              Access Secure Console
+              Access {activeTab === "callcenter" ? `${selectedOfficer.name}'s Console` : "Secure Console"}
             </button>
           </form>
 
@@ -253,7 +325,7 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
       
       <footer className="mt-8 flex flex-col items-center gap-3 text-center">
         <p className={`text-[10px] font-mono uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"}`}>
-          Solution by Yash (All Rights Reserved) • Passwords Protected
+          Solution by Yash (All Rights Reserved) • Call Center Team: Usha, Irshana, Yathish, Pawani, Shevon
         </p>
         <button
           type="button"
@@ -280,3 +352,4 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
     </div>
   );
 }
+

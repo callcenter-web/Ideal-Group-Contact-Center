@@ -22,17 +22,20 @@ import {
   X,
   Trash2,
   Sun,
-  Moon
+  Moon,
+  RefreshCw
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
-import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis } from "./types";
-import { DEMO_COMPLAINTS, STATIONS } from "./demoData";
+import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer } from "./types";
+import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
+import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./utils/supabaseSanitizer";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
 import StationOverview from "./components/StationOverview";
 import MetricCard from "./components/MetricCard";
 import ReportsPanel from "./components/ReportsPanel";
 import IdealMotorsLogo from "./components/IdealMotorsLogo";
+import UserProfileModal from "./components/UserProfileModal";
 
 // Initialize client-side Supabase client with safe publishable credentials
 const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
@@ -52,7 +55,7 @@ export default function App() {
     localStorage.setItem("ideal_theme", nextTheme);
   };
 
-  const [currentUser, setCurrentUser] = useState<{ role: "admin" | "agent" | "callcenter"; station?: string } | null>(() => {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     const savedUser = localStorage.getItem("ideal_group_current_user");
     if (savedUser) {
       try {
@@ -63,6 +66,30 @@ export default function App() {
     }
     return null;
   });
+
+  const [officersList, setOfficersList] = useState<CallCenterOfficer[]>(() => {
+    const saved = localStorage.getItem("ideal_group_callcenter_officers");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // fallback
+      }
+    }
+    return CALL_CENTER_OFFICERS;
+  });
+
+  const handleUpdateOfficersList = (newList: CallCenterOfficer[]) => {
+    setOfficersList(newList);
+    localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(newList));
+  };
+
+  const handleUpdateCurrentUser = (updated: UserProfile) => {
+    setCurrentUser(updated);
+    localStorage.setItem("ideal_group_current_user", JSON.stringify(updated));
+  };
+
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"analytics" | "stations" | "upload" | "reports">("analytics");
@@ -132,6 +159,8 @@ export default function App() {
   // Supabase Database Connection State
   const [supabaseActive, setSupabaseActive] = useState<boolean | null>(null);
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
+  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Unreachable and Connection alert states
   const [autoLoggedUnreachable, setAutoLoggedUnreachable] = useState(false);
@@ -139,7 +168,89 @@ export default function App() {
   const [connectedCustomerName, setConnectedCustomerName] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // Load complaints on mount with optimistic local fallback
+  const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
+    try {
+      console.log("Contacting Supabase directly from the browser...");
+      const { data, error } = await supabaseClient
+        .from("complaints")
+        .select("*")
+        .order("date", { ascending: false });
+
+      if (error) {
+        console.error("Direct Supabase select error:", error);
+        setSupabaseActive(false);
+        setSupabaseError(error.message);
+        return false;
+      }
+
+      if (data) {
+        if (data.length === 0) {
+          console.log("Direct Supabase: Database is empty. Seeding DEMO_COMPLAINTS...");
+          const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
+          const { error: seedError } = await supabaseClient
+            .from("complaints")
+            .insert(cleanDemo);
+          
+          if (!seedError) {
+            const { data: refreshed } = await supabaseClient
+              .from("complaints")
+              .select("*")
+              .order("date", { ascending: false });
+            if (refreshed) {
+              setComplaints(refreshed);
+              localStorage.setItem("ideal_group_complaints", JSON.stringify(refreshed));
+            }
+          } else {
+            console.error("Direct Supabase seed error:", seedError);
+            setComplaints(DEMO_COMPLAINTS);
+            localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
+          }
+        } else {
+          setComplaints(data);
+          localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
+        }
+      }
+      setSupabaseActive(true);
+      setSupabaseError(null);
+      return true;
+    } catch (err: any) {
+      console.error("Direct Supabase connection exception:", err);
+      setSupabaseActive(false);
+      setSupabaseError(originalErrorMsg || err.message);
+      return false;
+    }
+  };
+
+  const fetchComplaints = async () => {
+    try {
+      const res = await fetch("/api/complaints");
+      const text = await res.text();
+      
+      if (text.trim().startsWith("<!DOCTYPE")) {
+        console.warn("Backend API not found (HTML response). Falling back to client-side direct Supabase connection...");
+        return await fetchComplaintsDirectly();
+      }
+
+      const data = JSON.parse(text);
+      if (data.complaints) {
+        setComplaints(data.complaints);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      }
+      setSupabaseActive(data.isSupabaseActive);
+      if (!data.isSupabaseActive && data.error) {
+        setSupabaseError(data.error);
+        return false;
+      } else {
+        setSupabaseError(null);
+        return true;
+      }
+    } catch (e: any) {
+      console.warn("Backend API call failed, falling back to client-side direct Supabase connection:", e);
+      return await fetchComplaintsDirectly(e.message);
+    }
+  };
+
+  // Load complaints on mount
   useEffect(() => {
     const saved = localStorage.getItem("ideal_group_complaints");
     if (saved) {
@@ -153,93 +264,27 @@ export default function App() {
       setComplaints(DEMO_COMPLAINTS);
     }
 
-    const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
-      try {
-        console.log("Contacting Supabase directly from the browser...");
-        const { data, error } = await supabaseClient
-          .from("complaints")
-          .select("*")
-          .order("date", { ascending: false });
-
-        if (error) {
-          console.error("Direct Supabase select error:", error);
-          setSupabaseActive(false);
-          setSupabaseError(error.message);
-          return;
-        }
-
-        if (data) {
-          if (data.length === 0) {
-            console.log("Direct Supabase: Database is empty. Seeding DEMO_COMPLAINTS...");
-            const { error: seedError } = await supabaseClient
-              .from("complaints")
-              .insert(DEMO_COMPLAINTS);
-            
-            if (!seedError) {
-              const { data: refreshed } = await supabaseClient
-                .from("complaints")
-                .select("*")
-                .order("date", { ascending: false });
-              if (refreshed) {
-                setComplaints(refreshed);
-                localStorage.setItem("ideal_group_complaints", JSON.stringify(refreshed));
-              }
-            } else {
-              console.error("Direct Supabase seed error:", seedError);
-              setComplaints(DEMO_COMPLAINTS);
-              localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
-            }
-          } else {
-            setComplaints(data);
-            localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
-          }
-        }
-        setSupabaseActive(true);
-        setSupabaseError(null);
-      } catch (err: any) {
-        console.error("Direct Supabase connection exception:", err);
-        setSupabaseActive(false);
-        setSupabaseError(originalErrorMsg || err.message);
-      }
-    };
-
-    const fetchComplaints = async () => {
-      try {
-        const res = await fetch("/api/complaints");
-        const text = await res.text();
-        
-        if (text.trim().startsWith("<!DOCTYPE")) {
-          console.warn("Backend API not found (HTML response). Falling back to client-side direct Supabase connection...");
-          await fetchComplaintsDirectly();
-          return;
-        }
-
-        const data = JSON.parse(text);
-        if (data.complaints) {
-          setComplaints(data.complaints);
-          localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
-        }
-        setSupabaseActive(data.isSupabaseActive);
-        if (!data.isSupabaseActive && data.error) {
-          setSupabaseError(data.error);
-        } else {
-          setSupabaseError(null);
-        }
-      } catch (e: any) {
-        console.warn("Backend API call failed, falling back to client-side direct Supabase connection:", e);
-        await fetchComplaintsDirectly(e.message);
-      }
-    };
-
     fetchComplaints();
   }, []);
+
+  // Periodic auto-retry if Supabase connection is currently marked offline/error
+  useEffect(() => {
+    if (supabaseActive === false) {
+      const interval = setInterval(() => {
+        console.log("Auto-retrying Supabase connection check...");
+        fetchComplaints();
+      }, 15000);
+      return () => clearInterval(interval);
+    }
+  }, [supabaseActive]);
 
   const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
     try {
       console.log("Upserting directly to Supabase client-side...");
+      const cleanList = deduplicateAndSanitizeComplaints(updatedList);
       const { error } = await supabaseClient
         .from("complaints")
-        .upsert(updatedList, { onConflict: "id" });
+        .upsert(cleanList, { onConflict: "id" });
 
       if (error) {
         console.error("Direct Supabase upsert error:", error);
@@ -293,8 +338,22 @@ export default function App() {
   };
 
   // Login handler
-  const handleLoginSuccess = (role: "admin" | "agent" | "callcenter", stationCode?: string) => {
-    const userObj = { role, station: stationCode };
+  const handleLoginSuccess = (
+    role: "admin" | "agent" | "callcenter", 
+    stationCode?: string,
+    officerDetails?: CallCenterOfficer
+  ) => {
+    const userObj: UserProfile = { 
+      role, 
+      station: stationCode,
+      name: officerDetails?.name,
+      officerId: officerDetails?.id,
+      title: officerDetails?.title,
+      email: officerDetails?.email,
+      phone: officerDetails?.phone,
+      avatar: officerDetails?.avatar,
+      department: officerDetails?.department
+    };
     setCurrentUser(userObj);
     localStorage.setItem("ideal_group_current_user", JSON.stringify(userObj));
     // If agent, default station filter to their station
@@ -466,9 +525,10 @@ export default function App() {
         .neq("id", "FORCE_NONE_MATCHING_ID");
 
       // Then insert default ones
+      const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
       const { error } = await supabaseClient
         .from("complaints")
-        .insert(DEMO_COMPLAINTS);
+        .insert(cleanDemo);
 
       if (error) {
         console.error("Direct Supabase insert during reset error:", error);
@@ -847,6 +907,17 @@ export default function App() {
   const bgSub = isDark ? "bg-slate-950" : "bg-slate-50";
   const borderColor = isDark ? "border-slate-800" : "border-slate-200";
 
+  if (!currentUser) {
+    return (
+      <LoginScreen
+        onLoginSuccess={handleLoginSuccess}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        officersList={officersList}
+      />
+    );
+  }
+
   return (
     <div id="app-root" className={`min-h-screen flex flex-col font-sans animate-fade-in-scale transition-colors duration-500 ${
       isDark ? "bg-luxury-grid text-slate-100" : "bg-luxury-light-grid text-slate-900"
@@ -895,18 +966,33 @@ export default function App() {
               </div>
             )}
 
-            <div className={`hidden sm:flex items-center gap-2 py-1 px-2.5 rounded-md border ${
-              isDark ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-700"
-            }`}>
-              <User className="h-3.5 w-3.5 text-blue-600" />
-              <span className="text-[11px] font-bold">
-                {currentUser.role === "admin" 
-                  ? "National Manager" 
-                  : currentUser.role === "callcenter" 
-                    ? "Call Center Agent" 
-                    : `${currentUser.station} Service Adviser`}
-              </span>
-            </div>
+            <button
+              id="btn-user-profile"
+              type="button"
+              onClick={() => setShowProfileModal(true)}
+              className={`hidden sm:flex items-center gap-2 py-1 px-2.5 rounded-md border transition-all cursor-pointer ${
+                isDark 
+                  ? "bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-300 hover:border-slate-700" 
+                  : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+              title="Click to view full user profile details"
+            >
+              <div className="h-5 w-5 rounded-full bg-red-600 text-white font-black text-[9px] flex items-center justify-center">
+                {currentUser.avatar || (currentUser.name ? currentUser.name.substring(0, 2).toUpperCase() : (currentUser.role === "admin" ? "NM" : currentUser.role === "callcenter" ? "CC" : "SA"))}
+              </div>
+              <div className="text-left">
+                <span className="text-[11px] font-bold block leading-none">
+                  {currentUser.name || (currentUser.role === "admin" 
+                    ? "National Manager" 
+                    : currentUser.role === "callcenter" 
+                      ? "Call Center Agent" 
+                      : `${currentUser.station} Service Adviser`)}
+                </span>
+                <span className="text-[8px] font-extrabold text-red-600 dark:text-red-400 uppercase tracking-wider block">
+                  My Profile
+                </span>
+              </div>
+            </button>
             
             <button
               id="btn-logout"
@@ -929,18 +1015,18 @@ export default function App() {
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 overflow-x-hidden">
         
         {/* Supabase Table Setup Warning Banner */}
-        {supabaseActive === false && (
+        {supabaseActive === false && !bannerDismissed && (
           <div 
             id="supabase-warning-banner"
-            className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all"
+            className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all shadow-xs"
           >
-            <div className="space-y-1">
+            <div className="space-y-1 flex-1">
               <h4 className="text-xs font-black text-amber-800 uppercase tracking-tight flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                 Supabase Setup or RLS Policies Required
               </h4>
               <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but there is a table or policy configuration issue. Since your <code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">complaints</code> table already exists, copy our complete drop-and-recreate script below to safely re-create the table and configure all required public read/write permissions so that other PCs can sync instantly!
+                A secure backend connection has been established to your Supabase project (<code className="font-mono bg-amber-100 px-1 py-0.2 rounded font-bold text-amber-900">qsistbvaukxuwebqupiy</code>), but there is a table or policy configuration issue. If you have already updated your SQL Editor or want to verify connection, click <strong className="font-bold text-amber-900">"Test & Reconnect Now"</strong> below!
               </p>
               {supabaseError && (
                 <div className="mt-2 text-[10px] bg-red-50 border border-red-100 text-red-700 font-mono p-1.5 rounded font-bold">
@@ -948,11 +1034,31 @@ export default function App() {
                 </div>
               )}
             </div>
-            <button
-              id="btn-copy-supabase-sql"
-              type="button"
-              onClick={() => {
-                const sqlText = `-- CLEAR AND RECREATE COMPLAINTS TABLE (Saves form feeding & tracking)
+            
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                id="btn-reconnect-supabase"
+                type="button"
+                disabled={isTestingSupabase}
+                onClick={async () => {
+                  setIsTestingSupabase(true);
+                  const success = await fetchComplaints();
+                  setIsTestingSupabase(false);
+                  if (success) {
+                    alert("✅ Successfully connected to Supabase database!");
+                  }
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-xs transition-all cursor-pointer uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${isTestingSupabase ? "animate-spin" : ""}`} />
+                {isTestingSupabase ? "Testing..." : "Test & Reconnect Now"}
+              </button>
+
+              <button
+                id="btn-copy-supabase-sql"
+                type="button"
+                onClick={() => {
+                  const sqlText = `-- CLEAR AND RECREATE COMPLAINTS TABLE (Saves form feeding & tracking)
 DROP TABLE IF EXISTS complaints CASCADE;
 
 CREATE TABLE complaints (
@@ -1014,13 +1120,23 @@ CREATE POLICY "Allow public insert" ON complaints FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow public update" ON complaints FOR UPDATE USING (true);
 CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
 `;
-                navigator.clipboard.writeText(sqlText);
-                alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, and refresh the browser.");
-              }}
-              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-sm transition-all cursor-pointer uppercase tracking-wider"
-            >
-              Copy SQL Script
-            </button>
+                  navigator.clipboard.writeText(sqlText);
+                  alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, then click 'Test & Reconnect Now'.");
+                }}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-xs transition-all cursor-pointer uppercase tracking-wider"
+              >
+                Copy SQL Script
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBannerDismissed(true)}
+                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] py-1.5 px-2.5 rounded shadow-xs transition-all cursor-pointer uppercase tracking-wider"
+                title="Dismiss Banner"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
         
@@ -2452,6 +2568,19 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
             </div>
           </div>
         </div>
+      )}
+
+      {/* User Profile Modal */}
+      {showProfileModal && currentUser && (
+        <UserProfileModal
+          user={currentUser}
+          complaints={complaints}
+          onClose={() => setShowProfileModal(false)}
+          isDark={isDark}
+          onUpdateCurrentUser={handleUpdateCurrentUser}
+          officersList={officersList}
+          onUpdateOfficersList={handleUpdateOfficersList}
+        />
       )}
 
       {/* Unified Footer: Signature & Theme Switcher */}
