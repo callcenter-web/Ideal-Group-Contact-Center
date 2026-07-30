@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { UserProfile, Complaint, CallCenterOfficer } from "../types";
+import { UserProfile, Complaint, CallCenterOfficer, StationProfile } from "../types";
 import { 
   X, User, Shield, Phone, Mail, MapPin, CheckCircle2, Clock, Award, Lock, Sparkles, 
-  Edit3, Save, UserPlus, Users, Eye, EyeOff, Search, Check
+  Edit3, Save, UserPlus, Users, Eye, EyeOff, Search, Check, Key, Plus
 } from "lucide-react";
+import { STATIONS as DEFAULT_STATIONS } from "../demoData";
 
 interface UserProfileModalProps {
   user: UserProfile;
@@ -13,6 +14,8 @@ interface UserProfileModalProps {
   onUpdateCurrentUser: (updated: UserProfile) => void;
   officersList: CallCenterOfficer[];
   onUpdateOfficersList: (newList: CallCenterOfficer[]) => void;
+  stationsList?: StationProfile[];
+  onUpdateStationsList?: (newList: StationProfile[]) => void;
 }
 
 export default function UserProfileModal({
@@ -23,9 +26,11 @@ export default function UserProfileModal({
   onUpdateCurrentUser,
   officersList,
   onUpdateOfficersList,
+  stationsList = DEFAULT_STATIONS,
+  onUpdateStationsList,
 }: UserProfileModalProps) {
   const isAdmin = user.role === "admin";
-  const [activeTab, setActiveTab] = useState<"profile" | "manage_users">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "manage_users" | "manage_stations">("profile");
   
   // Self Editing State
   const [isEditingSelf, setIsEditingSelf] = useState(false);
@@ -54,6 +59,20 @@ export default function UserProfileModal({
     department: "Ideal Motors Central CX Call Center"
   });
 
+  // Station Management State
+  const [editingStationCode, setEditingStationCode] = useState<string | null>(null);
+  const [stationForm, setStationForm] = useState<Partial<StationProfile>>({});
+  const [showPasskeys, setShowPasskeys] = useState<Record<string, boolean>>({});
+  const [isAddingStation, setIsAddingStation] = useState(false);
+  const [newStationForm, setNewStationForm] = useState<StationProfile>({
+    name: "",
+    code: "",
+    passwordHash: "ideal123",
+    managerName: "",
+    email: "",
+    phone: "+94 ",
+  });
+
   const [searchTerm, setSearchTerm] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
@@ -64,6 +83,54 @@ export default function UserProfileModal({
       return (parts[0][0] + parts[1][0]).toUpperCase();
     }
     return name.substring(0, 2).toUpperCase();
+  };
+
+  const togglePasskeyVisibility = (code: string) => {
+    setShowPasskeys((prev) => ({ ...prev, [code]: !prev[code] }));
+  };
+
+  // Admin Save Station Edit
+  const handleSaveStationEdit = (code: string) => {
+    if (!onUpdateStationsList || !stationsList) return;
+    const updatedList = stationsList.map((st) => {
+      if (st.code === code) {
+        return {
+          ...st,
+          ...stationForm,
+        } as StationProfile;
+      }
+      return st;
+    });
+    onUpdateStationsList(updatedList);
+    setEditingStationCode(null);
+    setSaveMessage("Station credentials & profile updated!");
+    setTimeout(() => setSaveMessage(null), 3000);
+  };
+
+  // Admin Add New Station
+  const handleAddNewStation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onUpdateStationsList || !stationsList) return;
+    if (!newStationForm.name.trim() || !newStationForm.code.trim()) return;
+
+    const newStation: StationProfile = {
+      ...newStationForm,
+      code: newStationForm.code.trim(),
+      passwordHash: newStationForm.passwordHash || "ideal123",
+    };
+
+    onUpdateStationsList([...stationsList, newStation]);
+    setIsAddingStation(false);
+    setNewStationForm({
+      name: "",
+      code: "",
+      passwordHash: "ideal123",
+      managerName: "",
+      email: "",
+      phone: "+94 ",
+    });
+    setSaveMessage(`Station ${newStation.name} registered successfully!`);
+    setTimeout(() => setSaveMessage(null), 3000);
   };
 
   // Save Self Profile
@@ -170,6 +237,12 @@ export default function UserProfileModal({
     off.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const filteredStations = stationsList.filter((st) =>
+    st.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    st.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (st.managerName && st.managerName.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-fade-in">
       <div 
@@ -181,7 +254,7 @@ export default function UserProfileModal({
         <div className="bg-gradient-to-r from-red-600 via-red-700 to-slate-900 p-4 relative flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2 text-white text-xs font-black uppercase tracking-widest">
             <Shield className="h-4 w-4 text-red-300" />
-            <span>CX Executive User Portal</span>
+            <span>CX Executive User & Station Portal</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -190,7 +263,7 @@ export default function UserProfileModal({
                 <button
                   type="button"
                   onClick={() => setActiveTab("profile")}
-                  className={`px-3 py-1 text-[10px] font-black rounded-md transition-all cursor-pointer uppercase ${
+                  className={`px-2.5 py-1 text-[10px] font-black rounded-md transition-all cursor-pointer uppercase ${
                     activeTab === "profile" ? "bg-white text-slate-900 shadow-sm" : "text-white/80 hover:text-white"
                   }`}
                 >
@@ -199,12 +272,22 @@ export default function UserProfileModal({
                 <button
                   type="button"
                   onClick={() => setActiveTab("manage_users")}
-                  className={`px-3 py-1 text-[10px] font-black rounded-md transition-all cursor-pointer uppercase flex items-center gap-1 ${
+                  className={`px-2.5 py-1 text-[10px] font-black rounded-md transition-all cursor-pointer uppercase flex items-center gap-1 ${
                     activeTab === "manage_users" ? "bg-white text-slate-900 shadow-sm" : "text-white/80 hover:text-white"
                   }`}
                 >
                   <Users className="h-3 w-3" />
-                  Manage Team ({officersList.length})
+                  Call Center ({officersList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("manage_stations")}
+                  className={`px-2.5 py-1 text-[10px] font-black rounded-md transition-all cursor-pointer uppercase flex items-center gap-1 ${
+                    activeTab === "manage_stations" ? "bg-white text-slate-900 shadow-sm" : "text-white/80 hover:text-white"
+                  }`}
+                >
+                  <MapPin className="h-3 w-3" />
+                  Stations ({stationsList.length})
                 </button>
               </div>
             )}
@@ -729,6 +812,309 @@ export default function UserProfileModal({
                             className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all cursor-pointer flex items-center gap-1 self-end sm:self-auto"
                           >
                             <Edit3 className="h-3 w-3" /> Edit Profile
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Manage Service Stations Tab */}
+          {activeTab === "manage_stations" && isAdmin && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider">Service Station Network & Passkeys</h3>
+                  <p className="text-xs text-slate-500">Edit station passwords, manager contact info, or add new service centers.</p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAddingStation(!isAddingStation)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {isAddingStation ? "Cancel" : "Add Station"}
+                </button>
+              </div>
+
+              {/* Add Station Form */}
+              {isAddingStation && (
+                <form onSubmit={handleAddNewStation} className="p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/20 dark:bg-red-950/20 space-y-3">
+                  <h4 className="text-xs font-black uppercase text-red-600 dark:text-red-400 flex items-center gap-1">
+                    <MapPin className="h-4 w-4" /> Register New Service Station Branch
+                  </h4>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Station Display Name *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Gampaha Service Center"
+                        value={newStationForm.name}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, name: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Station Code / Identifier *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Gampaha"
+                        value={newStationForm.code}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, code: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Station Security Passkey *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. gampaha123"
+                        value={newStationForm.passwordHash}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, passwordHash: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Station Manager Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Jagath Perera"
+                        value={newStationForm.managerName || ""}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, managerName: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Station Email</label>
+                      <input
+                        type="email"
+                        placeholder="e.g. station@idealgroup.lk"
+                        value={newStationForm.email || ""}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, email: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Phone Hotline</label>
+                      <input
+                        type="text"
+                        placeholder="+94 11 ..."
+                        value={newStationForm.phone || ""}
+                        onChange={(e) => setNewStationForm({ ...newStationForm, phone: e.target.value })}
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingStation(false)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Save New Station
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Search filter for stations */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Filter stations by name, code, or manager..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className={`w-full rounded-xl py-2 pl-9 pr-3 text-xs font-medium border ${
+                    isDark ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                  }`}
+                />
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              </div>
+
+              {/* Registered Stations Cards List */}
+              <div className="space-y-3">
+                {filteredStations.map((station) => {
+                  const isEditingThis = editingStationCode === station.code;
+                  const isPasskeyVisible = !!showPasskeys[station.code];
+
+                  return (
+                    <div 
+                      key={station.code}
+                      className={`p-4 rounded-xl border transition-all ${
+                        isDark ? "bg-slate-950/70 border-slate-800" : "bg-slate-50/80 border-slate-200"
+                      }`}
+                    >
+                      {isEditingThis ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-red-600 dark:text-red-400 uppercase">
+                              Editing Station: {station.name} ({station.code})
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[9px] font-black uppercase text-slate-500">Station Display Name</label>
+                              <input
+                                type="text"
+                                defaultValue={station.name}
+                                onChange={(e) => setStationForm({ ...stationForm, name: e.target.value })}
+                                className={`w-full text-xs font-bold rounded-lg p-1.5 border ${
+                                  isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-slate-300"
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-black uppercase text-slate-500">Security Passkey / Password</label>
+                              <input
+                                type="text"
+                                defaultValue={station.passwordHash}
+                                onChange={(e) => setStationForm({ ...stationForm, passwordHash: e.target.value })}
+                                className={`w-full text-xs font-bold rounded-lg p-1.5 border font-mono ${
+                                  isDark ? "bg-slate-900 border-slate-700 text-amber-400" : "bg-white border-slate-300 text-slate-900"
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-black uppercase text-slate-500">Station Manager Name</label>
+                              <input
+                                type="text"
+                                defaultValue={station.managerName || ""}
+                                onChange={(e) => setStationForm({ ...stationForm, managerName: e.target.value })}
+                                className={`w-full text-xs font-bold rounded-lg p-1.5 border ${
+                                  isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-slate-300"
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-black uppercase text-slate-500">Station Email</label>
+                              <input
+                                type="email"
+                                defaultValue={station.email || ""}
+                                onChange={(e) => setStationForm({ ...stationForm, email: e.target.value })}
+                                className={`w-full text-xs font-bold rounded-lg p-1.5 border ${
+                                  isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-slate-300"
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-black uppercase text-slate-500">Phone Hotline</label>
+                              <input
+                                type="text"
+                                defaultValue={station.phone || ""}
+                                onChange={(e) => setStationForm({ ...stationForm, phone: e.target.value })}
+                                className={`w-full text-xs font-bold rounded-lg p-1.5 border ${
+                                  isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-slate-300"
+                                }`}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingStationCode(null)}
+                              className="px-2.5 py-1 text-xs font-bold rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveStationEdit(station.code)}
+                              className="px-3 py-1 text-xs font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-1"
+                            >
+                              <Save className="h-3 w-3" /> Save Credentials
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`h-11 w-11 rounded-xl flex items-center justify-center font-black text-sm shrink-0 ${
+                              isDark ? "bg-slate-900 text-red-400 border border-slate-800" : "bg-red-600 text-white"
+                            }`}>
+                              <MapPin className="h-5 w-5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-xs font-black">{station.name}</h4>
+                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                                  {station.code}
+                                </span>
+                              </div>
+                              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                                Manager: <span className="font-semibold text-slate-700 dark:text-slate-300">{station.managerName || "Unassigned"}</span>
+                              </p>
+                              
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-400 mt-1">
+                                {station.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" /> {station.email}</span>}
+                                {station.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" /> {station.phone}</span>}
+                                
+                                {/* Passkey Display with Eye toggle */}
+                                <div className="flex items-center gap-1.5 bg-amber-500/10 dark:bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 text-amber-700 dark:text-amber-300">
+                                  <Key className="h-3 w-3" />
+                                  <span className="font-mono font-bold text-[10px]">
+                                    {isPasskeyVisible ? station.passwordHash : "••••••••"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePasskeyVisibility(station.code)}
+                                    title={isPasskeyVisible ? "Hide Passkey" : "Reveal Passkey"}
+                                    className="p-0.5 hover:text-amber-500 transition-colors ml-1 cursor-pointer"
+                                  >
+                                    {isPasskeyVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingStationCode(station.code);
+                              setStationForm(station);
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all cursor-pointer flex items-center gap-1 self-end sm:self-auto"
+                          >
+                            <Edit3 className="h-3 w-3" /> Edit Passkey & Info
                           </button>
                         </div>
                       )}

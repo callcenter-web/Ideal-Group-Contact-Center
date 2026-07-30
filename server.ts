@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { DEMO_COMPLAINTS } from "./src/demoData";
+import { DEMO_COMPLAINTS, CALL_CENTER_OFFICERS, STATIONS } from "./src/demoData";
 import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./src/utils/supabaseSanitizer";
 
 dotenv.config();
@@ -34,6 +34,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Memory cache fallback
 let localComplaintsCache = [...DEMO_COMPLAINTS];
+let localOfficersCache = [...CALL_CENTER_OFFICERS];
+let localStationsCache = [...STATIONS];
 
 async function startServer() {
   const app = express();
@@ -228,6 +230,176 @@ Ensure your response is highly detailed, professional, and directly actionable f
         isSupabaseActive: false,
         error: err.message,
         complaints: localComplaintsCache
+      });
+    }
+  });
+
+  // API Route to fetch call center officers from Supabase
+  app.get("/api/officers", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("call_center_officers")
+        .select("*")
+        .order("id", { ascending: true });
+
+      if (error) {
+        console.warn("Supabase officers fetch warning/fallback:", error.message);
+        return res.json({
+          officers: localOfficersCache,
+          isSupabaseActive: false
+        });
+      }
+
+      if (!data || data.length === 0) {
+        // Pre-populate if empty in Supabase
+        const { error: insertError } = await supabase
+          .from("call_center_officers")
+          .insert(CALL_CENTER_OFFICERS);
+
+        if (!insertError) {
+          return res.json({
+            officers: CALL_CENTER_OFFICERS,
+            isSupabaseActive: true
+          });
+        }
+      } else {
+        localOfficersCache = data;
+      }
+
+      res.json({
+        officers: data || localOfficersCache,
+        isSupabaseActive: true
+      });
+    } catch (err: any) {
+      res.json({
+        officers: localOfficersCache,
+        isSupabaseActive: false,
+        error: err.message
+      });
+    }
+  });
+
+  // API Route to upsert call center officers into Supabase
+  app.post("/api/officers", async (req, res) => {
+    try {
+      const { officers } = req.body;
+      if (!officers) {
+        return res.status(400).json({ error: "No officers data provided." });
+      }
+
+      const officersArray = Array.isArray(officers) ? officers : [officers];
+      localOfficersCache = officersArray;
+
+      const { data, error } = await supabase
+        .from("call_center_officers")
+        .upsert(officersArray, { onConflict: "id" });
+
+      if (error) {
+        console.error("Supabase officers UPSERT error:", error);
+        return res.json({
+          success: true,
+          isSupabaseActive: false,
+          error: error.message,
+          officers: localOfficersCache
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        officers: localOfficersCache
+      });
+    } catch (err: any) {
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        officers: localOfficersCache
+      });
+    }
+  });
+
+  // API Route to fetch service stations from Supabase
+  app.get("/api/stations", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("service_stations")
+        .select("*")
+        .order("code", { ascending: true });
+
+      if (error) {
+        console.warn("Supabase stations fetch warning/fallback:", error.message);
+        return res.json({
+          stations: localStationsCache,
+          isSupabaseActive: false
+        });
+      }
+
+      if (!data || data.length === 0) {
+        // Pre-populate if empty in Supabase
+        const { error: insertError } = await supabase
+          .from("service_stations")
+          .insert(STATIONS);
+
+        if (!insertError) {
+          return res.json({
+            stations: STATIONS,
+            isSupabaseActive: true
+          });
+        }
+      } else {
+        localStationsCache = data;
+      }
+
+      res.json({
+        stations: data || localStationsCache,
+        isSupabaseActive: true
+      });
+    } catch (err: any) {
+      res.json({
+        stations: localStationsCache,
+        isSupabaseActive: false,
+        error: err.message
+      });
+    }
+  });
+
+  // API Route to upsert service stations into Supabase
+  app.post("/api/stations", async (req, res) => {
+    try {
+      const { stations } = req.body;
+      if (!stations) {
+        return res.status(400).json({ error: "No stations data provided." });
+      }
+
+      const stationsArray = Array.isArray(stations) ? stations : [stations];
+      localStationsCache = stationsArray;
+
+      const { data, error } = await supabase
+        .from("service_stations")
+        .upsert(stationsArray, { onConflict: "code" });
+
+      if (error) {
+        console.error("Supabase stations UPSERT error:", error);
+        return res.json({
+          success: true,
+          isSupabaseActive: false,
+          error: error.message,
+          stations: localStationsCache
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        stations: localStationsCache
+      });
+    } catch (err: any) {
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        stations: localStationsCache
       });
     }
   });

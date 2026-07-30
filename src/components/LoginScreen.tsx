@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Shield, Key, MapPin, Phone, Sun, Moon, User, Users, Eye, EyeOff } from "lucide-react";
-import { STATIONS, CALL_CENTER_OFFICERS as DEFAULT_OFFICERS } from "../demoData";
-import { CallCenterOfficer } from "../types";
+import { STATIONS as DEFAULT_STATIONS, CALL_CENTER_OFFICERS as DEFAULT_OFFICERS } from "../demoData";
+import { CallCenterOfficer, StationProfile } from "../types";
 import IdealMotorsLogo from "./IdealMotorsLogo";
 
 interface LoginProps {
@@ -13,9 +13,11 @@ interface LoginProps {
   theme?: "light" | "dark";
   toggleTheme?: () => void;
   officersList?: CallCenterOfficer[];
+  stationsList?: StationProfile[];
+  availableStations?: StationProfile[];
 }
 
-export default function LoginScreen({ onLoginSuccess, theme = "light", toggleTheme, officersList }: LoginProps) {
+export default function LoginScreen({ onLoginSuccess, theme = "light", toggleTheme, officersList, stationsList, availableStations: propStations }: LoginProps) {
   const [activeTab, setActiveTab] = useState<"admin" | "agent" | "callcenter">("callcenter");
   const [selectedStation, setSelectedStation] = useState<string>("Rathmalana");
   const [selectedOfficerId, setSelectedOfficerId] = useState<string>("CC-101"); // Default Usha
@@ -26,6 +28,8 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
   const isDark = theme === "dark";
 
   const availableOfficers = officersList && officersList.length > 0 ? officersList : DEFAULT_OFFICERS;
+  const stationsToUse = propStations || stationsList;
+  const availableStations = stationsToUse && stationsToUse.length > 0 ? stationsToUse : DEFAULT_STATIONS;
   const selectedOfficer = availableOfficers.find((o) => o.id === selectedOfficerId) || availableOfficers[0];
 
   const handleLogin = (e: React.FormEvent) => {
@@ -45,7 +49,7 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
         setError(`Invalid security passkey for Call Center (${selectedOfficer.name}).`);
       }
     } else {
-      const station = STATIONS.find((s) => s.code === selectedStation);
+      const station = availableStations.find((s) => s.code === selectedStation);
       if (station && password === station.passwordHash) {
         onLoginSuccess("agent", selectedStation);
       } else {
@@ -247,7 +251,7 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
                       : "bg-slate-50 text-slate-800 border border-slate-200 focus:border-red-600 focus:ring-red-600"
                   }`}
                 >
-                  {STATIONS.map((station) => (
+                  {availableStations.map((station) => (
                     <option key={station.code} value={station.code} className={isDark ? "bg-slate-900 text-slate-100" : "bg-white text-slate-800"}>
                       {station.name}
                     </option>

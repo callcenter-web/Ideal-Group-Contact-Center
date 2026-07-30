@@ -1,13 +1,13 @@
 import { Complaint, StationProfile, CallCenterOfficer } from "./types";
 
 export const STATIONS: StationProfile[] = [
-  { name: "Rathmalana (CWS)", code: "Rathmalana", passwordHash: "rathmalana123" },
-  { name: "Wanawasala", code: "Wanawasala", passwordHash: "wanawasala123" },
-  { name: "Yakkala", code: "Yakkala", passwordHash: "yakkala123" },
-  { name: "Kurunegala", code: "Kurunegala", passwordHash: "kurunegala123" },
-  { name: "Anuradhapura", code: "Anuradhapura", passwordHash: "anuradhapura123" },
-  { name: "Jaffna", code: "Jaffna", passwordHash: "jaffna123" },
-  { name: "Tissamaharama", code: "Tissamaharama", passwordHash: "tissamaharama123" }
+  { name: "Rathmalana (CWS)", code: "Rathmalana", passwordHash: "rathmalana123", managerName: "Kusal Silva", email: "rathmalana.cws@idealgroup.lk", phone: "+94 11 263 4455" },
+  { name: "Wanawasala", code: "Wanawasala", passwordHash: "wanawasala123", managerName: "Amila Fernando", email: "wanawasala.station@idealgroup.lk", phone: "+94 11 291 3322" },
+  { name: "Yakkala", code: "Yakkala", passwordHash: "yakkala123", managerName: "Dhanushka Perera", email: "yakkala.station@idealgroup.lk", phone: "+94 33 222 1100" },
+  { name: "Kurunegala", code: "Kurunegala", passwordHash: "kurunegala123", managerName: "Sunil Bandara", email: "kurunegala.station@idealgroup.lk", phone: "+94 37 223 4455" },
+  { name: "Anuradhapura", code: "Anuradhapura", passwordHash: "anuradhapura123", managerName: "Rohan Jayasuriya", email: "anuradhapura.station@idealgroup.lk", phone: "+94 25 222 3344" },
+  { name: "Jaffna", code: "Jaffna", passwordHash: "jaffna123", managerName: "T. Selvakumar", email: "jaffna.station@idealgroup.lk", phone: "+94 21 222 5566" },
+  { name: "Tissamaharama", code: "Tissamaharama", passwordHash: "tissamaharama123", managerName: "Chinthaka Weerasinghe", email: "tissamaharama.station@idealgroup.lk", phone: "+94 47 223 9988" }
 ];
 
 export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [

@@ -26,7 +26,7 @@ import {
   RefreshCw
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
-import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer } from "./types";
+import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./utils/supabaseSanitizer";
 import LoginScreen from "./components/LoginScreen";
@@ -79,10 +79,64 @@ export default function App() {
     return CALL_CENTER_OFFICERS;
   });
 
+  const [stationsList, setStationsList] = useState<StationProfile[]>(() => {
+    const saved = localStorage.getItem("ideal_group_stations");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // fallback
+      }
+    }
+    return STATIONS;
+  });
+
   const handleUpdateOfficersList = (newList: CallCenterOfficer[]) => {
     setOfficersList(newList);
     localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(newList));
+
+    // Sync to backend API & Supabase
+    fetch("/api/officers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ officers: newList }),
+    }).catch((err) => console.error("Error saving officers to Supabase API:", err));
   };
+
+  const handleUpdateStationsList = (newList: StationProfile[]) => {
+    setStationsList(newList);
+    localStorage.setItem("ideal_group_stations", JSON.stringify(newList));
+
+    // Sync to backend API & Supabase
+    fetch("/api/stations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stations: newList }),
+    }).catch((err) => console.error("Error saving stations to Supabase API:", err));
+  };
+
+  // Fetch officers & stations on initial load from Supabase backend API
+  useEffect(() => {
+    fetch("/api/officers")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.officers && data.officers.length > 0) {
+          setOfficersList(data.officers);
+          localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(data.officers));
+        }
+      })
+      .catch(() => console.log("Officers sync using local storage / fallback"));
+
+    fetch("/api/stations")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.stations && data.stations.length > 0) {
+          setStationsList(data.stations);
+          localStorage.setItem("ideal_group_stations", JSON.stringify(data.stations));
+        }
+      })
+      .catch(() => console.log("Stations sync using local storage / fallback"));
+  }, []);
 
   const handleUpdateCurrentUser = (updated: UserProfile) => {
     setCurrentUser(updated);
@@ -914,6 +968,7 @@ export default function App() {
         theme={theme}
         toggleTheme={toggleTheme}
         officersList={officersList}
+        availableStations={stationsList}
       />
     );
   }
@@ -2580,6 +2635,8 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
           onUpdateCurrentUser={handleUpdateCurrentUser}
           officersList={officersList}
           onUpdateOfficersList={handleUpdateOfficersList}
+          stationsList={stationsList}
+          onUpdateStationsList={handleUpdateStationsList}
         />
       )}
 

@@ -61,7 +61,10 @@ export interface Complaint {
 export interface StationProfile {
   name: string;
   code: string;
-  passwordHash: string; // Plain password check for simple secure demo
+  passwordHash: string; // Passkey for station login
+  managerName?: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface CallCenterOfficer {
