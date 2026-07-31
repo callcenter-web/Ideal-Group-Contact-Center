@@ -168,10 +168,13 @@ export default function App() {
   const [formStationContactedDate, setFormStationContactedDate] = useState("");
   const [formStationResolutionNotes, setFormStationResolutionNotes] = useState("");
 
-  // Call Center specific follow-up fields
+  // Call Center specific follow-up & attempt tracking fields
   const [formCallCenterContactedDate, setFormCallCenterContactedDate] = useState("");
   const [formCallCenterFinalRemarks, setFormCallCenterFinalRemarks] = useState("");
   const [formCallCenterFinalSatisfaction, setFormCallCenterFinalSatisfaction] = useState<SatisfactionLevel>("Satisfied");
+  const [formAttemptStage, setFormAttemptStage] = useState<"1st Attempt" | "2nd Attempt">("1st Attempt");
+  const [formFirstAttemptCallStatus, setFormFirstAttemptCallStatus] = useState<string>("Connected");
+  const [formSecondAttemptFeedbackStatus, setFormSecondAttemptFeedbackStatus] = useState<string>("Follow Up Required");
   
   // Parallel track status fields
   const [formFeedbackStatus, setFormFeedbackStatus] = useState("Follow-up Required");
@@ -707,23 +710,95 @@ export default function App() {
         }
 
         if (currentUser?.role === "callcenter") {
-          isConnectedNow = 
-            formFeedbackStatus !== "Customer Unreachable" && 
-            formFinalStatus !== "Unreachable";
+          const submitDate = formCallCenterContactedDate || new Date().toISOString().split("T")[0];
+          const is1stAttempt = formAttemptStage === "1st Attempt";
+
+          let calcStatus: FollowUpStatus = "Pending";
+          let calcSatisfaction: SatisfactionLevel = formCallCenterFinalSatisfaction;
+          let calcFeedbackStatus = formFeedbackStatus;
+          let calcFinalStatus = "Open";
+
+          if (is1stAttempt) {
+            calcFeedbackStatus = formFirstAttemptCallStatus;
+            
+            if (["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus)) {
+              // 1st attempt uncontactable -> stay in recovery list, pass for 2nd attempt
+              calcStatus = "Pending";
+              calcSatisfaction = "Dissatisfied";
+              calcFinalStatus = "Pending (2nd Attempt Required)";
+              isConnectedNow = false;
+            } else if (formFirstAttemptCallStatus === "Connected") {
+              isConnectedNow = true;
+              calcFeedbackStatus = formSecondAttemptFeedbackStatus || "Follow Up Required";
+              if (formSecondAttemptFeedbackStatus === "Satisfied") {
+                calcStatus = "Resolved";
+                calcSatisfaction = "Satisfied";
+                calcFinalStatus = "Closed";
+              } else {
+                calcStatus = "Pending";
+                calcSatisfaction = "Dissatisfied";
+                calcFinalStatus = "In Progress";
+              }
+            } else if (["Invalid Details", "Invalid Number"].includes(formFirstAttemptCallStatus)) {
+              calcStatus = "Pending";
+              calcSatisfaction = "Dissatisfied";
+              calcFinalStatus = "Unreachable (Invalid Number/Details)";
+              isConnectedNow = false;
+            }
+          } else {
+            // 2nd Attempt
+            calcFeedbackStatus = formSecondAttemptFeedbackStatus;
+
+            if (formSecondAttemptFeedbackStatus === "Satisfied") {
+              // ONLY if selected satisfied -> pass to complete (Resolved)
+              calcStatus = "Resolved";
+              calcSatisfaction = "Satisfied";
+              calcFinalStatus = "Closed";
+              isConnectedNow = true;
+            } else if (formSecondAttemptFeedbackStatus === "Customer Unreachable") {
+              // After 2nd attempt customer is unreachable -> classify as NOT SATISFIED customer base
+              calcStatus = "Pending";
+              calcSatisfaction = "Dissatisfied"; // Classify under Not Satisfied Customer Base
+              calcFinalStatus = "Unreachable (Not Satisfied Base)";
+              isConnectedNow = false;
+            } else if (["Not Satisfied", "No solution Received"].includes(formSecondAttemptFeedbackStatus)) {
+              calcStatus = "Pending";
+              calcSatisfaction = "Dissatisfied";
+              calcFinalStatus = "Not Satisfied (Pending Station Action)";
+              isConnectedNow = true;
+            } else if (formSecondAttemptFeedbackStatus === "Escalated") {
+              calcStatus = "Pending";
+              calcSatisfaction = "Dissatisfied";
+              calcFinalStatus = "Escalated to Management";
+              isConnectedNow = true;
+            } else {
+              calcStatus = "Pending";
+              calcSatisfaction = formCallCenterFinalSatisfaction;
+              calcFinalStatus = "In Progress";
+              isConnectedNow = true;
+            }
+          }
 
           return {
             ...c,
-            callCenterContactedDate: formCallCenterContactedDate || new Date().toISOString().split("T")[0],
+            callCenterContactedDate: submitDate,
             callCenterFinalRemarks: formCallCenterFinalRemarks,
-            callCenterFinalSatisfaction: formCallCenterFinalSatisfaction,
-            currentSatisfaction: formCallCenterFinalSatisfaction, // promote to main satisfaction
-            status: (formFeedbackStatus === "Satisfied" ? "Resolved" : "Pending") as FollowUpStatus, // mark Resolved only on "Satisfied" feedback, otherwise keep as "Pending"
-            feedbackStatus: formFeedbackStatus,
-            finalStatus: formFinalStatus,
+            callCenterFinalSatisfaction: calcSatisfaction,
+            currentSatisfaction: calcSatisfaction, // promote to main satisfaction
+            status: calcStatus,
+            feedbackStatus: calcFeedbackStatus,
+            finalStatus: calcFinalStatus,
+            attemptCount: is1stAttempt ? 1 : 2,
+            firstAttemptCallStatus: is1stAttempt ? formFirstAttemptCallStatus : (c.firstAttemptCallStatus || formFirstAttemptCallStatus),
+            firstAttemptDate: is1stAttempt ? submitDate : (c.firstAttemptDate || submitDate),
+            firstAttemptNotes: is1stAttempt ? formCallCenterFinalRemarks : c.firstAttemptNotes,
+            secondAttemptFeedbackStatus: !is1stAttempt ? formSecondAttemptFeedbackStatus : c.secondAttemptFeedbackStatus,
+            secondAttemptDate: !is1stAttempt ? submitDate : c.secondAttemptDate,
+            secondAttemptNotes: !is1stAttempt ? formCallCenterFinalRemarks : c.secondAttemptNotes,
             solutionProvidedByAftermarket: formSolutionProvided,
             solutionDate: formSolutionDate,
-            followUpDate: formFollowUpDate || formCallCenterContactedDate || new Date().toISOString().split("T")[0],
-            updatedAt: new Date().toISOString().split("T")[0]
+            followUpDate: formFollowUpDate || submitDate,
+            updatedAt: submitDate
           };
         }
       }
@@ -817,9 +892,26 @@ export default function App() {
       setFormCallCenterFinalSatisfaction(selectedComplaint.callCenterFinalSatisfaction || "Neutral");
       setFormAssignedStation(selectedComplaint.station || "");
 
+      // Pre-fill multi-attempt fields
+      const firstStatus = selectedComplaint.firstAttemptCallStatus || "Connected";
+      const secondStatus = selectedComplaint.secondAttemptFeedbackStatus || "Follow Up Required";
+      setFormFirstAttemptCallStatus(firstStatus);
+      setFormSecondAttemptFeedbackStatus(secondStatus);
+
+      // Auto-determine active attempt stage
+      if (
+        selectedComplaint.attemptCount === 2 ||
+        selectedComplaint.secondAttemptFeedbackStatus ||
+        ["Customer Busy", "Customer Unreachable", "No Answer"].includes(firstStatus)
+      ) {
+        setFormAttemptStage("2nd Attempt");
+      } else {
+        setFormAttemptStage("1st Attempt");
+      }
+
       // Intelligent fallbacks for custom parallel status fields
       const initialFeedbackStatus = selectedComplaint.feedbackStatus || (
-        selectedComplaint.status === "Resolved" ? "Satisfied After Resolution" : "Follow-up Required"
+        selectedComplaint.status === "Resolved" ? "Satisfied" : "Follow Up Required"
       );
       const initialFinalStatus = selectedComplaint.finalStatus || (
         selectedComplaint.status === "Resolved" ? "Closed" :
@@ -1935,12 +2027,135 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                               <span>Station Contacted: <strong>{selectedComplaint.stationContactedDate || "N/A"}</strong></span>
                               <span>Adviser: <strong>{selectedComplaint.agentName || "N/A"}</strong></span>
                             </div>
+
+                            {/* Attempt history summary if logged */}
+                            {(selectedComplaint.firstAttemptCallStatus || selectedComplaint.secondAttemptFeedbackStatus) && (
+                              <div className="border-t border-blue-100 pt-1.5 mt-1.5 grid grid-cols-2 gap-2 text-[10px]">
+                                {selectedComplaint.firstAttemptCallStatus && (
+                                  <div className="bg-white/80 p-1.5 rounded border border-blue-200">
+                                    <span className="text-[9px] font-bold text-slate-400 block uppercase">1st Call Attempt</span>
+                                    <span className="font-bold text-slate-800">{selectedComplaint.firstAttemptCallStatus}</span>
+                                    {selectedComplaint.firstAttemptDate && <span className="text-[8px] text-slate-400 block">{selectedComplaint.firstAttemptDate}</span>}
+                                  </div>
+                                )}
+                                {selectedComplaint.secondAttemptFeedbackStatus && (
+                                  <div className="bg-white/80 p-1.5 rounded border border-blue-200">
+                                    <span className="text-[9px] font-bold text-slate-400 block uppercase">2nd Call Attempt</span>
+                                    <span className="font-bold text-slate-800">{selectedComplaint.secondAttemptFeedbackStatus}</span>
+                                    {selectedComplaint.secondAttemptDate && <span className="text-[8px] text-slate-400 block">{selectedComplaint.secondAttemptDate}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           <h4 className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1.5 bg-green-50 px-2 py-1.5 rounded border border-green-100">
                             <Sparkles className="h-4 w-4" />
-                            Call Center Final Verification
+                            Call Center Follow-Up & Verification Workflow
                           </h4>
+
+                          {/* Attempt Stage Toggle Selector */}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                              Follow-Up Call Attempt Stage
+                            </label>
+                            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                              <button
+                                type="button"
+                                onClick={() => setFormAttemptStage("1st Attempt")}
+                                className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                  formAttemptStage === "1st Attempt"
+                                    ? "bg-white text-blue-700 shadow-xs border border-slate-200"
+                                    : "text-slate-600 hover:text-slate-900"
+                                }`}
+                              >
+                                1st Call Attempt
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setFormAttemptStage("2nd Attempt")}
+                                className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                  formAttemptStage === "2nd Attempt"
+                                    ? "bg-white text-blue-700 shadow-xs border border-slate-200"
+                                    : "text-slate-600 hover:text-slate-900"
+                                }`}
+                              >
+                                2nd Call Attempt
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 1st Attempt Section */}
+                          {formAttemptStage === "1st Attempt" && (
+                            <div className="bg-amber-50/60 p-3 rounded-lg border border-amber-200 space-y-2">
+                              <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-wider">
+                                1st Attempt Call Status *
+                              </label>
+                              <select
+                                value={formFirstAttemptCallStatus}
+                                onChange={(e) => setFormFirstAttemptCallStatus(e.target.value)}
+                                className="w-full bg-white border border-amber-300 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold shadow-2xs"
+                              >
+                                <option value="Connected">Connected</option>
+                                <option value="Customer Busy">Customer Busy</option>
+                                <option value="Customer Unreachable">Customer Unreachable</option>
+                                <option value="Invalid Details">Invalid Details</option>
+                                <option value="Invalid Number">Invalid Number</option>
+                                <option value="No Answer">No Answer</option>
+                              </select>
+
+                              {["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus) && (
+                                <div className="text-[11px] text-amber-800 bg-amber-100/80 p-2 rounded border border-amber-300/80 font-medium flex items-start gap-1.5">
+                                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                                  <span>
+                                    <strong>Pass to 2nd Attempt:</strong> Customer was uncontactable on 1st attempt. Record will stay in recovery list and move to 2nd attempt queue.
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* 2nd Attempt or Connected Section */}
+                          {(formAttemptStage === "2nd Attempt" || formFirstAttemptCallStatus === "Connected") && (
+                            <div className="bg-blue-50/60 p-3 rounded-lg border border-blue-200 space-y-2">
+                              <label className="block text-[10px] font-bold text-blue-900 uppercase tracking-wider">
+                                {formAttemptStage === "2nd Attempt" ? "2nd Attempt Feedback Status / Remarks *" : "Call Feedback Status / Remarks *"}
+                              </label>
+                              <select
+                                value={formSecondAttemptFeedbackStatus}
+                                onChange={(e) => {
+                                  setFormSecondAttemptFeedbackStatus(e.target.value);
+                                  setFormFeedbackStatus(e.target.value);
+                                }}
+                                className="w-full bg-white border border-blue-300 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold shadow-2xs"
+                              >
+                                <option value="Satisfied">Satisfied (Pass to Complete)</option>
+                                <option value="Not Satisfied">Not Satisfied</option>
+                                <option value="No solution Received">No solution Received</option>
+                                <option value="Customer Unreachable">Customer Unreachable</option>
+                                <option value="Follow Up Required">Follow Up Required</option>
+                                <option value="Escalated">Escalated</option>
+                              </select>
+
+                              {formSecondAttemptFeedbackStatus === "Satisfied" && (
+                                <div className="text-[11px] text-green-800 bg-green-100/80 p-2 rounded border border-green-300/80 font-medium flex items-center gap-1.5">
+                                  <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
+                                  <span>
+                                    <strong>Complete Recovery:</strong> 'Satisfied' converts the customer and marks complaint as Completed & Resolved.
+                                  </span>
+                                </div>
+                              )}
+
+                              {formSecondAttemptFeedbackStatus === "Customer Unreachable" && formAttemptStage === "2nd Attempt" && (
+                                <div className="text-[11px] text-rose-800 bg-rose-100/80 p-2 rounded border border-rose-300/80 font-medium flex items-start gap-1.5">
+                                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                                  <span>
+                                    <strong>Not Satisfied Base:</strong> Unreachable after 2nd attempt. Automatically classified as Not Satisfied customer base.
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           <div className="grid grid-cols-2 gap-3">
                             <div>
@@ -1964,11 +2179,11 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                                 onChange={(e) => setFormCallCenterFinalSatisfaction(e.target.value as SatisfactionLevel)}
                                 className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
                               >
-                                <option value="Very Dissatisfied">Very Dissatisfied (No change)</option>
-                                <option value="Dissatisfied">Dissatisfied (Still unhappy)</option>
-                                <option value="Neutral">Neutral (Acceptable outcome)</option>
-                                <option value="Satisfied">Satisfied (Successfully converted)</option>
-                                <option value="Very Satisfied">Very Satisfied (Extremely happy)</option>
+                                <option value="Very Dissatisfied">Very Dissatisfied</option>
+                                <option value="Dissatisfied">Dissatisfied</option>
+                                <option value="Neutral">Neutral</option>
+                                <option value="Satisfied">Satisfied</option>
+                                <option value="Very Satisfied">Very Satisfied</option>
                               </select>
                             </div>
                           </div>
@@ -1978,49 +2193,43 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                               Customer's Final Remark *
                             </label>
                             <textarea
+                              id="callcenter-final-remarks-textarea"
                               rows={3}
                               required
-                              placeholder="Enter the customer's final remarks and feedback during call center follow up..."
+                              placeholder="Enter the customer's remarks and feedback details during call center follow up..."
                               value={formCallCenterFinalRemarks}
                               onChange={(e) => setFormCallCenterFinalRemarks(e.target.value)}
                               className="w-full bg-white border border-slate-200 rounded-md py-2 px-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 leading-relaxed resize-none font-medium"
                             />
                           </div>
 
-                          <div className="bg-slate-50 p-3 rounded border border-slate-200">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Feedback Status *
-                            </label>
-                            <select
-                              value={formFeedbackStatus}
-                              onChange={(e) => setFormFeedbackStatus(e.target.value)}
-                              className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold"
-                            >
-                              <option value="Satisfied After Resolution">Satisfied After Resolution</option>
-                              <option value="Still Dissatisfied">Still Dissatisfied</option>
-                              <option value="No Solution Received">No Solution Received</option>
-                              <option value="Customer Unreachable">Customer Unreachable</option>
-                              <option value="Follow-up Required">Follow-up Required</option>
-                            </select>
-                          </div>
-
                           {saveSuccess && (
                             <div className="text-green-700 text-xs font-semibold bg-green-50 p-2 rounded border border-green-200 text-center">
-                              {formFeedbackStatus === "Satisfied" || formFeedbackStatus === "Satisfied After Resolution"
-                                ? "Call center feedback saved & marked as Resolved!"
-                                : "Call center feedback saved & kept in Pending Recovery!"}
+                              {formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Satisfied"
+                                ? "Call center feedback saved & marked as Completed/Resolved!"
+                                : "Call center feedback logged & saved successfully!"}
                             </div>
                           )}
 
                           <button
                             type="submit"
-                            className={`w-full text-white font-bold text-xs py-2 px-4 rounded-md transition-all shadow-sm cursor-pointer ${
-                              formFeedbackStatus === "Satisfied"
+                            className={`w-full text-white font-bold text-xs py-2.5 px-4 rounded-md transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5 ${
+                              formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Satisfied"
                                 ? "bg-green-600 hover:bg-green-700"
-                                : "bg-amber-600 hover:bg-amber-700"
+                                : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus)
+                                ? "bg-amber-600 hover:bg-amber-700"
+                                : formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Customer Unreachable"
+                                ? "bg-rose-600 hover:bg-rose-700"
+                                : "bg-blue-600 hover:bg-blue-700"
                             }`}
                           >
-                            {formFeedbackStatus === "Satisfied" ? "Save & Resolve" : "Save Final Remarks & Keep Pending"}
+                            {formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Satisfied"
+                              ? "Save & Mark as Completed (Resolved)"
+                              : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus)
+                              ? "Save 1st Attempt & Pass to 2nd Attempt Queue"
+                              : formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Customer Unreachable"
+                              ? "Save 2nd Attempt & Mark as Not Satisfied Base"
+                              : "Save Call Center Log & Update Status"}
                           </button>
                         </form>
                       )}

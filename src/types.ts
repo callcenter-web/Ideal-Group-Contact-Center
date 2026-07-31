@@ -51,11 +51,20 @@ export interface Complaint {
   callCenterFinalSatisfaction?: SatisfactionLevel; // Call Center logged final satisfaction
   
   // Custom data fields for parallel tracking
-  feedbackStatus?: string; // Satisfied After Resolution, Still Dissatisfied, No Solution Received, Customer Unreachable, Follow-up Required
+  feedbackStatus?: string; // Satisfied, Not Satisfied, No solution Received, Customer Unreachable, Follow Up Required, Escalated, Connected, Customer Busy, Invalid Details, Invalid Number, No Answer
   finalStatus?: string; // Open, Pending with Aftermarket, Solution Received, Pending Customer Verification, Closed, Unreachable
   solutionProvidedByAftermarket?: string;
   solutionDate?: string;
   followUpDate?: string;
+
+  // Multi-attempt follow-up tracking
+  firstAttemptCallStatus?: "Connected" | "Customer Busy" | "Customer Unreachable" | "Invalid Details" | "Invalid Number" | "No Answer" | string;
+  firstAttemptDate?: string;
+  firstAttemptNotes?: string;
+  secondAttemptFeedbackStatus?: "Satisfied" | "Not Satisfied" | "No solution Received" | "Customer Unreachable" | "Follow Up Required" | "Escalated" | string;
+  secondAttemptDate?: string;
+  secondAttemptNotes?: string;
+  attemptCount?: number;
 }
 
 export interface StationProfile {
