@@ -83,16 +83,34 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
 
         // Map various possible headers to our Complaint schema
         const mappedComplaints: Complaint[] = rows.map((row: any, index: number) => {
-          // Helper to check multiple typical column names
+          // Normalize alphanumeric strings to ensure exact match regardless of punctuation, dots or spacing
+          const normalizeAlpha = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const rowKeys = Object.keys(row);
+
+          // Helper to check multiple typical column names with exact and fuzzy matching
           const getValue = (keys: string[]) => {
-            const foundKey = Object.keys(row).find((k) => {
-              const cleanedK = k.trim().toLowerCase();
-              return keys.some((key) => {
-                const cleanedKey = key.trim().toLowerCase();
-                return cleanedK === cleanedKey || cleanedK.includes(cleanedKey);
+            // 1. First pass: exact normalized match (ignoring spaces, case, dots)
+            for (const key of keys) {
+              const targetNorm = normalizeAlpha(key);
+              const matchKey = rowKeys.find((rk) => normalizeAlpha(rk) === targetNorm);
+              if (matchKey && row[matchKey] !== undefined && String(row[matchKey]).trim() !== "") {
+                return String(row[matchKey]).trim();
+              }
+            }
+
+            // 2. Second pass: substring match
+            for (const key of keys) {
+              const targetNorm = normalizeAlpha(key);
+              const matchKey = rowKeys.find((rk) => {
+                const rkNorm = normalizeAlpha(rk);
+                return rkNorm.includes(targetNorm) || (targetNorm.length > 5 && targetNorm.includes(rkNorm));
               });
-            });
-            return foundKey ? String(row[foundKey]).trim() : "";
+              if (matchKey && row[matchKey] !== undefined && String(row[matchKey]).trim() !== "") {
+                return String(row[matchKey]).trim();
+              }
+            }
+
+            return "";
           };
 
           // Columns requested by user:
@@ -100,12 +118,12 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
 
           const month = getValue(["month"]);
           const company = getValue(["company"]);
-          const woNo = getValue(["wo no", "wo_no", "work order"]);
-          const woState = getValue(["wo state", "wo_state"]);
-          const vehicleRegNo = getValue(["c vehicle reg no", "vehicle reg", "vehicle_reg"]);
-          const mchCodeDescription = getValue(["mch code description", "model description", "mch_code"]);
-          const workType = getValue(["work type", "work_type"]);
-          const customerNo = getValue(["customer no", "customer_no"]);
+          const woNo = getValue(["wo no", "wo_no", "work order", "wono"]);
+          const woState = getValue(["wo state", "wo_state", "wostate"]);
+          const vehicleRegNo = getValue(["c vehicle reg no", "vehicle reg no", "vehicle reg", "vehicle_reg", "reg no"]);
+          const mchCodeDescription = getValue(["mch code description", "model description", "mch_code", "mch code"]);
+          const workType = getValue(["work type", "work_type", "worktype"]);
+          const customerNo = getValue(["customer no", "customer_no", "customerno"]);
           const customerName = getValue(["name", "customer name", "customername"]);
           const earliestStartDate = getValue(["earliest start date", "earliest start"]);
           const finishDate = getValue(["finish date", "finish_date"]);
@@ -116,8 +134,35 @@ export default function UploadZone({ onDataLoaded, onResetDemo }: UploadZoneProp
           const advisorName = getValue(["advisor", "service advisor"]);
           const chassiNo = getValue(["chassi no", "chassi_no", "chassis"]);
           
-          const npsScoreStr = getValue(["overall, how satisfied", "overall how satisfied", "satisfied", "rating", "nps"]);
-          const descriptionStr = getValue(["tell us more about the reason", "tell us more", "reason for this rating", "description", "complaint"]);
+          const npsScoreStr = getValue([
+            "overall, how satisfied are you with your recent service experience at dealership (10 - 0)",
+            "overall how satisfied are you with your recent service experience at dealership",
+            "overall, how satisfied",
+            "overall how satisfied",
+            "satisfied",
+            "rating",
+            "nps"
+          ]);
+
+          // Extract complaint description explicitly from "Tell us more about the reason for this rating ."
+          const descriptionStr = getValue([
+            "tell us more about the reason for this rating .",
+            "tell us more about the reason for this rating",
+            "tell us more about the reason for this rating.",
+            "tell us more about the reason",
+            "reason for this rating",
+            "tell us more",
+            "customer complaint description",
+            "complaint description",
+            "customer feedback",
+            "customer comment",
+            "customer comments",
+            "description",
+            "complaint",
+            "feedback",
+            "reason"
+          ]);
+
           const callCenterDateStr = getValue(["date contacted by call center", "call center date", "callcenter contacted"]);
 
           // Parse rating score (0 to 10)

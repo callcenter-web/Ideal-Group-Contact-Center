@@ -1828,11 +1828,23 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
 
                     {/* Complaint Reason details */}
                     <div className="space-y-1">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Customer Complaint Description (Excel):
-                      </span>
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-600 leading-relaxed font-semibold">
-                        {selectedComplaint.description}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Customer Complaint Description (Excel):
+                        </span>
+                        <span className="text-[9px] font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 flex items-center gap-1 shrink-0">
+                          <FileSpreadsheet className="h-3 w-3 text-blue-600" />
+                          Column: "Tell us more about the reason for this rating ."
+                        </span>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-700 leading-relaxed font-semibold shadow-2xs">
+                        {selectedComplaint.description && selectedComplaint.description !== "No feedback details provided." ? (
+                          selectedComplaint.description
+                        ) : (
+                          <span className="italic text-slate-400 font-medium">
+                            No detailed comment recorded under "Tell us more about the reason for this rating ." column.
+                          </span>
+                        )}
                       </div>
                     </div>
 
