@@ -23,7 +23,8 @@ import {
   Trash2,
   Sun,
   Moon,
-  RefreshCw
+  RefreshCw,
+  ListFilter
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile } from "./types";
@@ -36,6 +37,7 @@ import MetricCard from "./components/MetricCard";
 import ReportsPanel from "./components/ReportsPanel";
 import IdealMotorsLogo from "./components/IdealMotorsLogo";
 import UserProfileModal from "./components/UserProfileModal";
+import AllComplaintsList from "./components/AllComplaintsList";
 
 // Initialize client-side Supabase client with safe publishable credentials
 const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
@@ -146,7 +148,7 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
-  const [currentTab, setCurrentTab] = useState<"analytics" | "stations" | "upload" | "reports">("analytics");
+  const [currentTab, setCurrentTab] = useState<"analytics" | "list" | "stations" | "upload" | "reports">("analytics");
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -1289,25 +1291,38 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
         
         {/* National Manager & Call Center Tabs navigation */}
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
-          <div className="flex border-b border-slate-200 gap-1 shrink-0">
+          <div className="flex border-b border-slate-200 gap-1 shrink-0 overflow-x-auto">
             <button
               id="tab-analytics-btn"
               type="button"
               onClick={() => setCurrentTab("analytics")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                 currentTab === "analytics"
                   ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
               <Users className="h-3.5 w-3.5 inline mr-1.5" />
-              View All Complaints
+              Recovery Workspace
+            </button>
+            <button
+              id="tab-all-list-btn"
+              type="button"
+              onClick={() => setCurrentTab("list")}
+              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                currentTab === "list"
+                  ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <ListFilter className="h-3.5 w-3.5 inline mr-1.5" />
+              All Complaints List
             </button>
             <button
               id="tab-stations-btn"
               type="button"
               onClick={() => setCurrentTab("stations")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                 currentTab === "stations"
                   ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
                   : "border-transparent text-slate-500 hover:text-slate-800"
@@ -1320,7 +1335,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
               id="tab-reports-btn"
               type="button"
               onClick={() => setCurrentTab("reports")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                 currentTab === "reports"
                   ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
                   : "border-transparent text-slate-500 hover:text-slate-800"
@@ -1334,7 +1349,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                 id="tab-upload-btn"
                 type="button"
                 onClick={() => setCurrentTab("upload")}
-                className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                   currentTab === "upload"
                     ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
                     : "border-transparent text-slate-500 hover:text-slate-800"
@@ -1345,6 +1360,18 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
               </button>
             )}
           </div>
+        )}
+
+        {/* MASTER ALL COMPLAINTS LIST TAB (ADMIN VIEW) */}
+        {(currentUser.role === "admin" || currentUser.role === "callcenter") && currentTab === "list" && (
+          <AllComplaintsList
+            complaints={complaints}
+            theme={theme}
+            onSelectComplaintInWorkspace={(complaintId) => {
+              setSelectedComplaintId(complaintId);
+              setCurrentTab("analytics");
+            }}
+          />
         )}
 
         {/* STATION PERFORMANCE TAB */}
