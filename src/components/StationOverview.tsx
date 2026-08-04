@@ -1,7 +1,8 @@
 import React from "react";
 import { Complaint, StationProfile } from "../types";
 import { STATIONS } from "../demoData";
-import { MapPin, ArrowRight, ShieldCheck, AlertCircle } from "lucide-react";
+import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock } from "lucide-react";
+import { getAgeFormulaBreakdown } from "../utils/agingUtils";
 
 interface StationOverviewProps {
   complaints: Complaint[];
@@ -26,6 +27,7 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
     ).length;
 
     const conversionRate = total > 0 ? Math.round((converted / total) * 100) : 0;
+    const ageBreakdown = getAgeFormulaBreakdown(stationComplaints);
 
     return {
       ...station,
@@ -34,6 +36,8 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
       inProgress,
       resolved,
       conversionRate,
+      ageBreakdown,
+      stationComplaints,
     };
   });
 
@@ -122,6 +126,35 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
                     }`}
                     style={{ width: `${stat.conversionRate}%` }}
                   />
+                </div>
+              </div>
+              {/* Station Aging Breakdown Matrix */}
+              <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 ${
+                    isDark ? "text-slate-400" : "text-slate-600"
+                  }`}>
+                    <Clock className="h-3 w-3 text-blue-500 shrink-0" />
+                    Station Aging Matrix
+                  </span>
+                  <span className={`text-[9px] font-mono font-bold ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                    SLA Status
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {stat.ageBreakdown.map((item) => (
+                    <div
+                      key={item.category}
+                      className={`px-2 py-1 rounded border flex items-center justify-between text-[10px] font-bold ${
+                        isDark 
+                          ? `${item.badgeColorClass} bg-opacity-20 border-opacity-30` 
+                          : item.badgeColorClass
+                      }`}
+                    >
+                      <span className="truncate mr-1 text-[9px] font-extrabold">{item.category}</span>
+                      <span className="font-mono font-black">{item.count}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

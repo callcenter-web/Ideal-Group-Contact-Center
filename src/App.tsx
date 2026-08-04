@@ -12,6 +12,7 @@ import {
   Sparkles, 
   MessageSquare,
   AlertTriangle,
+  AlertCircle,
   User,
   Phone,
   Mail,
@@ -38,6 +39,7 @@ import ReportsPanel from "./components/ReportsPanel";
 import IdealMotorsLogo from "./components/IdealMotorsLogo";
 import UserProfileModal from "./components/UserProfileModal";
 import AllComplaintsList from "./components/AllComplaintsList";
+import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
 
 // Initialize client-side Supabase client with safe publishable credentials
 const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
@@ -210,6 +212,15 @@ export default function App() {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   });
 
+  // Live ticker clock updating every second for real-time elapsed counter (days, hours, mins, secs)
+  const [tickerDate, setTickerDate] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTickerDate(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // State-based delete confirmation state
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
@@ -243,31 +254,8 @@ export default function App() {
       }
 
       if (data) {
-        if (data.length === 0) {
-          console.log("Direct Supabase: Database is empty. Seeding DEMO_COMPLAINTS...");
-          const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-          const { error: seedError } = await supabaseClient
-            .from("complaints")
-            .insert(cleanDemo);
-          
-          if (!seedError) {
-            const { data: refreshed } = await supabaseClient
-              .from("complaints")
-              .select("*")
-              .order("date", { ascending: false });
-            if (refreshed) {
-              setComplaints(refreshed);
-              localStorage.setItem("ideal_group_complaints", JSON.stringify(refreshed));
-            }
-          } else {
-            console.error("Direct Supabase seed error:", seedError);
-            setComplaints(DEMO_COMPLAINTS);
-            localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
-          }
-        } else {
-          setComplaints(data);
-          localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
-        }
+        setComplaints(data);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
       }
       setSupabaseActive(true);
       setSupabaseError(null);
@@ -453,22 +441,49 @@ export default function App() {
 
   // Single Complaint Delete from Whole Database
   const handleDeleteSingleComplaint = async (complaintId: string) => {
-    const updatedList = complaints.filter(
-      (c) => c.id !== complaintId && c.woNo !== complaintId
+    const targetComp = complaints.find(
+      (c) => c.id === complaintId || c.woNo === complaintId || `COMP-${c.woNo}` === complaintId
     );
+
+    const targetId = targetComp ? targetComp.id : complaintId;
+    const targetWoNo = targetComp ? targetComp.woNo : complaintId;
+
+    const updatedList = complaints.filter((c) => {
+      const cId = (c.id || "").trim().toUpperCase();
+      const cWo = (c.woNo || "").trim().toUpperCase();
+      const tId = (targetId || "").trim().toUpperCase();
+      const tWo = (targetWoNo || "").trim().toUpperCase();
+
+      if (tId && (cId === tId || cWo === tId)) return false;
+      if (tWo && (cId === tWo || cWo === tWo)) return false;
+      if (tWo && cId === `COMP-${tWo}`) return false;
+      return true;
+    });
+
     setComplaints(updatedList);
     localStorage.setItem("ideal_group_complaints", JSON.stringify(updatedList));
 
-    if (selectedComplaintId === complaintId) {
+    if (selectedComplaintId === complaintId || selectedComplaintId === targetId) {
       setSelectedComplaintId(null);
     }
+    setDeletingId(null);
 
     // Direct Supabase delete
     try {
+      const conditions: string[] = [];
+      if (targetId) {
+        conditions.push(`id.eq.${targetId}`);
+        conditions.push(`wo_no.eq.${targetId}`);
+      }
+      if (targetWoNo) {
+        conditions.push(`id.eq.${targetWoNo}`);
+        conditions.push(`wo_no.eq.${targetWoNo}`);
+        conditions.push(`id.eq.COMP-${targetWoNo}`);
+      }
       await supabaseClient
         .from("complaints")
         .delete()
-        .or(`id.eq.${complaintId},wo_no.eq.${complaintId}`);
+        .or(conditions.join(","));
     } catch (err) {
       console.warn("Direct Supabase delete failed:", err);
     }
@@ -478,7 +493,7 @@ export default function App() {
       await fetch("/api/complaints/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: complaintId }),
+        body: JSON.stringify({ id: targetId, woNo: targetWoNo }),
       });
     } catch (err) {
       console.warn("Backend API delete failed:", err);
@@ -490,6 +505,8 @@ export default function App() {
     setComplaints([]);
     localStorage.setItem("ideal_group_complaints", JSON.stringify([]));
     setSelectedComplaintId(null);
+    setDeletingId(null);
+    setShowDeleteAllConfirm(false);
 
     try {
       await supabaseClient
@@ -574,12 +591,9 @@ export default function App() {
     setNewReceivedTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
   };
 
-  // Handle manual removal of a complaint (Admin only)
+  // Handle manual removal of a complaint
   const handleDeleteComplaint = (complaintId: string) => {
-    const updated = complaints.filter((c) => c.id !== complaintId);
-    saveComplaints(updated);
-    setSelectedComplaintId(null);
-    setDeletingId(null);
+    handleDeleteSingleComplaint(complaintId);
   };
 
   const clearComplaintsDirectly = async () => {
@@ -1238,29 +1252,51 @@ export default function App() {
                 id="btn-copy-supabase-sql"
                 type="button"
                 onClick={() => {
-                  const sqlText = `-- CLEAR AND RECREATE COMPLAINTS TABLE (Saves form feeding & tracking)
+                  const sqlText = `-- IDEAL MOTORS CONNECTED RELATIONAL DATABASE SCHEMA
+DROP TABLE IF EXISTS call_center_logs CASCADE;
 DROP TABLE IF EXISTS complaints CASCADE;
+DROP TABLE IF EXISTS call_center_officers CASCADE;
+DROP TABLE IF EXISTS stations CASCADE;
+
+CREATE TABLE stations (
+  code text PRIMARY KEY,
+  name text NOT NULL,
+  manager_name text,
+  email text,
+  phone text
+);
+
+CREATE TABLE call_center_officers (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  title text NOT NULL,
+  email text UNIQUE NOT NULL,
+  phone text,
+  avatar text,
+  department text DEFAULT 'Ideal Motors Central CX Call Center'
+);
 
 CREATE TABLE complaints (
-  id text primary key,
+  id text PRIMARY KEY,
+  wo_no text UNIQUE,
   "customerName" text,
   "customerPhone" text,
   "customerEmail" text,
-  station text,
+  station text REFERENCES stations(code) ON DELETE SET NULL,
   category text,
   description text,
   date text,
   "receivedDateTime" text,
   "initialSatisfaction" text,
   "currentSatisfaction" text,
-  status text,
+  status text DEFAULT 'Pending',
   notes text,
   "agentName" text,
+  assigned_officer_id text REFERENCES call_center_officers(id) ON DELETE SET NULL,
   "aiAnalysis" jsonb,
   "updatedAt" text,
   month text,
   company text,
-  "woNo" text,
   "woState" text,
   "vehicleRegNo" text,
   "mchCodeDescription" text,
@@ -1272,7 +1308,7 @@ CREATE TABLE complaints (
   mileage text,
   "advisorName" text,
   "chassiNo" text,
-  "npsScore" integer,
+  "npsScore" integer DEFAULT 0,
   "stationContactedDate" text,
   "stationResolutionNotes" text,
   "callCenterContactedDate" text,
@@ -1285,27 +1321,24 @@ CREATE TABLE complaints (
   "followUpDate" text
 );
 
--- ENABLE ROW LEVEL SECURITY FOR MULTI-PC COLLABORATION
+ALTER TABLE stations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE call_center_officers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE complaints ENABLE ROW LEVEL SECURITY;
 
--- REMOVE EXISTING POLICIES TO AVOID CONFLICTS
-DROP POLICY IF EXISTS "Allow public read" ON complaints;
-DROP POLICY IF EXISTS "Allow public insert" ON complaints;
-DROP POLICY IF EXISTS "Allow public update" ON complaints;
-DROP POLICY IF EXISTS "Allow public delete" ON complaints;
+CREATE POLICY "Allow public read stations" ON stations FOR SELECT USING (true);
+CREATE POLICY "Allow public read officers" ON call_center_officers FOR SELECT USING (true);
 
--- CREATE FRESH SECURE PERMISSIVE POLICIES
-CREATE POLICY "Allow public read" ON complaints FOR SELECT USING (true);
-CREATE POLICY "Allow public insert" ON complaints FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow public update" ON complaints FOR UPDATE USING (true);
-CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
+CREATE POLICY "Allow public read complaints" ON complaints FOR SELECT USING (true);
+CREATE POLICY "Allow public insert complaints" ON complaints FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update complaints" ON complaints FOR UPDATE USING (true);
+CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (true);
 `;
                   navigator.clipboard.writeText(sqlText);
-                  alert("SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, then click 'Test & Reconnect Now'.");
+                  alert("Relational SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, then click 'Test & Reconnect Now'.");
                 }}
                 className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-xs transition-all cursor-pointer uppercase tracking-wider"
               >
-                Copy SQL Script
+                Copy Connected SQL Script
               </button>
 
               <button
@@ -1671,6 +1704,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                   ) : (
                     filteredComplaints.map((item) => {
                       const isSelected = selectedComplaintId === item.id;
+                      const itemAge = getComplaintAgeInfo(item, tickerDate);
                       return (
                         <div
                           id={`complaint-card-${item.id}`}
@@ -1701,7 +1735,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                             </div>
                           </div>
 
-                          {/* Station Tag & Category Tag */}
+                          {/* Station Tag, Category Tag & Time Passing Badge */}
                           <div className="flex flex-wrap gap-1.5 mt-2.5">
                             <span className="inline-flex items-center text-[10px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600 font-bold">
                               <MapPin className="h-3 w-3 text-blue-600 mr-1" />
@@ -1709,6 +1743,10 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                             </span>
                             <span className="inline-flex items-center text-[10px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600 font-bold">
                               {item.category}
+                            </span>
+                            <span className={`inline-flex items-center text-[9px] font-black border px-2 py-0.5 rounded-full ${itemAge.badgeColorClass}`}>
+                              <Clock className="h-2.5 w-2.5 mr-1" />
+                              {itemAge.category}
                             </span>
                             {item.aiAnalysis && (
                               <span className="inline-flex items-center text-[9px] bg-green-50 border border-green-200 px-2 py-0.5 rounded text-green-700 font-bold uppercase tracking-wider">
@@ -1731,7 +1769,9 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
 
               {/* Right Side: Active Recovery Workspace Panel */}
               <div className="lg:col-span-5">
-                {selectedComplaint ? (
+                {selectedComplaint ? (() => {
+                  const selectedAge = getComplaintAgeInfo(selectedComplaint, tickerDate);
+                  return (
                   <div id="recovery-workspace-card" className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm sticky top-[68px] space-y-4 text-left">
                     
                     {/* Workspace Header */}
@@ -1791,6 +1831,56 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                             </div>
                           )}
                         </div>
+                      </div>
+                    </div>
+
+                    {/* Time Passing & Deadline Tracker Box */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                      {/* Live Ticking Time Counter Header */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 bg-blue-600 text-white rounded-lg shrink-0 shadow-2xs">
+                            <Clock className="h-4 w-4 animate-spin-slow" />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                              Complaint Time Elapsed (Live Tracker)
+                            </span>
+                            <span className="text-xs font-black text-blue-900 font-mono tracking-tight flex items-center gap-1">
+                              <span>{selectedAge.days}d</span>
+                              <span className="text-slate-400">:</span>
+                              <span>{String(selectedAge.hours).padStart(2, "0")}h</span>
+                              <span className="text-slate-400">:</span>
+                              <span>{String(selectedAge.minutes).padStart(2, "0")}m</span>
+                              <span className="text-slate-400">:</span>
+                              <span className="text-blue-600 animate-pulse">{String(selectedAge.seconds).padStart(2, "0")}s</span>
+                            </span>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center text-[10px] font-black px-2.5 py-1 rounded-full border shadow-2xs ${selectedAge.badgeColorClass}`}>
+                          {selectedAge.category}
+                        </span>
+                      </div>
+
+                      {/* Deadline SLA Milestone Countdown Alert */}
+                      <div className={`p-2.5 rounded-lg border text-left space-y-1 ${
+                        selectedAge.category === ">10 Days (Critical)"
+                          ? "bg-rose-50/80 border-rose-200 text-rose-900"
+                          : selectedAge.category === "6-10 Days (Escalated)"
+                            ? "bg-orange-50/80 border-orange-200 text-orange-900"
+                            : selectedAge.category === "3-5 Days (Pending)"
+                              ? "bg-amber-50/80 border-amber-200 text-amber-900"
+                              : "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                      }`}>
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider">
+                          <span className="flex items-center gap-1">
+                            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                            {selectedAge.deadlineStatus}
+                          </span>
+                        </div>
+                        <p className="text-[11px] font-bold font-mono leading-tight">
+                          {selectedAge.nextMilestoneText}
+                        </p>
                       </div>
                     </div>
 
@@ -2497,7 +2587,8 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                     </div>
 
                   </div>
-                ) : (
+                  );
+                })() : (
                   <div className="bg-white rounded-lg border border-dashed border-slate-300 p-10 text-center text-slate-400 sticky top-[68px] shadow-sm">
                     <Clock className="h-7 w-7 mx-auto mb-2 text-slate-300" />
                     <p className="text-sm font-bold text-slate-500">No Customer Selected</p>

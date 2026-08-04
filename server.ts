@@ -139,30 +139,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         });
       }
 
-      // If database is active but completely empty, pre-populate it with DEMO_COMPLAINTS
-      if (data && data.length === 0 && localComplaintsCache.length > 0) {
-        console.log("Supabase table is empty. Pre-populating with default complaints...");
-        const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-        const { error: insertError } = await supabase
-          .from("complaints")
-          .insert(cleanDemo);
-        
-        if (!insertError) {
-          const { data: refreshedData } = await supabase
-            .from("complaints")
-            .select("*")
-            .order("date", { ascending: false });
-          return res.json({
-            complaints: refreshedData || DEMO_COMPLAINTS,
-            isSupabaseActive: true,
-            isSeeded: true
-          });
-        } else {
-          console.error("Failed to pre-populate Supabase:", insertError);
-        }
-      }
-
-      // Keep cache in sync with active db
+      // Keep cache in sync with active db (do NOT auto-seed if empty so deletions persist)
       if (data) {
         localComplaintsCache = data;
       }
@@ -191,15 +168,8 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
 
-      // Update local memory cache first
-      complaintsArray.forEach(newC => {
-        const idx = localComplaintsCache.findIndex(c => c.id === newC.id);
-        if (idx !== -1) {
-          localComplaintsCache[idx] = newC;
-        } else {
-          localComplaintsCache.unshift(newC);
-        }
-      });
+      // Update local memory cache directly with the full provided array
+      localComplaintsCache = complaintsArray;
 
       // Try writing to Supabase with deduplicated and sanitized data
       const cleanComplaints = deduplicateAndSanitizeComplaints(complaintsArray);
@@ -237,21 +207,42 @@ Ensure your response is highly detailed, professional, and directly actionable f
   // API Route to delete a single complaint by ID or WO Number
   app.post("/api/complaints/delete", async (req, res) => {
     try {
-      const { id } = req.body;
-      if (!id) {
-        return res.status(400).json({ error: "Complaint ID is required for deletion." });
+      const { id, woNo } = req.body;
+      if (!id && !woNo) {
+        return res.status(400).json({ error: "Complaint ID or WO Number is required for deletion." });
       }
 
-      // Filter local memory cache
-      localComplaintsCache = localComplaintsCache.filter(
-        (c) => c.id !== id && c.woNo !== id
-      );
+      const targetId = id ? String(id).trim().toUpperCase() : "";
+      const targetWoNo = woNo ? String(woNo).trim().toUpperCase() : "";
+
+      // Filter local memory cache thoroughly
+      localComplaintsCache = localComplaintsCache.filter((c) => {
+        const cId = (c.id || "").trim().toUpperCase();
+        const cWo = (c.woNo || "").trim().toUpperCase();
+
+        if (targetId && (cId === targetId || cWo === targetId)) return false;
+        if (targetWoNo && (cId === targetWoNo || cWo === targetWoNo)) return false;
+        if (targetWoNo && cId === `COMP-${targetWoNo}`) return false;
+        if (targetId && cId === `COMP-${targetId}`) return false;
+        return true;
+      });
 
       // Try deleting from Supabase
+      const conditions: string[] = [];
+      if (id) {
+        conditions.push(`id.eq.${id}`);
+        conditions.push(`wo_no.eq.${id}`);
+      }
+      if (woNo) {
+        conditions.push(`id.eq.${woNo}`);
+        conditions.push(`wo_no.eq.${woNo}`);
+        conditions.push(`id.eq.COMP-${woNo}`);
+      }
+
       const { error } = await supabase
         .from("complaints")
         .delete()
-        .or(`id.eq.${id},wo_no.eq.${id}`);
+        .or(conditions.join(","));
 
       if (error) {
         console.error("Supabase DELETE single complaint error:", error);

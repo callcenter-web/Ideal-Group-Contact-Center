@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   Search, 
   Filter, 
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
+import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "../utils/agingUtils";
 
 interface AllComplaintsListProps {
   complaints: Complaint[];
@@ -51,6 +52,15 @@ export default function AllComplaintsList({
 
   // Quick Detail Modal State
   const [activeModalComplaint, setActiveModalComplaint] = useState<Complaint | null>(null);
+
+  // Live ticker clock updating every second for real-time elapsed counter
+  const [tickerDate, setTickerDate] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTickerDate(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Delete Confirmation State
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -289,6 +299,34 @@ export default function AllComplaintsList({
         </div>
       </div>
 
+      {/* Time Passing Formula Breakdown Banner */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 shadow-2xs space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-600" />
+            <span className="text-xs font-black uppercase text-slate-800 tracking-wider">
+              Time Passing Breakdown (Aging Matrix)
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-500 font-bold">
+            Standard Breakdown Formula ({complaints.length} Total Records)
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {getAgeFormulaBreakdown(complaints, tickerDate).map((item) => (
+            <div key={item.category} className={`p-2.5 rounded-lg border ${item.badgeColorClass} flex justify-between items-center shadow-2xs`}>
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-tight block">{item.category}</span>
+                <span className="text-sm font-black font-mono">{item.count} complaints</span>
+              </div>
+              <span className="text-xs font-black px-2 py-1 rounded bg-white/80 border border-current shadow-2xs">
+                {item.percentage}%
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Controls & Filter Toolbar */}
       <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
@@ -384,7 +422,8 @@ export default function AllComplaintsList({
                 <th className="py-3 px-3">Date</th>
                 <th className="py-3 px-3">Customer Details</th>
                 <th className="py-3 px-3">Station</th>
-                <th className="py-3 px-3 min-w-[200px]">Reason (Tell us more...)</th>
+                <th className="py-3 px-3 min-w-[180px]">Reason (Tell us more...)</th>
+                <th className="py-3 px-3">Time Passing</th>
                 <th className="py-3 px-3">1st Call Attempt</th>
                 <th className="py-3 px-3">2nd Call Attempt</th>
                 <th className="py-3 px-3">Satisfaction</th>
@@ -395,7 +434,7 @@ export default function AllComplaintsList({
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {paginatedComplaints.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={11} className="py-12 text-center text-slate-400">
                     <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                     <p className="font-semibold text-slate-600">No complaints match the specified filters.</p>
                     <button
@@ -414,6 +453,7 @@ export default function AllComplaintsList({
                   const isUnreachable =
                     c.firstAttemptCallStatus === "Customer Unreachable" ||
                     c.secondAttemptFeedbackStatus === "Customer Unreachable";
+                  const ageInfo = getComplaintAgeInfo(c, tickerDate);
 
                   return (
                     <tr 
@@ -465,6 +505,17 @@ export default function AllComplaintsList({
                             <span className="italic text-slate-400 font-normal">No comment provided</span>
                           )}
                         </p>
+                      </td>
+
+                      {/* Time Passing / Aging */}
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${ageInfo.badgeColorClass}`}>
+                          <Clock className="h-2.5 w-2.5 mr-1 shrink-0" />
+                          {ageInfo.category}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-500 block mt-0.5 font-bold">
+                          {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m {String(ageInfo.seconds).padStart(2, "0")}s
+                        </span>
                       </td>
 
                       {/* 1st Attempt */}
