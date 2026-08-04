@@ -234,6 +234,51 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
+  // API Route to delete a single complaint by ID or WO Number
+  app.post("/api/complaints/delete", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ error: "Complaint ID is required for deletion." });
+      }
+
+      // Filter local memory cache
+      localComplaintsCache = localComplaintsCache.filter(
+        (c) => c.id !== id && c.woNo !== id
+      );
+
+      // Try deleting from Supabase
+      const { error } = await supabase
+        .from("complaints")
+        .delete()
+        .or(`id.eq.${id},wo_no.eq.${id}`);
+
+      if (error) {
+        console.error("Supabase DELETE single complaint error:", error);
+        return res.json({
+          success: true,
+          isSupabaseActive: false,
+          error: error.message,
+          complaints: localComplaintsCache
+        });
+      }
+
+      res.json({
+        success: true,
+        isSupabaseActive: true,
+        complaints: localComplaintsCache
+      });
+    } catch (err: any) {
+      console.error("Delete complaint exception:", err);
+      res.json({
+        success: true,
+        isSupabaseActive: false,
+        error: err.message,
+        complaints: localComplaintsCache
+      });
+    }
+  });
+
   // API Route to fetch call center officers from Supabase
   app.get("/api/officers", async (req, res) => {
     try {

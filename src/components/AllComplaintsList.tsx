@@ -15,7 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
-  Sparkles
+  Sparkles,
+  Trash2
 } from "lucide-react";
 import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
@@ -24,12 +25,16 @@ interface AllComplaintsListProps {
   complaints: Complaint[];
   theme?: "light" | "dark";
   onSelectComplaintInWorkspace: (complaintId: string) => void;
+  onDeleteComplaint?: (complaintId: string) => void;
+  onDeleteAllComplaints?: () => void;
 }
 
 export default function AllComplaintsList({
   complaints,
   theme = "light",
   onSelectComplaintInWorkspace,
+  onDeleteComplaint,
+  onDeleteAllComplaints,
 }: AllComplaintsListProps) {
   const isDark = theme === "dark";
 
@@ -46,6 +51,10 @@ export default function AllComplaintsList({
 
   // Quick Detail Modal State
   const [activeModalComplaint, setActiveModalComplaint] = useState<Complaint | null>(null);
+
+  // Delete Confirmation State
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
 
   // Filter logic
   const filteredComplaints = useMemo(() => {
@@ -199,6 +208,41 @@ export default function AllComplaintsList({
             <Download className="h-4 w-4" />
             Export Filtered CSV ({filteredComplaints.length})
           </button>
+
+          {onDeleteAllComplaints && (
+            !showClearAllConfirm ? (
+              <button
+                type="button"
+                onClick={() => setShowClearAllConfirm(true)}
+                className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs py-2 px-3 rounded-lg border border-rose-200 transition-all cursor-pointer"
+                title="Delete all complaint records from database"
+              >
+                <Trash2 className="h-4 w-4 text-rose-600" />
+                <span>Clear All DB</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1">
+                <span className="text-[10px] font-black text-rose-800 uppercase">Delete whole DB?</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDeleteAllComplaints();
+                    setShowClearAllConfirm(false);
+                  }}
+                  className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold px-2 py-0.5 rounded cursor-pointer transition-colors"
+                >
+                  Yes, Delete All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowClearAllConfirm(false)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )
+          )}
         </div>
       </div>
 
@@ -501,6 +545,7 @@ export default function AllComplaintsList({
                           >
                             <Eye className="h-4 w-4" />
                           </button>
+                          
                           <button
                             type="button"
                             onClick={() => onSelectComplaintInWorkspace(c.id)}
@@ -510,6 +555,40 @@ export default function AllComplaintsList({
                             <span>Open</span>
                             <ArrowRight className="h-3.5 w-3.5" />
                           </button>
+
+                          {onDeleteComplaint && (
+                            deletingId === c.id ? (
+                              <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 rounded p-1">
+                                <span className="text-[9px] font-extrabold text-rose-800">Delete?</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onDeleteComplaint(c.id);
+                                    setDeletingId(null);
+                                  }}
+                                  className="bg-rose-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded hover:bg-rose-700 cursor-pointer"
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingId(null)}
+                                  className="bg-slate-200 text-slate-700 text-[9px] font-bold px-1.5 py-0.5 rounded hover:bg-slate-300 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDeletingId(c.id)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                                title="Delete complaint permanently from database"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )
+                          )}
                         </div>
                       </td>
                     </tr>

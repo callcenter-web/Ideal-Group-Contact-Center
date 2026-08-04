@@ -441,12 +441,73 @@ export default function App() {
     if (overwrite) {
       updatedList = newComplaints;
     } else {
-      // Avoid duplicate IDs by merging
-      const existingIds = complaints.map((c) => c.id);
-      const filteredNew = newComplaints.filter((c) => !existingIds.includes(c.id));
-      updatedList = [...filteredNew, ...complaints];
+      // Upsert by WO Number / ID (if duplicate WO exists, update it, otherwise prepend)
+      const existingMap = new Map(complaints.map(c => [c.id, c]));
+      newComplaints.forEach(nc => {
+        existingMap.set(nc.id, nc);
+      });
+      updatedList = Array.from(existingMap.values());
     }
     saveComplaints(updatedList);
+  };
+
+  // Single Complaint Delete from Whole Database
+  const handleDeleteSingleComplaint = async (complaintId: string) => {
+    const updatedList = complaints.filter(
+      (c) => c.id !== complaintId && c.woNo !== complaintId
+    );
+    setComplaints(updatedList);
+    localStorage.setItem("ideal_group_complaints", JSON.stringify(updatedList));
+
+    if (selectedComplaintId === complaintId) {
+      setSelectedComplaintId(null);
+    }
+
+    // Direct Supabase delete
+    try {
+      await supabaseClient
+        .from("complaints")
+        .delete()
+        .or(`id.eq.${complaintId},wo_no.eq.${complaintId}`);
+    } catch (err) {
+      console.warn("Direct Supabase delete failed:", err);
+    }
+
+    // Server API delete call
+    try {
+      await fetch("/api/complaints/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: complaintId }),
+      });
+    } catch (err) {
+      console.warn("Backend API delete failed:", err);
+    }
+  };
+
+  // Clear All Complaints from Whole Database
+  const handleDeleteAllComplaints = async () => {
+    setComplaints([]);
+    localStorage.setItem("ideal_group_complaints", JSON.stringify([]));
+    setSelectedComplaintId(null);
+
+    try {
+      await supabaseClient
+        .from("complaints")
+        .delete()
+        .neq("id", "FORCE_NONE_MATCHING_ID");
+    } catch (err) {
+      console.warn("Direct Supabase clear all failed:", err);
+    }
+
+    try {
+      await fetch("/api/complaints/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (err) {
+      console.warn("Backend API clear failed:", err);
+    }
   };
 
   // Handle manually adding a complaint (Admin only)
@@ -541,36 +602,6 @@ export default function App() {
       console.error("Direct Supabase clear exception:", err);
       setSupabaseActive(false);
       setSupabaseError(err.message);
-    }
-  };
-
-  // Handle clearing all complaints
-  const handleDeleteAllComplaints = async () => {
-    setComplaints([]);
-    localStorage.setItem("ideal_group_complaints", JSON.stringify([]));
-    setSelectedComplaintId(null);
-    setDeletingId(null);
-    setShowDeleteAllConfirm(false);
-
-    try {
-      const res = await fetch("/api/complaints/clear", { method: "POST" });
-      const text = await res.text();
-
-      if (text.trim().startsWith("<!DOCTYPE")) {
-        console.warn("Backend API clear not found (HTML response). Clearing directly from Supabase client-side...");
-        await clearComplaintsDirectly();
-        return;
-      }
-
-      const data = JSON.parse(text);
-      setSupabaseActive(data.isSupabaseActive);
-      if (data.complaints) {
-        setComplaints(data.complaints);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
-      }
-    } catch (e: any) {
-      console.warn("Backend clear failed, clearing directly from Supabase client-side:", e);
-      await clearComplaintsDirectly();
     }
   };
 
@@ -1371,6 +1402,8 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
               setSelectedComplaintId(complaintId);
               setCurrentTab("analytics");
             }}
+            onDeleteComplaint={handleDeleteSingleComplaint}
+            onDeleteAllComplaints={handleDeleteAllComplaints}
           />
         )}
 
@@ -1391,6 +1424,7 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
           <UploadZone 
             onDataLoaded={handleDataLoaded} 
             onResetDemo={handleResetDemo} 
+            existingComplaints={complaints}
           />
         )}
 
@@ -1722,34 +1756,34 @@ CREATE POLICY "Allow public delete" ON complaints FOR DELETE USING (true);
                           {getStatusBadge(selectedComplaint.status)}
                           {getSatisfactionBadge(selectedComplaint.currentSatisfaction)}
 
-                          {currentUser.role === "admin" && (
+                          {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
                             <div className="mt-2 text-right">
                               {deletingId !== selectedComplaint.id ? (
                                 <button
                                   type="button"
                                   onClick={() => setDeletingId(selectedComplaint.id)}
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 hover:border-red-200 text-[10px] font-bold px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                  title="Delete this complaint"
+                                  title="Delete this complaint permanently from database"
                                 >
-                                  <Trash2 className="h-3 w-3" /> Remove
+                                  <Trash2 className="h-3 w-3 text-red-600" /> Delete Complaint
                                 </button>
                               ) : (
                                 <div className="bg-red-50 p-1.5 rounded border border-red-200 flex flex-col gap-1 items-end">
-                                  <span className="text-[9px] font-bold text-red-700">Delete this complaint?</span>
+                                  <span className="text-[9px] font-bold text-red-700">Delete permanently from database?</span>
                                   <div className="flex gap-1">
                                     <button
                                       type="button"
-                                      onClick={() => handleDeleteComplaint(selectedComplaint.id)}
-                                      className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                      onClick={() => handleDeleteSingleComplaint(selectedComplaint.id)}
+                                      className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-black px-2 py-0.5 rounded cursor-pointer transition-colors"
                                     >
-                                      Yes
+                                      Yes, Delete
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => setDeletingId(null)}
-                                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[9px] font-black px-2 py-0.5 rounded cursor-pointer transition-colors"
                                     >
-                                      No
+                                      Cancel
                                     </button>
                                   </div>
                                 </div>
