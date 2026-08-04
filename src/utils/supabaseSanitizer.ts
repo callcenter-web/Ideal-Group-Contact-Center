@@ -13,11 +13,14 @@ export const VALID_COMPLAINT_COLUMNS = [
   "status",
   "notes",
   "agentName",
+  "assigned_officer_id",
+  "assignedOfficerId",
   "aiAnalysis",
   "updatedAt",
   "month",
   "company",
   "woNo",
+  "wo_no",
   "woState",
   "vehicleRegNo",
   "mchCodeDescription",
@@ -39,7 +42,14 @@ export const VALID_COMPLAINT_COLUMNS = [
   "finalStatus",
   "solutionProvidedByAftermarket",
   "solutionDate",
-  "followUpDate"
+  "followUpDate",
+  "firstAttemptCallStatus",
+  "firstAttemptDate",
+  "firstAttemptNotes",
+  "secondAttemptFeedbackStatus",
+  "secondAttemptDate",
+  "secondAttemptNotes",
+  "attemptCount"
 ];
 
 /**
@@ -52,7 +62,7 @@ export function sanitizeComplaintForSupabase(item: any): Record<string, any> {
   const clean: Record<string, any> = {};
   for (const col of VALID_COMPLAINT_COLUMNS) {
     if (item[col] !== undefined) {
-      if (col === "npsScore") {
+      if (col === "npsScore" || col === "attemptCount") {
         if (item[col] === null || item[col] === "" || item[col] === undefined) {
           clean[col] = null;
         } else {
@@ -64,7 +74,33 @@ export function sanitizeComplaintForSupabase(item: any): Record<string, any> {
       }
     }
   }
+
+  // Ensure both woNo and wo_no are populated if either exists
+  const woVal = item.woNo !== undefined ? item.woNo : item.wo_no;
+  if (woVal !== undefined) {
+    clean.woNo = woVal;
+    clean.wo_no = woVal;
+  }
+
+  // Ensure assigned_officer_id
+  const officerVal = item.assigned_officer_id || item.assignedOfficerId;
+  if (officerVal !== undefined) {
+    clean.assigned_officer_id = officerVal;
+  }
+
   return clean;
+}
+
+/**
+ * Normalizes complaint objects fetched from Supabase, ensuring woNo and assignedOfficerId are available.
+ */
+export function normalizeComplaintFromSupabase(item: any): Record<string, any> {
+  if (!item || typeof item !== "object") return item;
+  return {
+    ...item,
+    woNo: item.woNo || item.wo_no || "",
+    assignedOfficerId: item.assignedOfficerId || item.assigned_officer_id || undefined
+  };
 }
 
 /**
@@ -93,4 +129,3 @@ export function deduplicateAndSanitizeComplaints(items: any[]): Record<string, a
   
   return Array.from(map.values());
 }
-

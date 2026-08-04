@@ -36,6 +36,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 let localComplaintsCache = [...DEMO_COMPLAINTS];
 let localOfficersCache = [...CALL_CENTER_OFFICERS];
 let localStationsCache = [...STATIONS];
+let localEmailLogsCache: any[] = [];
 let localCalendarCache: any[] = [
   {
     id: "default-1",
@@ -203,9 +204,24 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       // Try writing to Supabase with deduplicated and sanitized data
       const cleanComplaints = deduplicateAndSanitizeComplaints(complaintsArray);
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("complaints")
         .upsert(cleanComplaints, { onConflict: "id" });
+
+      if (error && error.message && error.message.includes("column")) {
+        console.warn("Supabase upsert encountered column mismatch, retrying after adjusting schema keys:", error.message);
+        let retryPayload = cleanComplaints;
+        if (error.message.includes("'woNo'")) {
+          retryPayload = cleanComplaints.map(({ woNo, ...rest }) => rest);
+        } else if (error.message.includes("'wo_no'")) {
+          retryPayload = cleanComplaints.map(({ wo_no, ...rest }) => rest);
+        }
+        const retryRes = await supabase
+          .from("complaints")
+          .upsert(retryPayload, { onConflict: "id" });
+        error = retryRes.error;
+        data = retryRes.data;
+      }
 
       if (error) {
         console.error("Supabase UPSERT error:", error);
@@ -261,10 +277,12 @@ Ensure your response is highly detailed, professional, and directly actionable f
       const conditions: string[] = [];
       if (id) {
         conditions.push(`id.eq.${id}`);
+        conditions.push(`woNo.eq.${id}`);
         conditions.push(`wo_no.eq.${id}`);
       }
       if (woNo) {
         conditions.push(`id.eq.${woNo}`);
+        conditions.push(`woNo.eq.${woNo}`);
         conditions.push(`wo_no.eq.${woNo}`);
         conditions.push(`id.eq.COMP-${woNo}`);
       }
@@ -389,7 +407,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
   app.get("/api/stations", async (req, res) => {
     try {
       const { data, error } = await supabase
-        .from("service_stations")
+        .from("stations")
         .select("*")
         .order("code", { ascending: true });
 
@@ -404,7 +422,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       if (!data || data.length === 0) {
         // Pre-populate if empty in Supabase
         const { error: insertError } = await supabase
-          .from("service_stations")
+          .from("stations")
           .insert(STATIONS);
 
         if (!insertError) {
@@ -442,7 +460,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       localStationsCache = stationsArray;
 
       const { data, error } = await supabase
-        .from("service_stations")
+        .from("stations")
         .upsert(stationsArray, { onConflict: "code" });
 
       if (error) {
@@ -500,6 +518,47 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
+  app.delete("/api/calendar/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      localCalendarCache = localCalendarCache.filter((item) => item.id !== id);
+      const { error } = await supabase.from("workstation_calendar").delete().eq("id", id);
+      if (error) {
+        console.error("Supabase calendar DELETE error:", error);
+      }
+      res.json({ success: true, dates: localCalendarCache });
+    } catch (err: any) {
+      res.json({ success: true, dates: localCalendarCache });
+    }
+  });
+
+  // API Routes for Systemic Email Logs
+  app.get("/api/email-logs", async (req, res) => {
+    try {
+      const { data, error } = await supabase.from("systemic_email_logs").select("*").order("sentAt", { ascending: false });
+      if (error || !data || data.length === 0) {
+        return res.json({ logs: localEmailLogsCache });
+      }
+      localEmailLogsCache = data;
+      res.json({ logs: data });
+    } catch (err) {
+      res.json({ logs: localEmailLogsCache });
+    }
+  });
+
+  app.post("/api/email-logs", async (req, res) => {
+    try {
+      const { logs } = req.body;
+      if (logs && Array.isArray(logs)) {
+        localEmailLogsCache = [...logs, ...localEmailLogsCache];
+        await supabase.from("systemic_email_logs").upsert(logs, { onConflict: "id" });
+      }
+      res.json({ success: true, logs: localEmailLogsCache });
+    } catch (err) {
+      res.json({ success: true, logs: localEmailLogsCache });
+    }
+  });
+
 
   // API Route to reset the database back to DEMO_COMPLAINTS
   app.post("/api/complaints/reset", async (req, res) => {
@@ -517,9 +576,20 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
 
       const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-      const { error: insertError } = await supabase
+      let { error: insertError } = await supabase
         .from("complaints")
         .insert(cleanDemo);
+
+      if (insertError && insertError.message && insertError.message.includes("column")) {
+        let retryPayload = cleanDemo;
+        if (insertError.message.includes("'woNo'")) {
+          retryPayload = cleanDemo.map(({ woNo, ...rest }) => rest);
+        } else if (insertError.message.includes("'wo_no'")) {
+          retryPayload = cleanDemo.map(({ wo_no, ...rest }) => rest);
+        }
+        const retryRes = await supabase.from("complaints").insert(retryPayload);
+        insertError = retryRes.error;
+      }
 
       if (insertError) {
         console.error("Supabase INSERT during reset error:", insertError);

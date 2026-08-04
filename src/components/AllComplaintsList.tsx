@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
+import { matchesStationCodeOrName } from "../utils/stationUtils";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "../utils/agingUtils";
 
 interface AllComplaintsListProps {
@@ -86,7 +87,7 @@ export default function AllComplaintsList({
         c.id.toLowerCase().includes(query);
 
       // Station
-      const matchesStation = stationFilter === "all" || c.station === stationFilter;
+      const matchesStation = matchesStationCodeOrName(c.station, stationFilter);
 
       // Status
       let matchesStatus = true;

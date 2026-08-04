@@ -19,6 +19,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
+import { matchesStationCodeOrName } from "../utils/stationUtils";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
@@ -117,7 +118,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
 
   // Filter complaints based on selection
   const filteredComplaints = complaints.filter((c) => {
-    const matchesStation = stationFilter === "all" || c.station === stationFilter;
+    const matchesStation = matchesStationCodeOrName(c.station, stationFilter);
     const matchesCategory = categoryFilter === "all" || c.category === categoryFilter;
     const matchesStatus = statusFilter === "all" || c.status === statusFilter;
     const matchesFeedbackStatus = feedbackStatusFilter === "all" || c.feedbackStatus === feedbackStatusFilter;
@@ -174,7 +175,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
 
   // Calculate Service Station Wise Metrics
   const stationMetrics = STATIONS.map((station) => {
-    const stationComplaints = filteredComplaints.filter(c => c.station === station.code);
+    const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
     const resolved = stationComplaints.filter(c => c.status === "Resolved").length;
     const pending = total - resolved;
@@ -1276,7 +1277,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
           <div className={`lg:col-span-5 rounded-xl border p-4 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             {(() => {
               const selectedStation = STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
-              const activeStationComplaints = filteredComplaints.filter(c => c.station === selectedStation.code);
+              const activeStationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, selectedStation.code));
               const activeStationTotal = activeStationComplaints.length;
 
               // Aging breakdown

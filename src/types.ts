@@ -67,13 +67,35 @@ export interface Complaint {
   attemptCount?: number;
 }
 
+export interface StationOfficerContact {
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+}
+
 export interface StationProfile {
   name: string;
   code: string;
   passwordHash: string; // Passkey for station login
+  address?: string;
   managerName?: string;
   email?: string;
   phone?: string;
+  officers?: StationOfficerContact[];
+}
+
+export interface SystemicEmailLog {
+  id: string;
+  station: string;
+  sentAt: string;
+  fromEmail: string;
+  recipients: string[];
+  subject: string;
+  complaintCount: number;
+  complaintIds: string[];
+  bodyHtml: string;
+  status: "Sent" | "Delivered";
 }
 
 export interface CallCenterOfficer {

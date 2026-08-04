@@ -1,13 +1,92 @@
 import { Complaint, StationProfile, CallCenterOfficer } from "./types";
 
 export const STATIONS: StationProfile[] = [
-  { name: "Rathmalana (CWS)", code: "Rathmalana", passwordHash: "rathmalana123", managerName: "Kusal Silva", email: "rathmalana.cws@idealgroup.lk", phone: "+94 11 263 4455" },
-  { name: "Wanawasala", code: "Wanawasala", passwordHash: "wanawasala123", managerName: "Amila Fernando", email: "wanawasala.station@idealgroup.lk", phone: "+94 11 291 3322" },
-  { name: "Yakkala", code: "Yakkala", passwordHash: "yakkala123", managerName: "Dhanushka Perera", email: "yakkala.station@idealgroup.lk", phone: "+94 33 222 1100" },
-  { name: "Kurunegala", code: "Kurunegala", passwordHash: "kurunegala123", managerName: "Sunil Bandara", email: "kurunegala.station@idealgroup.lk", phone: "+94 37 223 4455" },
-  { name: "Anuradhapura", code: "Anuradhapura", passwordHash: "anuradhapura123", managerName: "Rohan Jayasuriya", email: "anuradhapura.station@idealgroup.lk", phone: "+94 25 222 3344" },
-  { name: "Jaffna", code: "Jaffna", passwordHash: "jaffna123", managerName: "T. Selvakumar", email: "jaffna.station@idealgroup.lk", phone: "+94 21 222 5566" },
-  { name: "Tissamaharama", code: "Tissamaharama", passwordHash: "tissamaharama123", managerName: "Chinthaka Weerasinghe", email: "tissamaharama.station@idealgroup.lk", phone: "+94 47 223 9988" }
+  {
+    name: "Rathmalana (CWS)",
+    code: "Rathmalana",
+    passwordHash: "rathmalana123",
+    address: "No.75, Kandawala Road, Ratmalana",
+    managerName: "Primal H. (Assistant Workshop Manager)",
+    email: "primal.h@idealgroup.lk",
+    phone: "0771053496",
+    officers: [
+      { name: "Primal H.", role: "Assistant Workshop Manager - Mechanical", email: "primal.h@idealgroup.lk", phone: "0771053496" }
+    ]
+  },
+  {
+    name: "Wanawasala",
+    code: "Wanawasala",
+    passwordHash: "wanawasala123",
+    address: "No.17 & 19, Wanawasala Road, Kelaniya",
+    managerName: "Akila Manoj (Manager - Workshop)",
+    email: "manjula.thushara@idealgroup.lk, akila.manoj@idealgroup.lk",
+    phone: "0772976110 / 0770168705",
+    officers: [
+      { name: "Manjula Thushara", role: "Senior Service Advisor", email: "manjula.thushara@idealgroup.lk", phone: "0772976110" },
+      { name: "Akila Manoj", role: "Manager - Workshop", email: "akila.manoj@idealgroup.lk", phone: "0770168705" }
+    ]
+  },
+  {
+    name: "Yakkala",
+    code: "Yakkala",
+    passwordHash: "yakkala123",
+    address: "No 175/C/1, Aluthgama, Bogamuwa, Yakkala",
+    managerName: "Chamila Sugathadasa (Manager - Workshop)",
+    email: "chamila.sugathadasa@idealgroup.lk",
+    phone: "0769923360",
+    officers: [
+      { name: "Chamila Sugathadasa", role: "Manager – Workshop", email: "chamila.sugathadasa@idealgroup.lk", phone: "0769923360" }
+    ]
+  },
+  {
+    name: "Kurunegala",
+    code: "Kurunegala",
+    passwordHash: "kurunegala123",
+    address: "No.167/1, Colombo Rd, Wanduragala, Kurunegala",
+    managerName: "Deshan Manujaya (Service Advisor)",
+    email: "anuruddha.rasanjana@idealgroup.lk, deshan.manujaya@idealgroup.lk",
+    phone: "0765956437 / 0770188986",
+    officers: [
+      { name: "Anuruddha Rasanjana", role: "Junior Service Advisor", email: "anuruddha.rasanjana@idealgroup.lk", phone: "0765956437" },
+      { name: "Deshan Manujaya", role: "Service Advisor", email: "deshan.manujaya@idealgroup.lk", phone: "0770188986" }
+    ]
+  },
+  {
+    name: "Anuradhapura",
+    code: "Anuradhapura",
+    passwordHash: "anuradhapura123",
+    address: "No 562/K, Jayanthi Mawatha, Anuradhapura",
+    managerName: "Sajith Maduranga (Assistant Manager - Workshop)",
+    email: "sajith.maduranga@idealgroup.lk",
+    phone: "0740887512",
+    officers: [
+      { name: "Sajith Maduranga", role: "Assistant Manager – Workshop", email: "sajith.maduranga@idealgroup.lk", phone: "0740887512" }
+    ]
+  },
+  {
+    name: "Jaffna",
+    code: "Jaffna",
+    passwordHash: "jaffna123",
+    address: "No.63, Nadumkulam Rd, Ariyalai, Jaffna",
+    managerName: "Komalan P. (Assistant Manager - Workshop)",
+    email: "komalan.p@idealgroup.lk",
+    phone: "0767245433",
+    officers: [
+      { name: "Komalan P.", role: "Assistant Manager – Workshop", email: "komalan.p@idealgroup.lk", phone: "0767245433" }
+    ]
+  },
+  {
+    name: "Tissamaharama",
+    code: "Tissamaharama",
+    passwordHash: "tissamaharama123",
+    address: "No.434/A, Gangasiripura, Tissamaharama",
+    managerName: "Thushara S. (Manager - Workshop)",
+    email: "thushara.s@idealgroup.lk",
+    phone: "0775524421",
+    officers: [
+      { name: "Thushara S.", role: "Manager – Workshop", email: "thushara.s@idealgroup.lk", phone: "0775524421" }
+    ]
+  }
 ];
 
 export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [

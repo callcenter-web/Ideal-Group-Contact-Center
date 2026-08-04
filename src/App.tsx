@@ -31,6 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./utils/supabaseSanitizer";
+import { matchesStationCodeOrName } from "./utils/stationUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
 import StationOverview from "./components/StationOverview";
@@ -42,6 +43,15 @@ import AllComplaintsList from "./components/AllComplaintsList";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
 import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
 import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
+import { StationDirectoryAndEmailModal } from "./components/StationDirectoryAndEmailModal";
+import { CallCenterNotificationToast, CallCenterNotification } from "./components/CallCenterNotificationToast";
+import { SystemicEmailLog } from "./types";
+import { 
+  getStoredSystemicEmailLogs, 
+  saveSystemicEmailLogs, 
+  dispatchSystemicEmailsForComplaints, 
+  playCallCenterNotificationSound 
+} from "./utils/systemicEmailNotifier";
 
 
 // Initialize client-side Supabase client with safe publishable credentials
@@ -153,6 +163,18 @@ export default function App() {
         }
       })
       .catch(() => console.log("Calendar sync using local storage / fallback"));
+
+    fetch("/api/email-logs")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
+          setEmailLogs(data.logs);
+          saveSystemicEmailLogs(data.logs);
+        } else {
+          setEmailLogs(getStoredSystemicEmailLogs());
+        }
+      })
+      .catch(() => setEmailLogs(getStoredSystemicEmailLogs()));
   }, []);
 
   const handleUpdateCurrentUser = (updated: UserProfile) => {
@@ -163,6 +185,12 @@ export default function App() {
   const [calendarDates, setCalendarDates] = useState<WorkstationCalendarDate[]>(() => getStoredCalendarDates());
   const [showCalendarModal, setShowCalendarModal] = useState<boolean>(false);
   const [calendarStationTarget, setCalendarStationTarget] = useState<string>("All");
+
+  // Systemic Email Logs & Call Center Notification Sound States
+  const [showStationDirectoryModal, setShowStationDirectoryModal] = useState<boolean>(false);
+  const [emailLogs, setEmailLogs] = useState<SystemicEmailLog[]>(() => getStoredSystemicEmailLogs());
+  const [callCenterNotifications, setCallCenterNotifications] = useState<CallCenterNotification[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   const handleAddCalendarDate = (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
     const newEntry: WorkstationCalendarDate = {
@@ -185,11 +213,14 @@ export default function App() {
     const updated = calendarDates.filter((item) => item.id !== id);
     setCalendarDates(updated);
     saveCalendarDates(updated);
+    fetch(`/api/calendar/${id}`, { method: "DELETE" }).catch((err) =>
+      console.error("Error deleting calendar date from Supabase:", err)
+    );
     fetch("/api/calendar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dates: updated }),
-    }).catch((err) => console.error("Error removing calendar date:", err));
+    }).catch((err) => console.error("Error updating calendar dates:", err));
   };
 
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
@@ -375,9 +406,23 @@ export default function App() {
     try {
       console.log("Upserting directly to Supabase client-side...");
       const cleanList = deduplicateAndSanitizeComplaints(updatedList);
-      const { error } = await supabaseClient
+      let { error } = await supabaseClient
         .from("complaints")
         .upsert(cleanList, { onConflict: "id" });
+
+      if (error && error.message && error.message.includes("column")) {
+        console.warn("Direct Supabase upsert column mismatch retry:", error.message);
+        let retryPayload = cleanList;
+        if (error.message.includes("'woNo'")) {
+          retryPayload = cleanList.map(({ woNo, ...rest }) => rest);
+        } else if (error.message.includes("'wo_no'")) {
+          retryPayload = cleanList.map(({ wo_no, ...rest }) => rest);
+        }
+        const retryRes = await supabaseClient
+          .from("complaints")
+          .upsert(retryPayload, { onConflict: "id" });
+        error = retryRes.error;
+      }
 
       if (error) {
         console.error("Direct Supabase upsert error:", error);
@@ -483,6 +528,12 @@ export default function App() {
       updatedList = Array.from(existingMap.values());
     }
     saveComplaints(updatedList);
+
+    // Auto dispatch systemic emails to workshop personnel for newly added complaints
+    const dispatched = dispatchSystemicEmailsForComplaints(newComplaints);
+    if (dispatched.length > 0) {
+      setEmailLogs(prev => [...dispatched, ...prev]);
+    }
   };
 
   // Single Complaint Delete from Whole Database
@@ -519,10 +570,12 @@ export default function App() {
       const conditions: string[] = [];
       if (targetId) {
         conditions.push(`id.eq.${targetId}`);
+        conditions.push(`woNo.eq.${targetId}`);
         conditions.push(`wo_no.eq.${targetId}`);
       }
       if (targetWoNo) {
         conditions.push(`id.eq.${targetWoNo}`);
+        conditions.push(`woNo.eq.${targetWoNo}`);
         conditions.push(`wo_no.eq.${targetWoNo}`);
         conditions.push(`id.eq.COMP-${targetWoNo}`);
       }
@@ -617,6 +670,13 @@ export default function App() {
 
     const updated = [newComplaint, ...complaints];
     saveComplaints(updated);
+
+    // Auto dispatch systemic email notice for manual complaint
+    const dispatched = dispatchSystemicEmailsForComplaints([newComplaint]);
+    if (dispatched.length > 0) {
+      setEmailLogs(prev => [...dispatched, ...prev]);
+    }
+
     setSelectedComplaintId(newId);
     setShowAddModal(false);
 
@@ -676,9 +736,21 @@ export default function App() {
 
       // Then insert default ones
       const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-      const { error } = await supabaseClient
+      let { error } = await supabaseClient
         .from("complaints")
         .insert(cleanDemo);
+
+      if (error && error.message && error.message.includes("column")) {
+        console.warn("Direct Supabase reset insert column mismatch retry:", error.message);
+        let retryPayload = cleanDemo;
+        if (error.message.includes("'woNo'")) {
+          retryPayload = cleanDemo.map(({ woNo, ...rest }) => rest);
+        } else if (error.message.includes("'wo_no'")) {
+          retryPayload = cleanDemo.map(({ wo_no, ...rest }) => rest);
+        }
+        const retryRes = await supabaseClient.from("complaints").insert(retryPayload);
+        error = retryRes.error;
+      }
 
       if (error) {
         console.error("Direct Supabase insert during reset error:", error);
@@ -902,6 +974,30 @@ export default function App() {
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
 
+    // Real-Time Sound and Pop-up Notification trigger for Call Center & Admin
+    if (currentUser?.role === "agent" || currentUser?.role === "admin") {
+      if (soundEnabled) {
+        playCallCenterNotificationSound();
+      }
+      const targetC = complaints.find((item) => item.id === selectedComplaintId);
+      const actionText = currentUser?.role === "agent"
+        ? (formStationResolutionNotes || `Feedback status: ${formFeedbackStatus}`)
+        : (formNotes || `Follow-up status: ${formStatus}`);
+
+      setCallCenterNotifications((prev) => [
+        {
+          id: "NOTIF-" + Date.now(),
+          timestamp: new Date().toISOString(),
+          stationName: currentUser.station || formAssignedStation || "Service Station",
+          complaintId: selectedComplaintId,
+          customerName: targetC?.customerName || "Customer",
+          actionSummary: actionText,
+          updatedBy: formAgentName || currentUser.name || `${currentUser.station || "Service"} Adviser`,
+        },
+        ...prev,
+      ]);
+    }
+
     if (wasUnreachableBefore && isConnectedNow) {
       setConnectedCustomerName(selectedComplaint?.customerName || "Customer");
       setShowConnectedAlert(true);
@@ -1038,7 +1134,7 @@ export default function App() {
 
     // Station filter - locked to logged-in agent station
     const activeStation = currentUser.role === "agent" ? currentUser.station : stationFilter;
-    const matchesStation = activeStation === "All" || c.station === activeStation;
+    const matchesStation = matchesStationCodeOrName(c.station, activeStation);
 
     // Status filter
     let matchesStatus = true;
@@ -1238,6 +1334,27 @@ export default function App() {
               )}
             </button>
 
+            {/* Station Directory & Systemic Email Matrix Button */}
+            <button
+              id="btn-open-station-directory"
+              type="button"
+              onClick={() => setShowStationDirectoryModal(true)}
+              className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs ${
+                isDark
+                  ? "bg-amber-950/40 border-amber-800 text-amber-300 hover:bg-amber-900/50"
+                  : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
+              }`}
+              title="View Workstation Personnel Contacts & Systemic Dispatch Logs"
+            >
+              <Mail className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+              <span>Station Contacts & Emails</span>
+              {emailLogs.length > 0 && (
+                <span className="ml-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                  {emailLogs.length}
+                </span>
+              )}
+            </button>
+
 
             <button
               id="btn-user-profile"
@@ -1331,8 +1448,10 @@ export default function App() {
                 id="btn-copy-supabase-sql"
                 type="button"
                 onClick={() => {
-                  const sqlText = `-- IDEAL MOTORS CONNECTED RELATIONAL DATABASE SCHEMA
+                  const sqlText = `-- IDEAL MOTORS CX RECOVERY DATABASE SCHEMA
 DROP TABLE IF EXISTS call_center_logs CASCADE;
+DROP TABLE IF EXISTS systemic_email_logs CASCADE;
+DROP TABLE IF EXISTS workstation_calendar CASCADE;
 DROP TABLE IF EXISTS complaints CASCADE;
 DROP TABLE IF EXISTS call_center_officers CASCADE;
 DROP TABLE IF EXISTS stations CASCADE;
@@ -1355,13 +1474,36 @@ CREATE TABLE call_center_officers (
   department text DEFAULT 'Ideal Motors Central CX Call Center'
 );
 
+CREATE TABLE workstation_calendar (
+  id text PRIMARY KEY,
+  station text DEFAULT 'All',
+  date text NOT NULL,
+  type text NOT NULL DEFAULT 'off_day',
+  reason text,
+  "createdAt" timestamptz DEFAULT now(),
+  "createdBy" text DEFAULT 'System Admin'
+);
+
+CREATE TABLE systemic_email_logs (
+  id text PRIMARY KEY,
+  "sentAt" timestamptz DEFAULT now(),
+  sender text DEFAULT 'callcenter@idealgroup.lk',
+  recipients jsonb NOT NULL,
+  subject text NOT NULL,
+  "complaintIds" jsonb,
+  "stationTarget" text,
+  "htmlBody" text,
+  "triggerEvent" text
+);
+
 CREATE TABLE complaints (
   id text PRIMARY KEY,
-  wo_no text UNIQUE,
+  "woNo" text,
+  wo_no text,
   "customerName" text,
   "customerPhone" text,
   "customerEmail" text,
-  station text REFERENCES stations(code) ON DELETE SET NULL,
+  station text,
   category text,
   description text,
   date text,
@@ -1373,7 +1515,7 @@ CREATE TABLE complaints (
   "agentName" text,
   assigned_officer_id text REFERENCES call_center_officers(id) ON DELETE SET NULL,
   "aiAnalysis" jsonb,
-  "updatedAt" text,
+  "updatedAt" timestamptz DEFAULT now(),
   month text,
   company text,
   "woState" text,
@@ -1397,20 +1539,58 @@ CREATE TABLE complaints (
   "finalStatus" text,
   "solutionProvidedByAftermarket" text,
   "solutionDate" text,
-  "followUpDate" text
+  "followUpDate" text,
+  "firstAttemptCallStatus" text,
+  "firstAttemptDate" text,
+  "firstAttemptNotes" text,
+  "secondAttemptFeedbackStatus" text,
+  "secondAttemptDate" text,
+  "secondAttemptNotes" text,
+  "attemptCount" integer DEFAULT 0
+);
+
+CREATE OR REPLACE VIEW service_stations AS SELECT * FROM stations;
+
+CREATE TABLE call_center_logs (
+  id bigserial PRIMARY KEY,
+  complaint_id text NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+  officer_id text REFERENCES call_center_officers(id) ON DELETE SET NULL,
+  officer_name text,
+  call_date timestamptz DEFAULT now(),
+  remarks text,
+  satisfaction_score integer
 );
 
 ALTER TABLE stations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_center_officers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workstation_calendar ENABLE ROW LEVEL SECURITY;
+ALTER TABLE systemic_email_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE complaints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE call_center_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public read stations" ON stations FOR SELECT USING (true);
+CREATE POLICY "Allow public insert stations" ON stations FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update stations" ON stations FOR UPDATE USING (true);
+
 CREATE POLICY "Allow public read officers" ON call_center_officers FOR SELECT USING (true);
+CREATE POLICY "Allow public insert officers" ON call_center_officers FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update officers" ON call_center_officers FOR UPDATE USING (true);
+
+CREATE POLICY "Allow public read calendar" ON workstation_calendar FOR SELECT USING (true);
+CREATE POLICY "Allow public insert calendar" ON workstation_calendar FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update calendar" ON workstation_calendar FOR UPDATE USING (true);
+CREATE POLICY "Allow public delete calendar" ON workstation_calendar FOR DELETE USING (true);
+
+CREATE POLICY "Allow public read systemic_email_logs" ON systemic_email_logs FOR SELECT USING (true);
+CREATE POLICY "Allow public insert systemic_email_logs" ON systemic_email_logs FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Allow public read complaints" ON complaints FOR SELECT USING (true);
 CREATE POLICY "Allow public insert complaints" ON complaints FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow public update complaints" ON complaints FOR UPDATE USING (true);
 CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (true);
+
+CREATE POLICY "Allow public read logs" ON call_center_logs FOR SELECT USING (true);
+CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHECK (true);
 `;
                   navigator.clipboard.writeText(sqlText);
                   alert("Relational SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, then click 'Test & Reconnect Now'.");
@@ -3101,6 +3281,47 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
           onUpdateStationsList={handleUpdateStationsList}
         />
       )}
+
+      {/* Workstation Calendar Manager Modal */}
+      {showCalendarModal && currentUser && (
+        <WorkstationCalendarManager
+          currentUser={currentUser}
+          calendarDates={calendarDates}
+          onAddCalendarDate={handleAddCalendarDate}
+          onRemoveCalendarDate={handleRemoveCalendarDate}
+          isOpen={showCalendarModal}
+          onClose={() => setShowCalendarModal(false)}
+          selectedStationFilter={calendarStationTarget}
+        />
+      )}
+
+      {/* Real-Time Call Center Sound & Pop-Up Notification Toast */}
+      <CallCenterNotificationToast
+        notifications={callCenterNotifications}
+        onDismiss={(id) => setCallCenterNotifications((prev) => prev.filter((n) => n.id !== id))}
+        onClearAll={() => setCallCenterNotifications([])}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => setSoundEnabled((prev) => !prev)}
+        onOpenEmailModal={() => setShowStationDirectoryModal(true)}
+      />
+
+      {/* Station Directory & Systemic Email Matrix Modal */}
+      {showStationDirectoryModal && currentUser && (
+        <StationDirectoryAndEmailModal
+          isOpen={showStationDirectoryModal}
+          onClose={() => setShowStationDirectoryModal(false)}
+          currentUser={currentUser}
+          complaints={complaints}
+          emailLogs={emailLogs}
+          onRefreshEmailLogs={() => {
+            fetch("/api/email-logs")
+              .then((res) => res.json())
+              .then((d) => d.logs && setEmailLogs(d.logs))
+              .catch(() => setEmailLogs(getStoredSystemicEmailLogs()));
+          }}
+        />
+      )}
+
 
       {/* Unified Footer: Signature & Theme Switcher */}
       <footer className="shrink-0 mt-8 mb-6 flex flex-col items-center gap-3 text-center border-t pt-6 border-slate-200/30 dark:border-slate-800/30">

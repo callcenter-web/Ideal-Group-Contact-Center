@@ -3,6 +3,7 @@ import { Complaint, StationProfile, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar } from "lucide-react";
 import { getAgeFormulaBreakdown } from "../utils/agingUtils";
+import { matchesStationCodeOrName } from "../utils/stationUtils";
 
 interface StationOverviewProps {
   complaints: Complaint[];
@@ -17,7 +18,7 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
 
   // Calculate metrics per station
   const stationStats = STATIONS.map((station) => {
-    const stationComplaints = complaints.filter((c) => c.station === station.code);
+    const stationComplaints = complaints.filter((c) => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
     const pending = stationComplaints.filter((c) => c.status === "Pending").length;
     const inProgress = stationComplaints.filter((c) => c.status === "In Progress").length;
@@ -137,6 +138,26 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
                   />
                 </div>
               </div>
+              {/* Officers / Systemic Dispatch Info */}
+              <div className="mt-3 bg-slate-50 dark:bg-slate-950/50 p-2.5 rounded-lg border border-slate-200/60 dark:border-slate-800 space-y-1">
+                <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Contact Email(s):</span>
+                  <span className="font-mono text-[9px] text-blue-600 dark:text-blue-400 font-extrabold truncate max-w-[170px]">
+                    {stat.email}
+                  </span>
+                </div>
+                {stat.address && (
+                  <p className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                    📍 {stat.address}
+                  </p>
+                )}
+                {stat.officers && stat.officers.length > 0 && (
+                  <div className="text-[10px] text-slate-700 dark:text-slate-300 font-medium pt-0.5 border-t border-slate-200/40 dark:border-slate-800">
+                    <span className="font-bold">Manager:</span> {stat.officers[0].name} ({stat.officers[0].role}) &bull; Tel: <span className="font-mono font-bold">{stat.officers[0].phone}</span>
+                  </div>
+                )}
+              </div>
+
               {/* Station Aging Breakdown Matrix */}
               <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
                 <div className="flex items-center justify-between">
