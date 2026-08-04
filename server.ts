@@ -36,6 +36,36 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 let localComplaintsCache = [...DEMO_COMPLAINTS];
 let localOfficersCache = [...CALL_CENTER_OFFICERS];
 let localStationsCache = [...STATIONS];
+let localCalendarCache: any[] = [
+  {
+    id: "default-1",
+    station: "All",
+    date: "2026-08-15",
+    type: "off_day",
+    reason: "Company Annual Holiday / Nikini Full Moon Poya",
+    createdAt: new Date().toISOString(),
+    createdBy: "System Admin",
+  },
+  {
+    id: "default-2",
+    station: "All",
+    date: "2026-09-16",
+    type: "off_day",
+    reason: "Milad-Un-Nabi (Holy Prophet's Birthday)",
+    createdAt: new Date().toISOString(),
+    createdBy: "System Admin",
+  },
+  {
+    id: "default-3",
+    station: "Colombo",
+    date: "2026-08-20",
+    type: "off_day",
+    reason: "Colombo Workshop Scheduled Equipment Maintenance",
+    createdAt: new Date().toISOString(),
+    createdBy: "Admin",
+  },
+];
+
 
 async function startServer() {
   const app = express();
@@ -439,6 +469,37 @@ Ensure your response is highly detailed, professional, and directly actionable f
       });
     }
   });
+
+  // API Routes for Workstation Calendar
+  app.get("/api/calendar", async (req, res) => {
+    try {
+      const { data, error } = await supabase.from("workstation_calendar").select("*");
+      if (error || !data || data.length === 0) {
+        return res.json({ dates: localCalendarCache, isSupabaseActive: !error });
+      }
+      localCalendarCache = data;
+      res.json({ dates: data, isSupabaseActive: true });
+    } catch (err: any) {
+      res.json({ dates: localCalendarCache, isSupabaseActive: false });
+    }
+  });
+
+  app.post("/api/calendar", async (req, res) => {
+    try {
+      const { dates } = req.body;
+      if (dates && Array.isArray(dates)) {
+        localCalendarCache = dates;
+        const { error } = await supabase.from("workstation_calendar").upsert(dates, { onConflict: "id" });
+        if (error) {
+          console.error("Supabase calendar UPSERT error:", error);
+        }
+      }
+      res.json({ success: true, dates: localCalendarCache });
+    } catch (err: any) {
+      res.json({ success: true, dates: localCalendarCache });
+    }
+  });
+
 
   // API Route to reset the database back to DEMO_COMPLAINTS
   app.post("/api/complaints/reset", async (req, res) => {

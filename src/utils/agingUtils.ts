@@ -1,4 +1,5 @@
-import { Complaint } from "../types";
+import { Complaint, WorkstationCalendarDate } from "../types";
+import { isDateWorkingDay } from "./workstationCalendar";
 
 export interface AgingInfo {
   days: number;
@@ -57,7 +58,75 @@ export const parseComplaintDate = (dateStr?: string, dateTimeStr?: string): Date
   return new Date();
 };
 
-export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date()): AgingInfo => {
+export const calculateNonSundayMs = (
+  start: Date, 
+  end: Date, 
+  stationName?: string, 
+  calendarDates?: WorkstationCalendarDate[]
+): number => {
+  if (!start || !end || end.getTime() <= start.getTime()) return 0;
+
+  const s = new Date(start.getTime());
+  const e = new Date(end.getTime());
+
+  // If same calendar day
+  if (s.getFullYear() === e.getFullYear() &&
+      s.getMonth() === e.getMonth() &&
+      s.getDate() === e.getDate()) {
+    if (!isDateWorkingDay(s, stationName, calendarDates)) return 0;
+    return e.getTime() - s.getTime();
+  }
+
+  let totalMs = 0;
+
+  // Portion of start day
+  if (isDateWorkingDay(s, stationName, calendarDates)) {
+    const endOfStartDay = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 23, 59, 59, 999);
+    totalMs += Math.max(0, endOfStartDay.getTime() - s.getTime() + 1);
+  }
+
+  // Intermediate days
+  const current = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 1, 0, 0, 0, 0);
+  const endMidnight = new Date(e.getFullYear(), e.getMonth(), e.getDate(), 0, 0, 0, 0);
+
+  while (current.getTime() < endMidnight.getTime()) {
+    if (isDateWorkingDay(current, stationName, calendarDates)) {
+      totalMs += 24 * 60 * 60 * 1000;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  // Portion of end day
+  if (isDateWorkingDay(e, stationName, calendarDates)) {
+    const startOfEndDay = new Date(e.getFullYear(), e.getMonth(), e.getDate(), 0, 0, 0, 0);
+    totalMs += Math.max(0, e.getTime() - startOfEndDay.getTime());
+  }
+
+  return totalMs;
+};
+
+export const addWorkingDaysExcludingSundays = (
+  start: Date, 
+  workingDaysCount: number, 
+  stationName?: string, 
+  calendarDates?: WorkstationCalendarDate[]
+): Date => {
+  const result = new Date(start.getTime());
+  let added = 0;
+  while (added < workingDaysCount) {
+    result.setDate(result.getDate() + 1);
+    if (isDateWorkingDay(result, stationName, calendarDates)) {
+      added++;
+    }
+  }
+  return result;
+};
+
+export const getComplaintAgeInfo = (
+  c: Complaint, 
+  referenceDate: Date = new Date(), 
+  calendarDates?: WorkstationCalendarDate[]
+): AgingInfo => {
   if (!c) {
     return {
       days: 0,
@@ -66,7 +135,7 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
       seconds: 0,
       formattedTimeString: "00d 00h 00m 00s",
       category: "0-3 Days (New)",
-      deadlineStatus: "On Track - 3-Day SLA Target",
+      deadlineStatus: "On Track - 3-Day SLA Target (Workstation Calendar)",
       nextMilestoneText: "03d 00h 00m left for 3-Day SLA Target",
       badgeColorClass: "bg-emerald-50 text-emerald-800 border-emerald-300",
       textColorClass: "text-emerald-700",
@@ -75,7 +144,7 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
   }
 
   const compDate = parseComplaintDate(c.date, c.receivedDateTime);
-  const diffTime = Math.max(0, referenceDate.getTime() - compDate.getTime());
+  const diffTime = calculateNonSundayMs(compDate, referenceDate, c.station, calendarDates);
 
   const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -96,10 +165,10 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
     badgeColorClass = "bg-emerald-50 text-emerald-800 border-emerald-300";
     textColorClass = "text-emerald-700";
     bgColorClass = "bg-emerald-500";
-    deadlineStatus = "On Track (Initial 3-Day SLA)";
+    deadlineStatus = "On Track (Initial 3-Day SLA • Workstation Calendar)";
 
-    const targetMs = compDate.getTime() + 3 * 24 * 60 * 60 * 1000;
-    const remMs = Math.max(0, targetMs - referenceDate.getTime());
+    const targetDate = addWorkingDaysExcludingSundays(compDate, 3, c.station, calendarDates);
+    const remMs = calculateNonSundayMs(referenceDate, targetDate, c.station, calendarDates);
     const remD = Math.floor(remMs / (1000 * 60 * 60 * 24));
     const remH = Math.floor((remMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const remM = Math.floor((remMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -110,10 +179,10 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
     badgeColorClass = "bg-amber-50 text-amber-800 border-amber-300";
     textColorClass = "text-amber-700";
     bgColorClass = "bg-amber-500";
-    deadlineStatus = "Warning (3-5 Day Pending Review)";
+    deadlineStatus = "Warning (3-5 Day Pending Review • Workstation Calendar)";
 
-    const targetMs = compDate.getTime() + 5 * 24 * 60 * 60 * 1000;
-    const remMs = Math.max(0, targetMs - referenceDate.getTime());
+    const targetDate = addWorkingDaysExcludingSundays(compDate, 5, c.station, calendarDates);
+    const remMs = calculateNonSundayMs(referenceDate, targetDate, c.station, calendarDates);
     const remD = Math.floor(remMs / (1000 * 60 * 60 * 24));
     const remH = Math.floor((remMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const remM = Math.floor((remMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -124,10 +193,10 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
     badgeColorClass = "bg-orange-50 text-orange-800 border-orange-300";
     textColorClass = "text-orange-700";
     bgColorClass = "bg-orange-500";
-    deadlineStatus = "Escalated (6-10 Day Management Review)";
+    deadlineStatus = "Escalated (6-10 Day Management Review • Workstation Calendar)";
 
-    const targetMs = compDate.getTime() + 10 * 24 * 60 * 60 * 1000;
-    const remMs = Math.max(0, targetMs - referenceDate.getTime());
+    const targetDate = addWorkingDaysExcludingSundays(compDate, 10, c.station, calendarDates);
+    const remMs = calculateNonSundayMs(referenceDate, targetDate, c.station, calendarDates);
     const remD = Math.floor(remMs / (1000 * 60 * 60 * 24));
     const remH = Math.floor((remMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const remM = Math.floor((remMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -138,8 +207,8 @@ export const getComplaintAgeInfo = (c: Complaint, referenceDate: Date = new Date
     badgeColorClass = "bg-rose-50 text-rose-800 border-rose-300";
     textColorClass = "text-rose-700";
     bgColorClass = "bg-rose-500";
-    deadlineStatus = "CRITICAL SLA BREACH (>10 Days Overdue)";
-    nextMilestoneText = `Critical SLA Deadline Breached by ${days - 10} days! Urgent Executive Action Required.`;
+    deadlineStatus = "CRITICAL SLA BREACH (>10 Working Days Overdue)";
+    nextMilestoneText = `Critical SLA Deadline Breached by ${days - 10} working days! Urgent Executive Action Required.`;
   }
 
   return { days, hours, minutes, seconds, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
@@ -153,14 +222,18 @@ export interface AgeBreakdownItem {
   textColorClass: string;
 }
 
-export const getAgeFormulaBreakdown = (complaints: Complaint[], referenceDate: Date = new Date()): AgeBreakdownItem[] => {
+export const getAgeFormulaBreakdown = (
+  complaints: Complaint[], 
+  referenceDate: Date = new Date(),
+  calendarDates?: WorkstationCalendarDate[]
+): AgeBreakdownItem[] => {
   let cat0_3 = 0;
   let cat3_5 = 0;
   let cat6_10 = 0;
   let cat10_plus = 0;
 
   complaints.forEach((c) => {
-    const age = getComplaintAgeInfo(c, referenceDate);
+    const age = getComplaintAgeInfo(c, referenceDate, calendarDates);
     if (age.category === "0-3 Days (New)") cat0_3++;
     else if (age.category === "3-5 Days (Pending)") cat3_5++;
     else if (age.category === "6-10 Days (Escalated)") cat6_10++;
@@ -200,3 +273,4 @@ export const getAgeFormulaBreakdown = (complaints: Complaint[], referenceDate: D
     },
   ];
 };
+

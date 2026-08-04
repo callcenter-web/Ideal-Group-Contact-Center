@@ -97,3 +97,14 @@ export interface UserProfile {
   avatar?: string;
   department?: string;
 }
+
+export interface WorkstationCalendarDate {
+  id: string;
+  station: string; // "All" or specific station name e.g. "Colombo"
+  date: string; // YYYY-MM-DD
+  type: "off_day" | "working_day"; // "off_day" (cancelled work day) or "working_day" (extra work day)
+  reason: string;
+  createdAt: string;
+  createdBy: string;
+}
+

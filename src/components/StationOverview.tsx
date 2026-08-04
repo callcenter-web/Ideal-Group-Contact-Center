@@ -1,16 +1,18 @@
 import React from "react";
-import { Complaint, StationProfile } from "../types";
+import { Complaint, StationProfile, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
-import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock } from "lucide-react";
+import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar } from "lucide-react";
 import { getAgeFormulaBreakdown } from "../utils/agingUtils";
 
 interface StationOverviewProps {
   complaints: Complaint[];
   onSelectStation: (stationCode: string) => void;
+  calendarDates?: WorkstationCalendarDate[];
+  onOpenCalendarModal?: (stationName: string) => void;
   theme?: "light" | "dark";
 }
 
-export default function StationOverview({ complaints, onSelectStation, theme = "light" }: StationOverviewProps) {
+export default function StationOverview({ complaints, onSelectStation, calendarDates = [], onOpenCalendarModal, theme = "light" }: StationOverviewProps) {
   const isDark = theme === "dark";
 
   // Calculate metrics per station
@@ -27,7 +29,12 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
     ).length;
 
     const conversionRate = total > 0 ? Math.round((converted / total) * 100) : 0;
-    const ageBreakdown = getAgeFormulaBreakdown(stationComplaints);
+    const ageBreakdown = getAgeFormulaBreakdown(stationComplaints, new Date(), calendarDates);
+
+    // Filter station custom off dates
+    const stationOffDates = calendarDates.filter(
+      (d) => d.station === "All" || d.station.toLowerCase() === station.name.toLowerCase() || d.station.toLowerCase() === station.code.toLowerCase()
+    );
 
     return {
       ...station,
@@ -38,8 +45,10 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
       conversionRate,
       ageBreakdown,
       stationComplaints,
+      stationOffDates,
     };
   });
+
 
   return (
     <div id="stations-performance-panel" className="space-y-4">
@@ -160,34 +169,54 @@ export default function StationOverview({ complaints, onSelectStation, theme = "
             </div>
 
             {/* Actions */}
-            <div className={`mt-5 pt-3 border-t flex items-center justify-between ${
+            <div className={`mt-5 pt-3 border-t flex items-center justify-between flex-wrap gap-2 ${
               isDark ? "border-slate-800/80" : "border-slate-100"
             }`}>
-              <span className="text-[10px] flex items-center gap-1 font-semibold">
-                {stat.pending > 0 ? (
-                  <>
-                    <AlertCircle className="h-3 w-3 text-orange-500" />
-                    <span className={isDark ? "text-slate-300" : "text-slate-600"}>Action required</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="h-3 w-3 text-green-500" />
-                    <span className={isDark ? "text-slate-400" : "text-slate-500"}>All clear</span>
-                  </>
-                )}
-              </span>
-              <button
-                id={`btn-view-station-${stat.code}`}
-                type="button"
-                onClick={() => onSelectStation(stat.code)}
-                className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 hover:underline transition-all ${
-                  isDark ? "text-red-400 hover:text-red-300" : "text-blue-600 hover:text-blue-700"
-                }`}
-              >
-                Manage Station
-                <ArrowRight className="h-3 w-3" />
-              </button>
+              {onOpenCalendarModal && (
+                <button
+                  id={`btn-station-calendar-${stat.code}`}
+                  type="button"
+                  onClick={() => onOpenCalendarModal(stat.name)}
+                  className={`text-[10px] font-bold flex items-center gap-1 px-2 py-1 rounded border transition-all ${
+                    isDark
+                      ? "bg-slate-950 border-slate-800 text-blue-400 hover:bg-slate-800"
+                      : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                  }`}
+                  title="View / Edit Station Working & Cancelled Dates"
+                >
+                  <Calendar className="h-3 w-3 text-blue-600" />
+                  <span>Dates ({stat.stationOffDates.length})</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-3 ml-auto">
+                <span className="text-[10px] flex items-center gap-1 font-semibold">
+                  {stat.pending > 0 ? (
+                    <>
+                      <AlertCircle className="h-3 w-3 text-orange-500" />
+                      <span className={isDark ? "text-slate-300" : "text-slate-600"}>Action required</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="h-3 w-3 text-green-500" />
+                      <span className={isDark ? "text-slate-400" : "text-slate-500"}>All clear</span>
+                    </>
+                  )}
+                </span>
+                <button
+                  id={`btn-view-station-${stat.code}`}
+                  type="button"
+                  onClick={() => onSelectStation(stat.code)}
+                  className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 hover:underline transition-all ${
+                    isDark ? "text-red-400 hover:text-red-300" : "text-blue-600 hover:text-blue-700"
+                  }`}
+                >
+                  Manage Station
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
             </div>
+
           </div>
         ))}
       </div>

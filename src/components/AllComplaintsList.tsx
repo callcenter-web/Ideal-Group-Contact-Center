@@ -18,7 +18,7 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
-import { Complaint } from "../types";
+import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "../utils/agingUtils";
 
@@ -28,6 +28,7 @@ interface AllComplaintsListProps {
   onSelectComplaintInWorkspace: (complaintId: string) => void;
   onDeleteComplaint?: (complaintId: string) => void;
   onDeleteAllComplaints?: () => void;
+  calendarDates?: WorkstationCalendarDate[];
 }
 
 export default function AllComplaintsList({
@@ -36,7 +37,9 @@ export default function AllComplaintsList({
   onSelectComplaintInWorkspace,
   onDeleteComplaint,
   onDeleteAllComplaints,
+  calendarDates = [],
 }: AllComplaintsListProps) {
+
   const isDark = theme === "dark";
 
   // Filter States
@@ -86,7 +89,12 @@ export default function AllComplaintsList({
       const matchesStation = stationFilter === "all" || c.station === stationFilter;
 
       // Status
-      const matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      let matchesStatus = true;
+      if (statusFilter === "station_contacted") {
+        matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.status === "Contacted") && (c.status === "Pending" || c.status === "In Progress");
+      } else {
+        matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      }
 
       // Satisfaction
       const matchesSatisfaction =
@@ -375,6 +383,7 @@ export default function AllComplaintsList({
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">All Recovery Statuses</option>
+              <option value="station_contacted">⚡ Station Contacted (Pending & In Progress Only)</option>
               <option value="Pending">Pending</option>
               <option value="In Progress">In Progress</option>
               <option value="Resolved">Resolved</option>
@@ -453,7 +462,7 @@ export default function AllComplaintsList({
                   const isUnreachable =
                     c.firstAttemptCallStatus === "Customer Unreachable" ||
                     c.secondAttemptFeedbackStatus === "Customer Unreachable";
-                  const ageInfo = getComplaintAgeInfo(c, tickerDate);
+                  const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
 
                   return (
                     <tr 

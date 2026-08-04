@@ -28,7 +28,7 @@ import {
   ListFilter
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
-import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile } from "./types";
+import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./utils/supabaseSanitizer";
 import LoginScreen from "./components/LoginScreen";
@@ -40,6 +40,9 @@ import IdealMotorsLogo from "./components/IdealMotorsLogo";
 import UserProfileModal from "./components/UserProfileModal";
 import AllComplaintsList from "./components/AllComplaintsList";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
+import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
+import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
+
 
 // Initialize client-side Supabase client with safe publishable credentials
 const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
@@ -140,6 +143,16 @@ export default function App() {
         }
       })
       .catch(() => console.log("Stations sync using local storage / fallback"));
+
+    fetch("/api/calendar")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.dates && data.dates.length > 0) {
+          setCalendarDates(data.dates);
+          saveCalendarDates(data.dates);
+        }
+      })
+      .catch(() => console.log("Calendar sync using local storage / fallback"));
   }, []);
 
   const handleUpdateCurrentUser = (updated: UserProfile) => {
@@ -147,7 +160,40 @@ export default function App() {
     localStorage.setItem("ideal_group_current_user", JSON.stringify(updated));
   };
 
+  const [calendarDates, setCalendarDates] = useState<WorkstationCalendarDate[]>(() => getStoredCalendarDates());
+  const [showCalendarModal, setShowCalendarModal] = useState<boolean>(false);
+  const [calendarStationTarget, setCalendarStationTarget] = useState<string>("All");
+
+  const handleAddCalendarDate = (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
+    const newEntry: WorkstationCalendarDate = {
+      ...newDateData,
+      id: "cal-" + Date.now(),
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser?.name || (currentUser?.role === "admin" ? "System Admin" : "Call Center Admin"),
+    };
+    const updated = [newEntry, ...calendarDates];
+    setCalendarDates(updated);
+    saveCalendarDates(updated);
+    fetch("/api/calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dates: updated }),
+    }).catch((err) => console.error("Error saving calendar date:", err));
+  };
+
+  const handleRemoveCalendarDate = (id: string) => {
+    const updated = calendarDates.filter((item) => item.id !== id);
+    setCalendarDates(updated);
+    saveCalendarDates(updated);
+    fetch("/api/calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dates: updated }),
+    }).catch((err) => console.error("Error removing calendar date:", err));
+  };
+
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"analytics" | "list" | "stations" | "upload" | "reports">("analytics");
@@ -995,7 +1041,12 @@ export default function App() {
     const matchesStation = activeStation === "All" || c.station === activeStation;
 
     // Status filter
-    const matchesStatus = statusFilter === "All" || c.status === statusFilter;
+    let matchesStatus = true;
+    if (statusFilter === "Station Contacted (Pending/In-Progress)") {
+      matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.status === "Contacted") && (c.status === "Pending" || c.status === "In Progress");
+    } else {
+      matchesStatus = statusFilter === "All" || c.status === statusFilter;
+    }
 
     // Category filter
     const matchesCategory = categoryFilter === "All" || c.category === categoryFilter;
@@ -1004,9 +1055,8 @@ export default function App() {
     let matchesCallCenterQuick = true;
     if (currentUser.role === "callcenter") {
       if (callCenterQuickFilter === "awaiting") {
-        // Station must have contacted them (has stationResolutionNotes or stationContactedDate) 
-        // AND call center hasn't logged final remarks yet
-        matchesCallCenterQuick = !!(c.stationResolutionNotes || c.stationContactedDate) && !c.callCenterFinalRemarks;
+        // Station must have contacted them AND status is Pending or In Progress AND call center hasn't logged final remarks yet
+        matchesCallCenterQuick = !!(c.stationResolutionNotes || c.stationContactedDate) && (c.status === "Pending" || c.status === "In Progress") && !c.callCenterFinalRemarks;
       } else if (callCenterQuickFilter === "completed") {
         matchesCallCenterQuick = !!c.callCenterFinalRemarks;
       }
@@ -1159,6 +1209,35 @@ export default function App() {
                 <span>{supabaseActive ? "Supabase Active" : "Supabase: Offline Fallback"}</span>
               </div>
             )}
+
+            {/* Workstation Calendar Button */}
+            <button
+              id="btn-open-workstation-calendar"
+              type="button"
+              onClick={() => {
+                if (currentUser.role === "agent" && currentUser.station) {
+                  setCalendarStationTarget(currentUser.station);
+                } else {
+                  setCalendarStationTarget("All");
+                }
+                setShowCalendarModal(true);
+              }}
+              className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs ${
+                isDark
+                  ? "bg-blue-950/40 border-blue-800 text-blue-300 hover:bg-blue-900/50"
+                  : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+              }`}
+              title="Add or cancel working dates for service workstations"
+            >
+              <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+              <span>{currentUser.role === "admin" || currentUser.role === "callcenter" ? "Workstation Calendar" : "Station Dates"}</span>
+              {calendarDates.length > 0 && (
+                <span className="ml-1 bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                  {calendarDates.length}
+                </span>
+              )}
+            </button>
+
 
             <button
               id="btn-user-profile"
@@ -1437,6 +1516,7 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
             }}
             onDeleteComplaint={handleDeleteSingleComplaint}
             onDeleteAllComplaints={handleDeleteAllComplaints}
+            calendarDates={calendarDates}
           />
         )}
 
@@ -1445,12 +1525,18 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
           <StationOverview 
             complaints={complaints} 
             theme={theme}
+            calendarDates={calendarDates}
+            onOpenCalendarModal={(stationName) => {
+              setCalendarStationTarget(stationName);
+              setShowCalendarModal(true);
+            }}
             onSelectStation={(stationCode) => {
               setStationFilter(stationCode);
               setCurrentTab("analytics");
             }} 
           />
         )}
+
 
         {/* ADMIN TAB: UPLOAD ZONE */}
         {currentUser.role === "admin" && currentTab === "upload" && (
@@ -1616,6 +1702,7 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
                           className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
                         >
                           <option value="All">All Statuses</option>
+                          <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress Only)</option>
                           <option value="Pending">Pending</option>
                           <option value="In Progress">In Progress</option>
                           <option value="Contacted">Contacted</option>
@@ -1704,7 +1791,8 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
                   ) : (
                     filteredComplaints.map((item) => {
                       const isSelected = selectedComplaintId === item.id;
-                      const itemAge = getComplaintAgeInfo(item, tickerDate);
+                      const itemAge = getComplaintAgeInfo(item, tickerDate, calendarDates);
+
                       return (
                         <div
                           id={`complaint-card-${item.id}`}
@@ -1770,7 +1858,8 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
               {/* Right Side: Active Recovery Workspace Panel */}
               <div className="lg:col-span-5">
                 {selectedComplaint ? (() => {
-                  const selectedAge = getComplaintAgeInfo(selectedComplaint, tickerDate);
+                  const selectedAge = getComplaintAgeInfo(selectedComplaint, tickerDate, calendarDates);
+
                   return (
                   <div id="recovery-workspace-card" className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm sticky top-[68px] space-y-4 text-left">
                     
