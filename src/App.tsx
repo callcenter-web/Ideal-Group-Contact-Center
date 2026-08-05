@@ -25,12 +25,14 @@ import {
   Sun,
   Moon,
   RefreshCw,
-  ListFilter
+  ListFilter,
+  XCircle,
+  Send
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
-import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./utils/supabaseSanitizer";
+import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -329,6 +331,10 @@ export default function App() {
   // National Admin station assignment field
   const [formAssignedStation, setFormAssignedStation] = useState("");
 
+  // Rejection Workflow states
+  const [rejectionReasonInput, setRejectionReasonInput] = useState("");
+  const [showRejectionForm, setShowRejectionForm] = useState(false);
+
   // Manual Complaint States
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
@@ -467,24 +473,7 @@ export default function App() {
   const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
     try {
       console.log("Upserting directly to Supabase client-side...");
-      const cleanList = deduplicateAndSanitizeComplaints(updatedList);
-      let { error } = await supabaseClient
-        .from("complaints")
-        .upsert(cleanList, { onConflict: "id" });
-
-      if (error && error.message && error.message.includes("column")) {
-        console.warn("Direct Supabase upsert column mismatch retry:", error.message);
-        let retryPayload = cleanList;
-        if (error.message.includes("'woNo'")) {
-          retryPayload = cleanList.map(({ woNo, ...rest }) => rest);
-        } else if (error.message.includes("'wo_no'")) {
-          retryPayload = cleanList.map(({ wo_no, ...rest }) => rest);
-        }
-        const retryRes = await supabaseClient
-          .from("complaints")
-          .upsert(retryPayload, { onConflict: "id" });
-        error = retryRes.error;
-      }
+      const { error, strippedColumns } = await performResilientSupabaseUpsert(supabaseClient, updatedList);
 
       if (error) {
         console.error("Direct Supabase upsert error:", error);
@@ -493,6 +482,9 @@ export default function App() {
       } else {
         setSupabaseActive(true);
         setSupabaseError(null);
+        if (strippedColumns && strippedColumns.length > 0) {
+          console.warn("Saved to Supabase with auto-stripped unmigrated columns:", strippedColumns);
+        }
       }
     } catch (err: any) {
       console.error("Direct Supabase upsert failed:", err);
@@ -797,23 +789,8 @@ export default function App() {
         .delete()
         .neq("id", "FORCE_NONE_MATCHING_ID");
 
-      // Then insert default ones
-      const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-      let { error } = await supabaseClient
-        .from("complaints")
-        .insert(cleanDemo);
-
-      if (error && error.message && error.message.includes("column")) {
-        console.warn("Direct Supabase reset insert column mismatch retry:", error.message);
-        let retryPayload = cleanDemo;
-        if (error.message.includes("'woNo'")) {
-          retryPayload = cleanDemo.map(({ woNo, ...rest }) => rest);
-        } else if (error.message.includes("'wo_no'")) {
-          retryPayload = cleanDemo.map(({ wo_no, ...rest }) => rest);
-        }
-        const retryRes = await supabaseClient.from("complaints").insert(retryPayload);
-        error = retryRes.error;
-      }
+      // Then perform resilient upsert of default ones
+      const { error } = await performResilientSupabaseUpsert(supabaseClient, DEMO_COMPLAINTS);
 
       if (error) {
         console.error("Direct Supabase insert during reset error:", error);
@@ -928,6 +905,7 @@ export default function App() {
             stationResolutionNotes: formStationResolutionNotes,
             agentName: formAgentName || `${currentUser.station} Adviser`,
             status: "Contacted" as FollowUpStatus, // Auto mark as Contacted
+            stationResponseStatus: "Submitted to Call Center",
             feedbackStatus: formFeedbackStatus,
             finalStatus: formFinalStatus,
             solutionProvidedByAftermarket: formStationResolutionNotes, // Sync with action taken
@@ -1067,6 +1045,51 @@ export default function App() {
     }
   };
 
+  // Reject Station Response Action Handler (Call Center / Admin)
+  const handleRejectStationResponse = () => {
+    if (!selectedComplaintId || !rejectionReasonInput.trim()) return;
+    const today = new Date().toISOString().split("T")[0];
+    const targetC = complaints.find((c) => c.id === selectedComplaintId);
+
+    const updated = complaints.map((c) => {
+      if (c.id === selectedComplaintId) {
+        return {
+          ...c,
+          stationResponseStatus: "Rejected",
+          stationResponseRejectionReason: rejectionReasonInput.trim(),
+          stationResponseRejectedDate: today,
+          stationResponseRejectedBy: currentUser?.name || currentUser?.title || "Call Center Officer",
+          status: "Pending" as FollowUpStatus,
+          updatedAt: today,
+        };
+      }
+      return c;
+    });
+
+    saveComplaints(updated);
+    setSaveSuccess(true);
+    setShowRejectionForm(false);
+    setRejectionReasonInput("");
+    setTimeout(() => setSaveSuccess(false), 3000);
+
+    // Notify Station
+    if (soundEnabled) {
+      playCallCenterNotificationSound();
+    }
+    setCallCenterNotifications((prev) => [
+      {
+        id: "NOTIF-REJ-" + Date.now(),
+        timestamp: new Date().toISOString(),
+        stationName: targetC?.station || "Service Station",
+        complaintId: selectedComplaintId,
+        customerName: targetC?.customerName || "Customer",
+        actionSummary: `❌ Response Rejected: "${rejectionReasonInput.trim()}"`,
+        updatedBy: currentUser?.name || "Call Center Officer",
+      },
+      ...prev,
+    ]);
+  };
+
   // Quick Action to auto-log customer unreachable and add to pending list
   const handleMarkUnreachable = async () => {
     if (!selectedComplaintId || !currentUser) return;
@@ -1203,6 +1226,10 @@ export default function App() {
     let matchesStatus = true;
     if (statusFilter === "Station Contacted (Pending/In-Progress)") {
       matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
+    } else if (statusFilter === "Rejected") {
+      matchesStatus = c.stationResponseStatus === "Rejected";
+    } else if (statusFilter === "To Contact") {
+      matchesStatus = c.status === "Pending" || c.stationResponseStatus === "Rejected" || !c.stationContactedDate;
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
     }
@@ -1656,6 +1683,34 @@ CREATE POLICY "Allow public delete complaints" ON complaints FOR DELETE USING (t
 
 CREATE POLICY "Allow public read logs" ON call_center_logs FOR SELECT USING (true);
 CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHECK (true);
+
+-- MIGRATION SCRIPT FOR EXISTING TABLES (SAFE - PRESERVES DATA)
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "firstAttemptCallStatus" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "firstAttemptDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "firstAttemptNotes" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "secondAttemptFeedbackStatus" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "secondAttemptDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "secondAttemptNotes" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "attemptCount" integer DEFAULT 0;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationContactedDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResolutionNotes" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterContactedDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterFinalRemarks" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterFinalSatisfaction" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "feedbackStatus" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "finalStatus" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "solutionProvidedByAftermarket" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "solutionDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "followUpDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "woNo" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "wo_no" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseStatus" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectionReason" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectedDate" text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectedBy" text;
+
+-- REFRESH SUPABASE SCHEMA CACHE
+NOTIFY pgrst, 'reload schema';
 `;
                   navigator.clipboard.writeText(sqlText);
                   alert("Relational SQL Setup Script copied to clipboard! Paste it in your Supabase SQL Editor, run it, then click 'Test & Reconnect Now'.");
@@ -1944,10 +1999,12 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                           id="filter-status"
                           value={statusFilter}
                           onChange={(e) => setStatusFilter(e.target.value)}
-                          className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
+                          className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
                         >
                           <option value="All">All Statuses</option>
-                          <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress Only)</option>
+                          <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
+                          <option value="Rejected">❌ Response Rejected by Call Center</option>
+                          <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
                           <option value="Pending">Pending</option>
                           <option value="In Progress">In Progress</option>
                           <option value="Contacted">Contacted</option>
@@ -2081,6 +2138,12 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                               <Clock className="h-2.5 w-2.5 mr-1" />
                               {itemAge.category}
                             </span>
+                            {item.stationResponseStatus === "Rejected" && (
+                              <span className="inline-flex items-center text-[9px] bg-rose-100 border border-rose-300 px-2 py-0.5 rounded text-rose-800 font-black uppercase tracking-wider animate-pulse">
+                                <AlertTriangle className="h-2.5 w-2.5 mr-1 text-rose-600" />
+                                Response Rejected
+                              </span>
+                            )}
                             {item.aiAnalysis && (
                               <span className="inline-flex items-center text-[9px] bg-green-50 border border-green-200 px-2 py-0.5 rounded text-green-700 font-bold uppercase tracking-wider">
                                 <Sparkles className="h-2.5 w-2.5 mr-1 text-green-600" />
@@ -2089,7 +2152,14 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                             )}
                           </div>
 
-                          <p className="text-slate-500 text-xs mt-2.5 line-clamp-2 leading-relaxed font-medium">
+                          {item.stationResponseStatus === "Rejected" && item.stationResponseRejectionReason && (
+                            <div className="text-[11px] font-bold text-rose-800 bg-rose-50 p-2 rounded-md border border-rose-200 mt-2.5 space-y-0.5">
+                              <span className="text-[9px] uppercase tracking-wider text-rose-600 font-black block">⚠️ Call Center Rejection Message:</span>
+                              <p className="line-clamp-2 italic">"{item.stationResponseRejectionReason}"</p>
+                            </div>
+                          )}
+
+                          <p className="text-slate-500 text-xs mt-2 text-ellipsis overflow-hidden line-clamp-2 leading-relaxed font-medium">
                             {item.description}
                           </p>
                         </div>
@@ -2431,6 +2501,25 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                       {/* ROLE: STATION AGENT ACTION FORM */}
                       {currentUser.role === "agent" && (
                         <form id="agent-action-form" onSubmit={handleUpdateFollowUp} className="space-y-3">
+                          {selectedComplaint.stationResponseStatus === "Rejected" && (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3.5 space-y-2 animate-pulse">
+                              <div className="flex items-center gap-2 text-rose-800 font-black text-xs uppercase tracking-wider">
+                                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                                <span>⚠️ Message: Station Response Rejected by Call Center</span>
+                              </div>
+                              <p className="text-xs font-bold text-slate-800 bg-white p-2.5 rounded-lg border border-rose-200 shadow-2xs">
+                                "{selectedComplaint.stationResponseRejectionReason || "Response was rejected. Please perform required service station action."}"
+                              </p>
+                              <div className="flex items-center justify-between text-[10px] text-rose-700 font-bold pt-0.5">
+                                <span>Rejected Date: {selectedComplaint.stationResponseRejectedDate || "Recently"}</span>
+                                <span>By Call Center Officer: {selectedComplaint.stationResponseRejectedBy || "Call Center"}</span>
+                              </div>
+                              <p className="text-[11px] text-rose-900 font-bold italic bg-rose-100/70 p-1.5 rounded text-center">
+                                👉 Action Required: Please contact customer, re-verify resolution action taken, and log updated notes below to re-submit.
+                              </p>
+                            </div>
+                          )}
+
                           <h4 className="text-xs font-black text-blue-700 uppercase tracking-wider flex items-center gap-1.5 bg-blue-50 px-2 py-1.5 rounded border border-blue-100">
                             <Settings className="h-4 w-4" />
                             Station Adviser Action Logs
@@ -2532,6 +2621,71 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                                 )}
                               </div>
                             )}
+                            {/* Reject Station Response Section */}
+                            <div className="mt-2.5 pt-2.5 border-t border-blue-200/60">
+                              {selectedComplaint.stationResponseStatus === "Rejected" ? (
+                                <div className="bg-rose-50 border border-rose-300 p-2.5 rounded-lg text-xs space-y-1">
+                                  <span className="font-black text-rose-800 text-[10px] uppercase flex items-center gap-1">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
+                                    Current Status: Response Already Rejected & Sent to Station
+                                  </span>
+                                  <p className="text-slate-800 text-[11px] font-semibold italic bg-white p-2 rounded border border-rose-200">
+                                    "{selectedComplaint.stationResponseRejectionReason}"
+                                  </p>
+                                  <span className="text-[9px] text-slate-500 block font-bold">
+                                    Rejected on {selectedComplaint.stationResponseRejectedDate} by {selectedComplaint.stationResponseRejectedBy || "Call Center"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div>
+                                  {!showRejectionForm ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowRejectionForm(true)}
+                                      className="text-xs font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors w-full justify-center"
+                                    >
+                                      <XCircle className="h-4 w-4 text-rose-600" />
+                                      <span>Reject Station Response & Send Rejection Message to Workshop</span>
+                                    </button>
+                                  ) : (
+                                    <div className="bg-rose-50 border border-rose-300 p-3 rounded-lg space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1">
+                                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
+                                          Reject Station Response
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowRejectionForm(false)}
+                                          className="text-slate-500 hover:text-slate-700 text-xs font-bold"
+                                        >
+                                          ✕ Cancel
+                                        </button>
+                                      </div>
+                                      <p className="text-[11px] text-slate-600 font-medium">
+                                        Enter reason why station response was rejected or what re-action is required. The workshop will see this message in system.
+                                      </p>
+                                      <textarea
+                                        rows={2}
+                                        value={rejectionReasonInput}
+                                        onChange={(e) => setRejectionReasonInput(e.target.value)}
+                                        placeholder="e.g. Customer stated noise persists during follow-up call. Workshop needs to inspect..."
+                                        className="w-full bg-white border border-rose-300 rounded-md p-2 text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={handleRejectStationResponse}
+                                        disabled={!rejectionReasonInput.trim()}
+                                        className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1.5"
+                                      >
+                                        <Send className="h-3.5 w-3.5" />
+                                        Submit Rejection Message to Station
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           <h4 className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1.5 bg-green-50 px-2 py-1.5 rounded border border-green-100">

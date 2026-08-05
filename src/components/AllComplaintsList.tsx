@@ -91,7 +91,11 @@ export default function AllComplaintsList({
 
       // Status
       let matchesStatus = true;
-      if (statusFilter === "station_contacted") {
+      if (statusFilter === "rejected") {
+        matchesStatus = c.stationResponseStatus === "Rejected";
+      } else if (statusFilter === "to_contact") {
+        matchesStatus = c.status === "Pending" || c.stationResponseStatus === "Rejected" || !c.stationContactedDate;
+      } else if (statusFilter === "station_contacted") {
         matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
       } else {
         matchesStatus = statusFilter === "all" || c.status === statusFilter;
@@ -384,7 +388,9 @@ export default function AllComplaintsList({
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">All Recovery Statuses</option>
-              <option value="station_contacted">⚡ Station Contacted (Pending & In Progress Only)</option>
+              <option value="to_contact">⚡ Who Has To Contact (Pending Action)</option>
+              <option value="rejected">❌ Response Rejected by Call Center</option>
+              <option value="station_contacted">💬 Station Contacted (Pending & In Progress)</option>
               <option value="Pending">Pending</option>
               <option value="In Progress">In Progress</option>
               <option value="Resolved">Resolved</option>
@@ -576,7 +582,7 @@ export default function AllComplaintsList({
                       </td>
 
                       {/* Status */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
+                      <td className="py-2.5 px-3 whitespace-nowrap space-y-1">
                         <span
                           className={`text-[10px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1 w-fit ${
                             isResolved
@@ -593,6 +599,12 @@ export default function AllComplaintsList({
                           )}
                           {c.status}
                         </span>
+                        {c.stationResponseStatus === "Rejected" && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded border bg-rose-100 text-rose-800 border-rose-300 flex items-center gap-1 w-fit animate-pulse">
+                            <AlertTriangle className="h-2.5 w-2.5 text-rose-600" />
+                            REJECTED BY CALL CENTER
+                          </span>
+                        )}
                       </td>
 
                       {/* Actions */}
@@ -780,7 +792,23 @@ export default function AllComplaintsList({
               </div>
             </div>
 
-            {/* Station Notes */}
+            {/* Station Notes & Rejection Alert */}
+            {activeModalComplaint.stationResponseStatus === "Rejected" && (
+              <div className="bg-rose-50 border border-rose-300 p-3 rounded-lg text-xs space-y-1">
+                <div className="flex items-center gap-1.5 text-rose-800 font-extrabold uppercase text-[10px]">
+                  <AlertTriangle className="h-4 w-4 text-rose-600" />
+                  <span>Response Rejected by Call Center</span>
+                </div>
+                <p className="text-slate-800 font-bold bg-white p-2 rounded border border-rose-200">
+                  "{activeModalComplaint.stationResponseRejectionReason || "No rejection reason specified."}"
+                </p>
+                <div className="text-[10px] text-slate-500 flex justify-between pt-1 font-semibold">
+                  <span>Rejected Date: {activeModalComplaint.stationResponseRejectedDate || "N/A"}</span>
+                  <span>Rejected By: {activeModalComplaint.stationResponseRejectedBy || "Call Center"}</span>
+                </div>
+              </div>
+            )}
+
             {activeModalComplaint.stationResolutionNotes && (
               <div className="space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase block">Station Resolution Notes:</span>

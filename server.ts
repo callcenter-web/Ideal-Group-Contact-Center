@@ -6,7 +6,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO_COMPLAINTS, CALL_CENTER_OFFICERS, STATIONS } from "./src/demoData";
-import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints } from "./src/utils/supabaseSanitizer";
+import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./src/utils/supabaseSanitizer";
 
 dotenv.config();
 
@@ -255,31 +255,13 @@ Ensure your response is highly detailed, professional, and directly actionable f
       localComplaintsCache = complaintsArray;
       savePersistentData();
 
-      // Try writing to Supabase with deduplicated and sanitized data
-      const cleanComplaints = deduplicateAndSanitizeComplaints(complaintsArray);
-      let { data, error } = await supabase
-        .from("complaints")
-        .upsert(cleanComplaints, { onConflict: "id" });
-
-      if (error && error.message && error.message.includes("column")) {
-        console.warn("Supabase upsert encountered column mismatch, retrying after adjusting schema keys:", error.message);
-        let retryPayload = cleanComplaints;
-        if (error.message.includes("'woNo'")) {
-          retryPayload = cleanComplaints.map(({ woNo, ...rest }) => rest);
-        } else if (error.message.includes("'wo_no'")) {
-          retryPayload = cleanComplaints.map(({ wo_no, ...rest }) => rest);
-        }
-        const retryRes = await supabase
-          .from("complaints")
-          .upsert(retryPayload, { onConflict: "id" });
-        error = retryRes.error;
-        data = retryRes.data;
-      }
+      // Perform resilient write to Supabase with automatic column mismatch handling
+      const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, complaintsArray);
 
       if (error) {
         console.error("Supabase UPSERT error:", error);
         return res.json({
-          success: true, // Mark true because we saved in local memory cache successfully
+          success: true, // Saved in local memory cache & disk successfully
           isSupabaseActive: false,
           error: error.message,
           code: error.code,
@@ -290,6 +272,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       res.json({
         success: true,
         isSupabaseActive: true,
+        strippedColumns,
         complaints: localComplaintsCache
       });
     } catch (err: any) {
@@ -643,21 +626,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         console.error("Supabase DELETE during reset error:", deleteError);
       }
 
-      const cleanDemo = deduplicateAndSanitizeComplaints(DEMO_COMPLAINTS);
-      let { error: insertError } = await supabase
-        .from("complaints")
-        .insert(cleanDemo);
-
-      if (insertError && insertError.message && insertError.message.includes("column")) {
-        let retryPayload = cleanDemo;
-        if (insertError.message.includes("'woNo'")) {
-          retryPayload = cleanDemo.map(({ woNo, ...rest }) => rest);
-        } else if (insertError.message.includes("'wo_no'")) {
-          retryPayload = cleanDemo.map(({ wo_no, ...rest }) => rest);
-        }
-        const retryRes = await supabase.from("complaints").insert(retryPayload);
-        insertError = retryRes.error;
-      }
+      const { error: insertError } = await performResilientSupabaseUpsert(supabase, DEMO_COMPLAINTS);
 
       if (insertError) {
         console.error("Supabase INSERT during reset error:", insertError);

@@ -49,7 +49,11 @@ export const VALID_COMPLAINT_COLUMNS = [
   "secondAttemptFeedbackStatus",
   "secondAttemptDate",
   "secondAttemptNotes",
-  "attemptCount"
+  "attemptCount",
+  "stationResponseStatus",
+  "stationResponseRejectionReason",
+  "stationResponseRejectedDate",
+  "stationResponseRejectedBy"
 ];
 
 /**
@@ -129,3 +133,73 @@ export function deduplicateAndSanitizeComplaints(items: any[]): Record<string, a
   
   return Array.from(map.values());
 }
+
+/**
+ * Performs a resilient Supabase upsert on complaints.
+ * If Supabase throws a schema error like "Could not find the 'XYZ' column of 'complaints' in the schema cache",
+ * this automatically strips the offending column from the payload and retries until successful.
+ */
+export async function performResilientSupabaseUpsert(
+  supabase: any,
+  rawComplaints: any[]
+): Promise<{ data: any; error: any; strippedColumns: string[] }> {
+  let payload = deduplicateAndSanitizeComplaints(rawComplaints);
+  const strippedColumns: string[] = [];
+  const maxAttempts = 15;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { data, error } = await supabase
+      .from("complaints")
+      .upsert(payload, { onConflict: "id" });
+
+    if (!error) {
+      if (strippedColumns.length > 0) {
+        console.info(
+          `Supabase upsert succeeded after gracefully stripping un-migrated columns: [${strippedColumns.join(", ")}]. Run the SQL migration to add these columns to Supabase.`
+        );
+      }
+      return { data, error: null, strippedColumns };
+    }
+
+    const errMsg = error.message || "";
+    // Detect column error
+    const matchNotFound = errMsg.match(/Could not find the ['"]([^'"]+)['"] column/i);
+    const matchColNotExist = errMsg.match(/column ['"]([^'"]+)['"] of relation/i);
+    const matchColSingleQuote = errMsg.match(/column ['"]([^'"]+)['"]/i);
+
+    const missingCol =
+      (matchNotFound && matchNotFound[1]) ||
+      (matchColNotExist && matchColNotExist[1]) ||
+      (matchColSingleQuote && matchColSingleQuote[1]);
+
+    if (missingCol && !strippedColumns.includes(missingCol)) {
+      console.warn(`Supabase missing column detected ('${missingCol}'). Stripping column and retrying upsert...`);
+      strippedColumns.push(missingCol);
+      payload = payload.map((item) => {
+        const copy = { ...item };
+        delete copy[missingCol];
+        return copy;
+      });
+      continue;
+    }
+
+    // Fallback check for common woNo / wo_no mismatches
+    if (errMsg.includes("'woNo'") && !strippedColumns.includes("woNo")) {
+      strippedColumns.push("woNo");
+      payload = payload.map(({ woNo, ...rest }) => rest);
+      continue;
+    }
+    if (errMsg.includes("'wo_no'") && !strippedColumns.includes("wo_no")) {
+      strippedColumns.push("wo_no");
+      payload = payload.map(({ wo_no, ...rest }) => rest);
+      continue;
+    }
+
+    // If no specific column could be extracted or retry limit reached, break and return the error
+    return { data, error, strippedColumns };
+  }
+
+  return { data: null, error: { message: "Exceeded max upsert retry attempts." }, strippedColumns };
+}
+
+

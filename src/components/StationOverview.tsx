@@ -1,7 +1,7 @@
 import React from "react";
 import { Complaint, StationProfile, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
-import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar } from "lucide-react";
+import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar, AlertTriangle } from "lucide-react";
 import { getAgeFormulaBreakdown } from "../utils/agingUtils";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
 
@@ -23,6 +23,7 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
     const pending = stationComplaints.filter((c) => c.status === "Pending").length;
     const inProgress = stationComplaints.filter((c) => c.status === "In Progress").length;
     const resolved = stationComplaints.filter((c) => c.status === "Resolved").length;
+    const rejected = stationComplaints.filter((c) => c.stationResponseStatus === "Rejected").length;
     
     // Converted: Initial was Dissatisfied, now Neutral/Satisfied/Very Satisfied
     const converted = stationComplaints.filter(
@@ -43,6 +44,7 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
       pending,
       inProgress,
       resolved,
+      rejected,
       conversionRate,
       ageBreakdown,
       stationComplaints,
@@ -120,6 +122,22 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
                   <span className={`text-base font-black block mt-0.5 ${stat.resolved > 0 ? "text-green-500" : isDark ? "text-slate-600" : "text-slate-400"}`}>{stat.resolved}</span>
                 </div>
               </div>
+
+              {stat.rejected > 0 && (
+                <div
+                  onClick={() => onSelectStation(stat.code)}
+                  className="mt-2.5 bg-rose-50 border border-rose-300 rounded-lg p-2 text-center flex items-center justify-between cursor-pointer hover:bg-rose-100/80 transition-all shadow-2xs"
+                  title="Click to view rejected responses for this station"
+                >
+                  <span className="text-[10px] font-black text-rose-800 uppercase flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3 text-rose-600 shrink-0" />
+                    {stat.rejected} Response{stat.rejected > 1 ? "s" : ""} Rejected
+                  </span>
+                  <span className="text-[9px] bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">
+                    Re-Action Needed →
+                  </span>
+                </div>
+              )}
 
               {/* Progress bar */}
               <div className="mt-4 space-y-1">

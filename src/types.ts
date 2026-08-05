@@ -57,6 +57,12 @@ export interface Complaint {
   solutionDate?: string;
   followUpDate?: string;
 
+  // Station Response Rejection & Verification tracking
+  stationResponseStatus?: "Pending Station" | "Submitted to Call Center" | "Approved" | "Rejected" | string;
+  stationResponseRejectionReason?: string;
+  stationResponseRejectedDate?: string;
+  stationResponseRejectedBy?: string;
+
   // Multi-attempt follow-up tracking
   firstAttemptCallStatus?: "Connected" | "Customer Busy" | "Customer Unreachable" | "Invalid Details" | "Invalid Number" | "No Answer" | string;
   firstAttemptDate?: string;
