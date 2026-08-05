@@ -92,7 +92,7 @@ export default function AllComplaintsList({
       // Status
       let matchesStatus = true;
       if (statusFilter === "station_contacted") {
-        matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.status === "Contacted") && (c.status === "Pending" || c.status === "In Progress");
+        matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
       } else {
         matchesStatus = statusFilter === "all" || c.status === statusFilter;
       }

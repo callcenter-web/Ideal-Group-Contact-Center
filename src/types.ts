@@ -106,6 +106,7 @@ export interface CallCenterOfficer {
   phone: string;
   avatar: string;
   department: string;
+  passwordHash?: string;
 }
 
 export interface UserProfile {

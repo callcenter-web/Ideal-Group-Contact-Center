@@ -148,7 +148,7 @@ export default function UserProfileModal({
     onUpdateCurrentUser(updatedUser);
 
     // If user is a Call Center officer, sync in officers list
-    if (user.officerId) {
+    if (user.officerId && onUpdateOfficersList && officersList) {
       const updatedList = officersList.map((off) => {
         if (off.id === user.officerId) {
           return {
@@ -164,6 +164,22 @@ export default function UserProfileModal({
         return off;
       });
       onUpdateOfficersList(updatedList);
+    }
+
+    // If user is a Service Station agent, sync station profile in stations list
+    if (user.role === "agent" && user.station && onUpdateStationsList && stationsList) {
+      const updatedStations = stationsList.map((st) => {
+        if (st.code === user.station || st.name.toLowerCase().includes(user.station!.toLowerCase())) {
+          return {
+            ...st,
+            managerName: selfForm.name,
+            email: selfForm.email,
+            phone: selfForm.phone,
+          };
+        }
+        return st;
+      });
+      onUpdateStationsList(updatedStations);
     }
 
     setIsEditingSelf(false);
@@ -258,7 +274,7 @@ export default function UserProfileModal({
           </div>
 
           <div className="flex items-center gap-2">
-            {isAdmin && (
+            {isAdmin ? (
               <div className="flex bg-black/40 p-1 rounded-lg border border-white/20">
                 <button
                   type="button"
@@ -290,6 +306,10 @@ export default function UserProfileModal({
                   Stations ({stationsList.length})
                 </button>
               </div>
+            ) : (
+              <span className="text-[11px] font-bold text-white/90 bg-black/40 px-3 py-1 rounded-lg border border-white/20 uppercase tracking-wider">
+                My Profile
+              </span>
             )}
 
             <button

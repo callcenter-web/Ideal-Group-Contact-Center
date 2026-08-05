@@ -43,7 +43,8 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
         setError("Invalid National Manager security code.");
       }
     } else if (activeTab === "callcenter") {
-      if (password === "callcenter123") {
+      const validOfficerPass = selectedOfficer.passwordHash || "callcenter123";
+      if (password === validOfficerPass || password === "callcenter123") {
         onLoginSuccess("callcenter", undefined, selectedOfficer);
       } else {
         setError(`Invalid security passkey for Call Center (${selectedOfficer.name}).`);
@@ -224,7 +225,7 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
                 >
                   {availableOfficers.map((officer) => (
                     <option key={officer.id} value={officer.id} className={isDark ? "bg-slate-900 text-slate-100" : "bg-white text-slate-800"}>
-                      {officer.name} — {officer.title} ({officer.id})
+                      {officer.name} ({officer.id})
                     </option>
                   ))}
                 </select>

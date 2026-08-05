@@ -177,6 +177,60 @@ export default function App() {
       .catch(() => setEmailLogs(getStoredSystemicEmailLogs()));
   }, []);
 
+  // Periodic background sync across all devices / IPs every 6 seconds
+  useEffect(() => {
+    const syncBackendData = async () => {
+      try {
+        const [resC, resO, resS, resCal] = await Promise.allSettled([
+          fetch("/api/complaints"),
+          fetch("/api/officers"),
+          fetch("/api/stations"),
+          fetch("/api/calendar")
+        ]);
+
+        if (resC.status === "fulfilled" && resC.value.ok) {
+          const text = await resC.value.text();
+          if (!text.trim().startsWith("<!DOCTYPE")) {
+            const data = JSON.parse(text);
+            if (data && data.complaints && Array.isArray(data.complaints)) {
+              setComplaints(data.complaints);
+              localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+            }
+          }
+        }
+
+        if (resO.status === "fulfilled" && resO.value.ok) {
+          const dataO = await resO.value.json();
+          if (dataO && dataO.officers && Array.isArray(dataO.officers) && dataO.officers.length > 0) {
+            setOfficersList(dataO.officers);
+            localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(dataO.officers));
+          }
+        }
+
+        if (resS.status === "fulfilled" && resS.value.ok) {
+          const dataS = await resS.value.json();
+          if (dataS && dataS.stations && Array.isArray(dataS.stations) && dataS.stations.length > 0) {
+            setStationsList(dataS.stations);
+            localStorage.setItem("ideal_group_stations", JSON.stringify(dataS.stations));
+          }
+        }
+
+        if (resCal.status === "fulfilled" && resCal.value.ok) {
+          const dataCal = await resCal.value.json();
+          if (dataCal && dataCal.dates && Array.isArray(dataCal.dates)) {
+            setCalendarDates(dataCal.dates);
+            saveCalendarDates(dataCal.dates);
+          }
+        }
+      } catch (e) {
+        // Silent catch for background sync
+      }
+    };
+
+    const interval = setInterval(syncBackendData, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleUpdateCurrentUser = (updated: UserProfile) => {
     setCurrentUser(updated);
     localStorage.setItem("ideal_group_current_user", JSON.stringify(updated));
@@ -500,9 +554,10 @@ export default function App() {
     } else {
       setStationFilter("All");
     }
-    // Default call center view to "Awaiting"
+    // Default call center view to "Awaiting" and switch tab to Recovery Workspace
     if (role === "callcenter") {
       setCallCenterQuickFilter("awaiting");
+      setCurrentTab("analytics");
     }
     setSelectedComplaintId(null);
   };
@@ -1139,7 +1194,7 @@ export default function App() {
     // Status filter
     let matchesStatus = true;
     if (statusFilter === "Station Contacted (Pending/In-Progress)") {
-      matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.status === "Contacted") && (c.status === "Pending" || c.status === "In Progress");
+      matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
     }
@@ -1151,10 +1206,10 @@ export default function App() {
     let matchesCallCenterQuick = true;
     if (currentUser.role === "callcenter") {
       if (callCenterQuickFilter === "awaiting") {
-        // Station must have contacted them AND status is Pending or In Progress AND call center hasn't logged final remarks yet
-        matchesCallCenterQuick = !!(c.stationResolutionNotes || c.stationContactedDate) && (c.status === "Pending" || c.status === "In Progress") && !c.callCenterFinalRemarks;
+        // Awaiting Call Center follow-up: Station responded/contacted customer, Call Center remarks pending, not resolved
+        matchesCallCenterQuick = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && !c.callCenterFinalRemarks && c.status !== "Resolved";
       } else if (callCenterQuickFilter === "completed") {
-        matchesCallCenterQuick = !!c.callCenterFinalRemarks;
+        matchesCallCenterQuick = !!c.callCenterFinalRemarks || c.status === "Resolved";
       }
     }
 
@@ -1335,25 +1390,27 @@ export default function App() {
             </button>
 
             {/* Station Directory & Systemic Email Matrix Button */}
-            <button
-              id="btn-open-station-directory"
-              type="button"
-              onClick={() => setShowStationDirectoryModal(true)}
-              className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs ${
-                isDark
-                  ? "bg-amber-950/40 border-amber-800 text-amber-300 hover:bg-amber-900/50"
-                  : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
-              }`}
-              title="View Workstation Personnel Contacts & Systemic Dispatch Logs"
-            >
-              <Mail className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-              <span>Station Contacts & Emails</span>
-              {emailLogs.length > 0 && (
-                <span className="ml-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
-                  {emailLogs.length}
-                </span>
-              )}
-            </button>
+            {currentUser.role === "admin" && (
+              <button
+                id="btn-open-station-directory"
+                type="button"
+                onClick={() => setShowStationDirectoryModal(true)}
+                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs ${
+                  isDark
+                    ? "bg-amber-950/40 border-amber-800 text-amber-300 hover:bg-amber-900/50"
+                    : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
+                }`}
+                title="View Workstation Personnel Contacts & Systemic Dispatch Logs"
+              >
+                <Mail className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                <span>Station Contacts & Emails</span>
+                {emailLogs.length > 0 && (
+                  <span className="ml-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                    {emailLogs.length}
+                  </span>
+                )}
+              </button>
+            )}
 
 
             <button
@@ -1807,7 +1864,7 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          Awaiting Call Center Follow-up ({complaints.filter(c => !!(c.stationResolutionNotes || c.stationContactedDate) && !c.callCenterFinalRemarks).length})
+                          Awaiting Call Center Follow-up ({complaints.filter(c => !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && !c.callCenterFinalRemarks && c.status !== "Resolved").length})
                         </button>
                         <button
                           type="button"
@@ -1818,7 +1875,7 @@ CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHE
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          Completed ({complaints.filter(c => !!c.callCenterFinalRemarks).length})
+                          Completed ({complaints.filter(c => !!c.callCenterFinalRemarks || c.status === "Resolved").length})
                         </button>
                         <button
                           type="button"

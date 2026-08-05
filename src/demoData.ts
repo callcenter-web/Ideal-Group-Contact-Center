@@ -97,7 +97,8 @@ export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
     email: "usha@idealgroup.lk",
     phone: "+94 77 111 2233",
     avatar: "US",
-    department: "Ideal Motors Central CX Call Center"
+    department: "Ideal Motors Central CX Call Center",
+    passwordHash: "callcenter123"
   },
   {
     id: "CC-102",
@@ -106,7 +107,8 @@ export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
     email: "irshana@idealgroup.lk",
     phone: "+94 77 222 3344",
     avatar: "IR",
-    department: "Ideal Motors Central CX Call Center"
+    department: "Ideal Motors Central CX Call Center",
+    passwordHash: "callcenter123"
   },
   {
     id: "CC-103",
@@ -115,7 +117,8 @@ export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
     email: "yathish@idealgroup.lk",
     phone: "+94 77 333 4455",
     avatar: "YA",
-    department: "Ideal Motors Central CX Call Center"
+    department: "Ideal Motors Central CX Call Center",
+    passwordHash: "callcenter123"
   },
   {
     id: "CC-104",
@@ -124,7 +127,8 @@ export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
     email: "pawani@idealgroup.lk",
     phone: "+94 77 444 5566",
     avatar: "PA",
-    department: "Ideal Motors Central CX Call Center"
+    department: "Ideal Motors Central CX Call Center",
+    passwordHash: "callcenter123"
   },
   {
     id: "CC-105",
@@ -133,7 +137,8 @@ export const CALL_CENTER_OFFICERS: CallCenterOfficer[] = [
     email: "shevon@idealgroup.lk",
     phone: "+94 77 555 6677",
     avatar: "SH",
-    department: "Ideal Motors Central CX Call Center"
+    department: "Ideal Motors Central CX Call Center",
+    passwordHash: "callcenter123"
   }
 ];
 
