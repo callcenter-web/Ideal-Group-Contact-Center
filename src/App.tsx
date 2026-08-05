@@ -177,15 +177,16 @@ export default function App() {
       .catch(() => setEmailLogs(getStoredSystemicEmailLogs()));
   }, []);
 
-  // Periodic background sync across all devices / IPs every 6 seconds
+  // Periodic background sync across all devices / IPs every 4 seconds
   useEffect(() => {
     const syncBackendData = async () => {
       try {
-        const [resC, resO, resS, resCal] = await Promise.allSettled([
+        const [resC, resO, resS, resCal, resEml] = await Promise.allSettled([
           fetch("/api/complaints"),
           fetch("/api/officers"),
           fetch("/api/stations"),
-          fetch("/api/calendar")
+          fetch("/api/calendar"),
+          fetch("/api/email-logs")
         ]);
 
         if (resC.status === "fulfilled" && resC.value.ok) {
@@ -222,12 +223,19 @@ export default function App() {
             saveCalendarDates(dataCal.dates);
           }
         }
+
+        if (resEml.status === "fulfilled" && resEml.value.ok) {
+          const dataEml = await resEml.value.json();
+          if (dataEml && dataEml.logs && Array.isArray(dataEml.logs)) {
+            saveSystemicEmailLogs(dataEml.logs);
+          }
+        }
       } catch (e) {
         // Silent catch for background sync
       }
     };
 
-    const interval = setInterval(syncBackendData, 6000);
+    const interval = setInterval(syncBackendData, 4000);
     return () => clearInterval(interval);
   }, []);
 

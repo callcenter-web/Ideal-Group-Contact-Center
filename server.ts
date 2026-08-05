@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -32,7 +33,7 @@ if (SUPABASE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Memory cache fallback
+// Memory cache & disk persistence setup
 let localComplaintsCache = [...DEMO_COMPLAINTS];
 let localOfficersCache = [...CALL_CENTER_OFFICERS];
 let localStationsCache = [...STATIONS];
@@ -66,6 +67,56 @@ let localCalendarCache: any[] = [
     createdBy: "Admin",
   },
 ];
+
+const DB_FILE_PATH = path.join(process.cwd(), "persistent_database.json");
+
+function loadPersistentData() {
+  try {
+    if (fs.existsSync(DB_FILE_PATH)) {
+      const raw = fs.readFileSync(DB_FILE_PATH, "utf-8");
+      const data = JSON.parse(raw);
+      if (data.complaints && Array.isArray(data.complaints) && data.complaints.length > 0) {
+        localComplaintsCache = data.complaints;
+      }
+      if (data.officers && Array.isArray(data.officers) && data.officers.length > 0) {
+        localOfficersCache = data.officers;
+      }
+      if (data.stations && Array.isArray(data.stations) && data.stations.length > 0) {
+        localStationsCache = data.stations;
+      }
+      if (data.calendar && Array.isArray(data.calendar)) {
+        localCalendarCache = data.calendar;
+      }
+      if (data.emailLogs && Array.isArray(data.emailLogs)) {
+        localEmailLogsCache = data.emailLogs;
+      }
+      console.log("Loaded persistent database store from disk successfully.");
+    } else {
+      savePersistentData();
+    }
+  } catch (err) {
+    console.error("Error loading persistent database file:", err);
+  }
+}
+
+function savePersistentData() {
+  try {
+    const payload = {
+      complaints: localComplaintsCache,
+      officers: localOfficersCache,
+      stations: localStationsCache,
+      calendar: localCalendarCache,
+      emailLogs: localEmailLogsCache,
+      lastUpdated: new Date().toISOString()
+    };
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(payload, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing persistent database file:", err);
+  }
+}
+
+// Initial boot load
+loadPersistentData();
 
 
 async function startServer() {
@@ -171,8 +222,9 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
 
       // Keep cache in sync with active db (do NOT auto-seed if empty so deletions persist)
-      if (data) {
+      if (data && data.length > 0) {
         localComplaintsCache = data;
+        savePersistentData();
       }
 
       res.json({
@@ -199,8 +251,9 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
 
-      // Update local memory cache directly with the full provided array
+      // Update local memory cache directly with the full provided array and persist to disk
       localComplaintsCache = complaintsArray;
+      savePersistentData();
 
       // Try writing to Supabase with deduplicated and sanitized data
       const cleanComplaints = deduplicateAndSanitizeComplaints(complaintsArray);
@@ -261,7 +314,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       const targetId = id ? String(id).trim().toUpperCase() : "";
       const targetWoNo = woNo ? String(woNo).trim().toUpperCase() : "";
 
-      // Filter local memory cache thoroughly
+      // Filter local memory cache thoroughly and persist to disk
       localComplaintsCache = localComplaintsCache.filter((c) => {
         const cId = (c.id || "").trim().toUpperCase();
         const cWo = (c.woNo || "").trim().toUpperCase();
@@ -272,6 +325,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         if (targetId && cId === `COMP-${targetId}`) return false;
         return true;
       });
+      savePersistentData();
 
       // Try deleting from Supabase
       const conditions: string[] = [];
@@ -341,6 +395,8 @@ Ensure your response is highly detailed, professional, and directly actionable f
           .insert(CALL_CENTER_OFFICERS);
 
         if (!insertError) {
+          localOfficersCache = [...CALL_CENTER_OFFICERS];
+          savePersistentData();
           return res.json({
             officers: CALL_CENTER_OFFICERS,
             isSupabaseActive: true
@@ -348,6 +404,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         }
       } else {
         localOfficersCache = data;
+        savePersistentData();
       }
 
       res.json({
@@ -373,6 +430,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const officersArray = Array.isArray(officers) ? officers : [officers];
       localOfficersCache = officersArray;
+      savePersistentData();
 
       const { data, error } = await supabase
         .from("call_center_officers")
@@ -426,6 +484,8 @@ Ensure your response is highly detailed, professional, and directly actionable f
           .insert(STATIONS);
 
         if (!insertError) {
+          localStationsCache = [...STATIONS];
+          savePersistentData();
           return res.json({
             stations: STATIONS,
             isSupabaseActive: true
@@ -433,6 +493,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         }
       } else {
         localStationsCache = data;
+        savePersistentData();
       }
 
       res.json({
@@ -458,6 +519,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const stationsArray = Array.isArray(stations) ? stations : [stations];
       localStationsCache = stationsArray;
+      savePersistentData();
 
       const { data, error } = await supabase
         .from("stations")
@@ -496,6 +558,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         return res.json({ dates: localCalendarCache, isSupabaseActive: !error });
       }
       localCalendarCache = data;
+      savePersistentData();
       res.json({ dates: data, isSupabaseActive: true });
     } catch (err: any) {
       res.json({ dates: localCalendarCache, isSupabaseActive: false });
@@ -507,6 +570,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       const { dates } = req.body;
       if (dates && Array.isArray(dates)) {
         localCalendarCache = dates;
+        savePersistentData();
         const { error } = await supabase.from("workstation_calendar").upsert(dates, { onConflict: "id" });
         if (error) {
           console.error("Supabase calendar UPSERT error:", error);
@@ -522,6 +586,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
     try {
       const { id } = req.params;
       localCalendarCache = localCalendarCache.filter((item) => item.id !== id);
+      savePersistentData();
       const { error } = await supabase.from("workstation_calendar").delete().eq("id", id);
       if (error) {
         console.error("Supabase calendar DELETE error:", error);
@@ -540,6 +605,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         return res.json({ logs: localEmailLogsCache });
       }
       localEmailLogsCache = data;
+      savePersistentData();
       res.json({ logs: data });
     } catch (err) {
       res.json({ logs: localEmailLogsCache });
@@ -551,6 +617,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
       const { logs } = req.body;
       if (logs && Array.isArray(logs)) {
         localEmailLogsCache = [...logs, ...localEmailLogsCache];
+        savePersistentData();
         await supabase.from("systemic_email_logs").upsert(logs, { onConflict: "id" });
       }
       res.json({ success: true, logs: localEmailLogsCache });
@@ -564,6 +631,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
   app.post("/api/complaints/reset", async (req, res) => {
     try {
       localComplaintsCache = [...DEMO_COMPLAINTS];
+      savePersistentData();
 
       // Attempt to clear and insert in Supabase
       const { error: deleteError } = await supabase
@@ -621,6 +689,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
   app.post("/api/complaints/clear", async (req, res) => {
     try {
       localComplaintsCache = [];
+      savePersistentData();
 
       const { error: deleteError } = await supabase
         .from("complaints")
