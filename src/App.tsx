@@ -299,8 +299,8 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [stationFilter, setStationFilter] = useState<string>("All");
 
-  // Call Center Quick Filter
-  const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"all" | "awaiting" | "completed">("awaiting");
+  // Call Center Quick Filter: 1st Attempt, 2nd Attempt, Rejected List, Completed, All Station Contacted
+  const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"1st_attempt" | "2nd_attempt" | "rejected" | "completed" | "all">("1st_attempt");
 
   // Follow-up form fields
   const [formStatus, setFormStatus] = useState<FollowUpStatus>("Pending");
@@ -935,10 +935,15 @@ export default function App() {
               isConnectedNow = false;
             } else if (formFirstAttemptCallStatus === "Connected") {
               isConnectedNow = true;
-              calcFeedbackStatus = formSecondAttemptFeedbackStatus || "Follow Up Required";
-              if (formSecondAttemptFeedbackStatus === "Satisfied") {
+              calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus || "Follow Up Required";
+              if (
+                formSecondAttemptFeedbackStatus === "Satisfied" ||
+                formCallCenterFinalSatisfaction === "Satisfied" ||
+                formFeedbackStatus === "Satisfied"
+              ) {
                 calcStatus = "Resolved";
                 calcSatisfaction = "Satisfied";
+                calcFeedbackStatus = "Satisfied";
                 calcFinalStatus = "Closed";
               } else {
                 calcStatus = "Pending";
@@ -953,12 +958,17 @@ export default function App() {
             }
           } else {
             // 2nd Attempt
-            calcFeedbackStatus = formSecondAttemptFeedbackStatus;
+            calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus;
 
-            if (formSecondAttemptFeedbackStatus === "Satisfied") {
+            if (
+              formSecondAttemptFeedbackStatus === "Satisfied" ||
+              formCallCenterFinalSatisfaction === "Satisfied" ||
+              formFeedbackStatus === "Satisfied"
+            ) {
               // ONLY if selected satisfied -> pass to complete (Resolved)
               calcStatus = "Resolved";
               calcSatisfaction = "Satisfied";
+              calcFeedbackStatus = "Satisfied";
               calcFinalStatus = "Closed";
               isConnectedNow = true;
             } else if (formSecondAttemptFeedbackStatus === "Customer Unreachable") {
@@ -1206,6 +1216,17 @@ export default function App() {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} theme={theme} toggleTheme={toggleTheme} />;
   }
 
+  // Helper to determine if service station has contacted/actioned the customer
+  const isStationContacted = (c: Complaint) => {
+    return !!(
+      c.stationContactedDate ||
+      c.stationResolutionNotes ||
+      (c.notes && c.notes.length > 0) ||
+      c.status === "Contacted" ||
+      c.stationResponseStatus === "Submitted to Call Center"
+    );
+  };
+
   // Filter complaints based on search and selected filter values
   const filteredComplaints = complaints.filter((c) => {
     // Search filter (name, email, phone, or description)
@@ -1224,12 +1245,16 @@ export default function App() {
 
     // Status filter
     let matchesStatus = true;
-    if (statusFilter === "Station Contacted (Pending/In-Progress)") {
-      matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
+    if (statusFilter === "1st Attempt Required") {
+      matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0);
+    } else if (statusFilter === "2nd Attempt Required") {
+      matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus);
     } else if (statusFilter === "Rejected") {
       matchesStatus = c.stationResponseStatus === "Rejected";
-    } else if (statusFilter === "To Contact") {
-      matchesStatus = c.status === "Pending" || c.stationResponseStatus === "Rejected" || !c.stationContactedDate;
+    } else if (statusFilter === "Station Contacted (Pending/In-Progress)") {
+      matchesStatus = isStationContacted(c) && c.status !== "Resolved";
+    } else if (statusFilter === "Pending") {
+      matchesStatus = c.status === "Pending" && !isStationContacted(c);
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
     }
@@ -1237,14 +1262,24 @@ export default function App() {
     // Category filter
     const matchesCategory = categoryFilter === "All" || c.category === categoryFilter;
 
-    // Call Center Quick Filter
+    // Call Center Quick Filter (Excludes uncontacted customers by service station)
     let matchesCallCenterQuick = true;
     if (currentUser.role === "callcenter") {
-      if (callCenterQuickFilter === "awaiting") {
-        // Awaiting Call Center follow-up: Station responded/contacted customer, Call Center remarks pending, not resolved
-        matchesCallCenterQuick = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && !c.callCenterFinalRemarks && c.status !== "Resolved";
+      if (callCenterQuickFilter === "1st_attempt") {
+        // 1st Attempt: Service station HAS contacted, Call Center 1st attempt pending, not rejected, not completed
+        matchesCallCenterQuick = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0);
+      } else if (callCenterQuickFilter === "2nd_attempt") {
+        // 2nd Attempt: Service station HAS contacted, 1st attempt logged, needs 2nd attempt, not rejected, not completed
+        matchesCallCenterQuick = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus);
+      } else if (callCenterQuickFilter === "rejected") {
+        // Rejected List: Station response rejected by Call Center
+        matchesCallCenterQuick = c.stationResponseStatus === "Rejected";
       } else if (callCenterQuickFilter === "completed") {
+        // Completed: Call Center final remarks logged or Resolved
         matchesCallCenterQuick = !!c.callCenterFinalRemarks || c.status === "Resolved";
+      } else if (callCenterQuickFilter === "all") {
+        // All Station Contacted: ONLY complaints contacted by service station or rejected or completed by Call Center
+        matchesCallCenterQuick = isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks;
       }
     }
 
@@ -1915,41 +1950,63 @@ NOTIFY pgrst, 'reload schema';
                 <div id="controls-panel" className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
                   <div className="flex flex-col gap-2.5">
                     
-                    {/* Call Center Filter Tabs */}
+                    {/* Call Center Filter Tabs (Only showing customers contacted by Service Station) */}
                     {currentUser.role === "callcenter" && (
-                      <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full">
+                      <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
                         <button
                           type="button"
-                          onClick={() => setCallCenterQuickFilter("awaiting")}
-                          className={`flex-1 text-center py-1.5 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
-                            callCenterQuickFilter === "awaiting"
-                              ? "bg-white text-blue-600 shadow-xs"
+                          onClick={() => setCallCenterQuickFilter("1st_attempt")}
+                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            callCenterQuickFilter === "1st_attempt"
+                              ? "bg-white text-blue-700 shadow-xs border border-blue-200"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          Awaiting Call Center Follow-up ({complaints.filter(c => !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && !c.callCenterFinalRemarks && c.status !== "Resolved").length})
+                          📞 1st Attempt ({complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCallCenterQuickFilter("2nd_attempt")}
+                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            callCenterQuickFilter === "2nd_attempt"
+                              ? "bg-white text-amber-700 shadow-xs border border-amber-200"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          🔁 2nd Attempt ({complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus)).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCallCenterQuickFilter("rejected")}
+                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            callCenterQuickFilter === "rejected"
+                              ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          ❌ Rejected List ({complaints.filter(c => c.stationResponseStatus === "Rejected").length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setCallCenterQuickFilter("completed")}
-                          className={`flex-1 text-center py-1.5 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
+                          className={`flex-1 min-w-[90px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "completed"
-                              ? "bg-white text-blue-600 shadow-xs"
+                              ? "bg-white text-green-700 shadow-xs border border-green-200"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          Completed ({complaints.filter(c => !!c.callCenterFinalRemarks || c.status === "Resolved").length})
+                          ✅ Completed ({complaints.filter(c => !!c.callCenterFinalRemarks || c.status === "Resolved").length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setCallCenterQuickFilter("all")}
-                          className={`flex-1 text-center py-1.5 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
+                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "all"
-                              ? "bg-white text-blue-600 shadow-xs"
+                              ? "bg-white text-slate-800 shadow-xs border border-slate-300"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          All ({complaints.length})
+                          All Station Contacted ({complaints.filter(c => isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks).length})
                         </button>
                       </div>
                     )}
@@ -2138,6 +2195,22 @@ NOTIFY pgrst, 'reload schema';
                               <Clock className="h-2.5 w-2.5 mr-1" />
                               {itemAge.category}
                             </span>
+                            {isStationContacted(item) && item.stationResponseStatus !== "Rejected" && !item.callCenterFinalRemarks && item.status !== "Resolved" && (
+                              item.firstAttemptCallStatus ? (
+                                <span className="inline-flex items-center text-[9px] bg-amber-100 border border-amber-300 px-2 py-0.5 rounded text-amber-800 font-extrabold uppercase">
+                                  🔁 2nd Attempt Needed ({item.firstAttemptCallStatus})
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center text-[9px] bg-blue-100 border border-blue-300 px-2 py-0.5 rounded text-blue-800 font-extrabold uppercase">
+                                  📞 Call Center 1st Attempt
+                                </span>
+                              )
+                            )}
+                            {!isStationContacted(item) && (
+                              <span className="inline-flex items-center text-[9px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-slate-500 font-bold uppercase">
+                                ⏳ Station Contact Pending
+                              </span>
+                            )}
                             {item.stationResponseStatus === "Rejected" && (
                               <span className="inline-flex items-center text-[9px] bg-rose-100 border border-rose-300 px-2 py-0.5 rounded text-rose-800 font-black uppercase tracking-wider animate-pulse">
                                 <AlertTriangle className="h-2.5 w-2.5 mr-1 text-rose-600" />
