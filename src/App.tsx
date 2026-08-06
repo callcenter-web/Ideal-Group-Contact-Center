@@ -27,7 +27,9 @@ import {
   RefreshCw,
   ListFilter,
   XCircle,
-  Send
+  Send,
+  ShieldAlert,
+  BarChart2
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
@@ -42,6 +44,7 @@ import ReportsPanel from "./components/ReportsPanel";
 import IdealMotorsLogo from "./components/IdealMotorsLogo";
 import UserProfileModal from "./components/UserProfileModal";
 import AllComplaintsList from "./components/AllComplaintsList";
+import CallCenterSLAReportModal from "./components/CallCenterSLAReportModal";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
 import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
 import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
@@ -382,6 +385,7 @@ export default function App() {
   const [showConnectedAlert, setShowConnectedAlert] = useState(false);
   const [connectedCustomerName, setConnectedCustomerName] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showSLAReportModal, setShowSLAReportModal] = useState(false);
 
   const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
     try {
@@ -1769,74 +1773,199 @@ NOTIFY pgrst, 'reload schema';
         
         {/* National Manager & Call Center Tabs navigation */}
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
-          <div className="flex border-b border-slate-200 gap-1 shrink-0 overflow-x-auto">
-            <button
-              id="tab-analytics-btn"
-              type="button"
-              onClick={() => setCurrentTab("analytics")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                currentTab === "analytics"
-                  ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <Users className="h-3.5 w-3.5 inline mr-1.5" />
-              Recovery Workspace
-            </button>
-            <button
-              id="tab-all-list-btn"
-              type="button"
-              onClick={() => setCurrentTab("list")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                currentTab === "list"
-                  ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <ListFilter className="h-3.5 w-3.5 inline mr-1.5" />
-              All Complaints List
-            </button>
-            <button
-              id="tab-stations-btn"
-              type="button"
-              onClick={() => setCurrentTab("stations")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                currentTab === "stations"
-                  ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <MapPin className="h-3.5 w-3.5 inline mr-1.5" />
-              Complaints for Each Service Station
-            </button>
-            <button
-              id="tab-reports-btn"
-              type="button"
-              onClick={() => setCurrentTab("reports")}
-              className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                currentTab === "reports"
-                  ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 inline mr-1.5" />
-              Reports & Downloads
-            </button>
-            {currentUser.role === "admin" && (
+          <div className="space-y-2 shrink-0">
+            <div className="flex border-b border-slate-200 gap-1 overflow-x-auto items-center justify-between">
+              <div className="flex gap-1 overflow-x-auto">
+                <button
+                  id="tab-analytics-btn"
+                  type="button"
+                  onClick={() => setCurrentTab("analytics")}
+                  className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                    currentTab === "analytics"
+                      ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                      : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5 inline mr-1.5" />
+                  Recovery Workspace
+                </button>
+                <button
+                  id="tab-all-list-btn"
+                  type="button"
+                  onClick={() => setCurrentTab("list")}
+                  className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                    currentTab === "list"
+                      ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                      : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <ListFilter className="h-3.5 w-3.5 inline mr-1.5" />
+                  All Complaints List
+                </button>
+                <button
+                  id="tab-stations-btn"
+                  type="button"
+                  onClick={() => setCurrentTab("stations")}
+                  className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                    currentTab === "stations"
+                      ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                      : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <MapPin className="h-3.5 w-3.5 inline mr-1.5" />
+                  Complaints for Each Service Station
+                </button>
+                <button
+                  id="tab-reports-btn"
+                  type="button"
+                  onClick={() => setCurrentTab("reports")}
+                  className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                    currentTab === "reports"
+                      ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                      : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 inline mr-1.5" />
+                  Reports & Downloads
+                </button>
+                {currentUser.role === "admin" && (
+                  <button
+                    id="tab-upload-btn"
+                    type="button"
+                    onClick={() => setCurrentTab("upload")}
+                    className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                      currentTab === "upload"
+                        ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
+                        : "border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5 inline mr-1.5" />
+                    Upload Data
+                  </button>
+                )}
+              </div>
+
+              {/* Admin & Call Center Button for SLA & Aging Report */}
               <button
-                id="tab-upload-btn"
+                id="btn-call-center-sla-report"
                 type="button"
-                onClick={() => setCurrentTab("upload")}
-                className={`py-1.5 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                  currentTab === "upload"
-                    ? "border-blue-600 text-blue-600 bg-blue-50/20 font-black"
-                    : "border-transparent text-slate-500 hover:text-slate-800"
-                }`}
+                onClick={() => setShowSLAReportModal(true)}
+                className="mb-1 py-1.5 px-3 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white font-extrabold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap border border-blue-600/40"
+                title="View Call Center Pending Customer Contact Reports, SLA Compliance, and Aging Analysis"
               >
-                <FileSpreadsheet className="h-3.5 w-3.5 inline mr-1.5" />
-                Upload Data
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-300" />
+                <span>Call Center Pending (SLA & Aging)</span>
               </button>
-            )}
+            </div>
+
+            {/* Quick Sidebar Navigation / Queue Filters */}
+            <div className="flex flex-wrap items-center justify-between bg-slate-100/90 border border-slate-200/90 p-1.5 rounded-lg gap-2 shadow-2xs">
+              <div className="flex items-center gap-1.5 text-slate-700 font-extrabold text-[11px] px-2 shrink-0">
+                <Phone className="h-3.5 w-3.5 text-blue-600" />
+                <span>Call Center Quick Navigation:</span>
+              </div>
+              <div className="flex items-center gap-1 overflow-x-auto flex-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentTab("analytics");
+                    setCallCenterQuickFilter("1st_attempt");
+                  }}
+                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                    currentTab === "analytics" && callCenterQuickFilter === "1st_attempt"
+                      ? "bg-blue-600 text-white shadow-xs"
+                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  <span>📞 1st Attempt</span>
+                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    currentTab === "analytics" && callCenterQuickFilter === "1st_attempt" ? "bg-blue-800 text-white" : "bg-blue-100 text-blue-800"
+                  }`}>
+                    {complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentTab("analytics");
+                    setCallCenterQuickFilter("2nd_attempt");
+                  }}
+                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                    currentTab === "analytics" && callCenterQuickFilter === "2nd_attempt"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  <span>🔁 2nd Attempt</span>
+                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    currentTab === "analytics" && callCenterQuickFilter === "2nd_attempt" ? "bg-amber-800 text-white" : "bg-amber-100 text-amber-800"
+                  }`}>
+                    {complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus)).length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentTab("analytics");
+                    setCallCenterQuickFilter("rejected");
+                  }}
+                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                    currentTab === "analytics" && callCenterQuickFilter === "rejected"
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  <span>❌ Rejected List</span>
+                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    currentTab === "analytics" && callCenterQuickFilter === "rejected" ? "bg-rose-800 text-white" : "bg-rose-100 text-rose-800"
+                  }`}>
+                    {complaints.filter(c => c.stationResponseStatus === "Rejected").length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentTab("analytics");
+                    setCallCenterQuickFilter("completed");
+                  }}
+                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                    currentTab === "analytics" && callCenterQuickFilter === "completed"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  <span>✅ Completed</span>
+                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    currentTab === "analytics" && callCenterQuickFilter === "completed" ? "bg-emerald-800 text-white" : "bg-emerald-100 text-emerald-800"
+                  }`}>
+                    {complaints.filter(c => !!c.callCenterFinalRemarks || c.status === "Resolved").length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentTab("analytics");
+                    setCallCenterQuickFilter("all");
+                  }}
+                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                    currentTab === "analytics" && callCenterQuickFilter === "all"
+                      ? "bg-slate-800 text-white shadow-xs"
+                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  <span>👥 All Station Contacted</span>
+                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    currentTab === "analytics" && callCenterQuickFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-800"
+                  }`}>
+                    {complaints.filter(c => isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks).length}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -3614,6 +3743,20 @@ NOTIFY pgrst, 'reload schema';
         />
       )}
 
+
+      {/* Call Center SLA & Aging Report Modal */}
+      {showSLAReportModal && (
+        <CallCenterSLAReportModal
+          isOpen={showSLAReportModal}
+          onClose={() => setShowSLAReportModal(false)}
+          complaints={complaints}
+          theme={theme}
+          onSelectComplaint={(id) => {
+            setSelectedComplaintId(id);
+            setCurrentTab("analytics");
+          }}
+        />
+      )}
 
       {/* Unified Footer: Signature & Theme Switcher */}
       <footer className="shrink-0 mt-8 mb-6 flex flex-col items-center gap-3 text-center border-t pt-6 border-slate-200/30 dark:border-slate-800/30">
