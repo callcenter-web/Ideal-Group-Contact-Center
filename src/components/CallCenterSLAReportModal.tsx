@@ -49,10 +49,10 @@ export default function CallCenterSLAReportModal({
 
   // Helper: check if station has contacted / actioned the customer
   const isStationContacted = (c: Complaint) => {
+    if (c.stationResponseStatus === "Rejected") return false;
     return !!(
-      c.stationContactedDate ||
-      c.stationResolutionNotes ||
-      (c.notes && c.notes.length > 0) ||
+      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
       c.status === "Contacted" ||
       c.stationResponseStatus === "Submitted to Call Center"
     );
@@ -88,12 +88,11 @@ export default function CallCenterSLAReportModal({
     return "11+";
   };
 
-  // Filter complaints that require Call Center Attention (Station Contacted, or Rejected, or Call Center pending)
+  // Filter complaints that require Call Center Attention (Station Contacted, not Rejected, Call Center pending)
   const callCenterPendingComplaints = complaints.filter((c) => {
     const stationActioned = isStationContacted(c);
     const isPendingCallCenter = !c.callCenterFinalRemarks && c.status !== "Resolved";
-    const isRejected = c.stationResponseStatus === "Rejected";
-    return (stationActioned && isPendingCallCenter) || isRejected;
+    return stationActioned && isPendingCallCenter && c.stationResponseStatus !== "Rejected";
   });
 
   // Calculate Overall SLA Metrics

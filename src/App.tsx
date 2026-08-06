@@ -1074,6 +1074,12 @@ export default function App() {
           stationResponseRejectedDate: today,
           stationResponseRejectedBy: currentUser?.name || currentUser?.title || "Call Center Officer",
           status: "Pending" as FollowUpStatus,
+          stationContactedDate: "", // Cleared so it is removed from Call Center queue and passed back to Service Station
+          callCenterContactedDate: "",
+          callCenterFinalRemarks: "",
+          firstAttemptCallStatus: undefined,
+          secondAttemptFeedbackStatus: undefined,
+          attemptCount: 0,
           updatedAt: today,
         };
       }
@@ -1097,7 +1103,7 @@ export default function App() {
         stationName: targetC?.station || "Service Station",
         complaintId: selectedComplaintId,
         customerName: targetC?.customerName || "Customer",
-        actionSummary: `❌ Response Rejected: "${rejectionReasonInput.trim()}"`,
+        actionSummary: `❌ Response Rejected & Passed Back to Station (Pending): "${rejectionReasonInput.trim()}"`,
         updatedBy: currentUser?.name || "Call Center Officer",
       },
       ...prev,
@@ -1222,10 +1228,10 @@ export default function App() {
 
   // Helper to determine if service station has contacted/actioned the customer
   const isStationContacted = (c: Complaint) => {
+    if (c.stationResponseStatus === "Rejected") return false;
     return !!(
-      c.stationContactedDate ||
-      c.stationResolutionNotes ||
-      (c.notes && c.notes.length > 0) ||
+      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
       c.status === "Contacted" ||
       c.stationResponseStatus === "Submitted to Call Center"
     );
