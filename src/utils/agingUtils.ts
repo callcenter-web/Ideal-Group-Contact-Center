@@ -144,7 +144,21 @@ export const getComplaintAgeInfo = (
   }
 
   const compDate = parseComplaintDate(c.date, c.receivedDateTime);
-  const diffTime = calculateNonSundayMs(compDate, referenceDate, c.station, calendarDates);
+
+  // Freeze time calculation if complaint is Resolved or Closed
+  const isResolved = c.status === "Resolved" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied";
+  let effectiveRefDate = referenceDate;
+  if (isResolved) {
+    const resDateStr = c.callCenterContactedDate || c.solutionDate || c.updatedAt || c.date;
+    let parsedResDate = parseComplaintDate(resDateStr);
+    if (isNaN(parsedResDate.getTime()) || parsedResDate.getTime() <= compDate.getTime()) {
+      // Default to 4 hours after creation date if resolution time was date-only
+      parsedResDate = new Date(compDate.getTime() + 4 * 60 * 60 * 1000);
+    }
+    effectiveRefDate = parsedResDate;
+  }
+
+  const diffTime = calculateNonSundayMs(compDate, effectiveRefDate, c.station, calendarDates);
 
   const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -159,6 +173,16 @@ export const getComplaintAgeInfo = (
   let bgColorClass = "";
   let deadlineStatus = "";
   let nextMilestoneText = "";
+
+  if (isResolved) {
+    category = days <= 3 ? "0-3 Days (New)" : days <= 5 ? "3-5 Days (Pending)" : days <= 10 ? "6-10 Days (Escalated)" : ">10 Days (Critical)";
+    badgeColorClass = "bg-emerald-100 text-emerald-900 border-emerald-400 font-extrabold";
+    textColorClass = "text-emerald-700";
+    bgColorClass = "bg-emerald-600";
+    deadlineStatus = "COMPLETED & RESOLVED (Floating Time Frozen)";
+    nextMilestoneText = `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`;
+    return { days, hours, minutes, seconds, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
+  }
 
   if (days <= 3) {
     category = "0-3 Days (New)";

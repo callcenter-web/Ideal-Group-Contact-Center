@@ -13,7 +13,10 @@ import {
   Search,
   RotateCcw,
   TrendingUp,
-  Activity
+  Activity,
+  ShieldAlert,
+  Building2,
+  Headphones
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
@@ -24,9 +27,10 @@ import { matchesStationCodeOrName } from "../utils/stationUtils";
 interface ReportsPanelProps {
   complaints: Complaint[];
   theme?: "light" | "dark";
+  onOpenSLAReportModal?: () => void;
 }
 
-export default function ReportsPanel({ complaints, theme = "light" }: ReportsPanelProps) {
+export default function ReportsPanel({ complaints, theme = "light", onOpenSLAReportModal }: ReportsPanelProps) {
   const isDark = theme === "dark";
   const cardBg = isDark ? "bg-slate-900/90 border-slate-800 text-slate-100 shadow-inner" : "bg-white border-slate-200 text-slate-800 shadow-sm";
   const textTitle = isDark ? "text-slate-100" : "text-slate-800";
@@ -430,21 +434,27 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
       // Metadata card
       pdf.setFillColor(248, 250, 252); // light slate bg
       pdf.setDrawColor(226, 232, 240);
-      pdf.rect(12, 37, 186, 22, "FD");
+      pdf.rect(12, 37, 186, 24, "FD");
 
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(8);
       pdf.setTextColor(100, 116, 139);
-      pdf.text("REPORT FILTER METADATA", 16, 42);
+      pdf.text("ACTIVE FILTER METADATA (CUSTOM PDF REPORT)", 16, 42);
 
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(8);
+      pdf.setFontSize(7.5);
       pdf.setTextColor(51, 65, 85);
-      pdf.text(`Station Filter:  ${stationFilter === "all" ? "All Service Stations" : stationFilter}`, 16, 47);
-      pdf.text(`Category Filter: ${categoryFilter === "all" ? "All Categories" : categoryFilter}`, 16, 52);
-      pdf.text(`Status Filter:   ${statusFilter === "all" ? "All Operational Statuses" : statusFilter}`, 90, 47);
-      pdf.text(`Date Range:     ${startDate || "Beginning of time"} to ${endDate || "Today"}`, 90, 52);
-      pdf.text(`Total Records:  ${totalInScope} complaints`, 150, 47);
+      pdf.text(`Station: ${stationFilter === "all" ? "All Stations" : stationFilter}`, 16, 47);
+      pdf.text(`Category: ${categoryFilter === "all" ? "All Categories" : categoryFilter}`, 16, 52);
+      pdf.text(`Status: ${statusFilter === "all" ? "All Statuses" : statusFilter}`, 16, 57);
+
+      pdf.text(`Feedback: ${feedbackStatusFilter === "all" ? "All Feedback" : feedbackStatusFilter}`, 85, 47);
+      pdf.text(`Date Range: ${startDate || "Start"} to ${endDate || "Today"}`, 85, 52);
+      pdf.text(`Search Keyword: ${searchQuery || "None"}`, 85, 57);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(30, 64, 175);
+      pdf.text(`Total Records: ${totalInScope} Filtered Complaints`, 145, 47);
 
       // 4 KPI Cards at Y=64
       const cardW = 44;
@@ -919,7 +929,7 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
         </div>
 
         {/* Global Download Actions */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={handleDownloadPDF}
@@ -940,6 +950,44 @@ export default function ReportsPanel({ complaints, theme = "light" }: ReportsPan
           </button>
         </div>
       </div>
+
+      {/* SLA & ANALYTICS REPORT CARD SECTION */}
+      {onOpenSLAReportModal && (
+        <div className={`p-5 rounded-2xl border shadow-sm transition-all duration-500 bg-gradient-to-r ${
+          isDark 
+            ? "from-slate-900 via-blue-950 to-slate-900 border-blue-900/50 text-slate-100" 
+            : "from-blue-50 via-indigo-50/50 to-white border-blue-200/80 text-slate-900"
+        }`}>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-3xl">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                  <ShieldAlert className="h-5 w-5 text-amber-300" />
+                </div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-blue-900">
+                  Service Station & Call Center SLA Analytics Dashboard
+                </h3>
+                <span className="bg-blue-600 text-white font-black text-[9px] uppercase px-2 py-0.5 rounded-full">
+                  Interactive Report
+                </span>
+              </div>
+              <p className="text-xs font-medium text-slate-600 leading-relaxed">
+                Generate dual-perspective analytics: <strong className="text-blue-800">Service Station View</strong> (stations, workflow statuses, feedback statuses, and monthly dates) and <strong className="text-blue-800">Call Center View</strong> (agents/officers, date SLAs, 24h targets, aging, and current statuses: Pending, Contacted, In Progress / Rejected, Resolved).
+              </p>
+            </div>
+
+            <button
+              id="btn-reports-sla-analytics-modal"
+              type="button"
+              onClick={onOpenSLAReportModal}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 border border-blue-500/30"
+            >
+              <ShieldAlert className="h-4 w-4 text-amber-300" />
+              <span>SLA & Analytics Reports</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Advanced Filter Control Panel (Interactive, hidden in PDF printout) */}
       <div className={`pdf-hide p-5 rounded-2xl border shadow-xs space-y-4 transition-all duration-500 ${

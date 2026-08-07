@@ -57,6 +57,11 @@ export interface Complaint {
   solutionDate?: string;
   followUpDate?: string;
 
+  // Call center officer and tracking fields
+  callCenterOfficer?: string;
+  callCenterContactedBy?: string;
+  updatedBy?: string;
+
   // Station Response Rejection & Verification tracking
   stationResponseStatus?: "Pending Station" | "Submitted to Call Center" | "Approved" | "Rejected" | string;
   stationResponseRejectionReason?: string;

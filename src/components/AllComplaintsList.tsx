@@ -16,7 +16,8 @@ import {
   ChevronRight,
   RotateCcw,
   Sparkles,
-  Trash2
+  Trash2,
+  Edit3
 } from "lucide-react";
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
@@ -27,6 +28,7 @@ interface AllComplaintsListProps {
   complaints: Complaint[];
   theme?: "light" | "dark";
   onSelectComplaintInWorkspace: (complaintId: string) => void;
+  onEditComplaint?: (complaint: Complaint) => void;
   onDeleteComplaint?: (complaintId: string) => void;
   onDeleteAllComplaints?: () => void;
   calendarDates?: WorkstationCalendarDate[];
@@ -36,6 +38,7 @@ export default function AllComplaintsList({
   complaints,
   theme = "light",
   onSelectComplaintInWorkspace,
+  onEditComplaint,
   onDeleteComplaint,
   onDeleteAllComplaints,
   calendarDates = [],
@@ -529,9 +532,20 @@ export default function AllComplaintsList({
                           <Clock className="h-2.5 w-2.5 mr-1 shrink-0" />
                           {ageInfo.category}
                         </span>
-                        <span className="text-[9px] font-mono text-slate-500 block mt-0.5 font-bold">
-                          {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m {String(ageInfo.seconds).padStart(2, "0")}s
-                        </span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[9px] font-mono text-slate-600 font-bold">
+                            {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m {String(ageInfo.seconds).padStart(2, "0")}s
+                          </span>
+                          {(c.status === "Resolved" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied") ? (
+                            <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-1.5 py-0.2 rounded uppercase">
+                              Frozen
+                            </span>
+                          ) : (
+                            <span className="text-[8px] bg-blue-50 text-blue-700 border border-blue-200 font-bold px-1.5 py-0.2 rounded uppercase">
+                              Live
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* 1st Attempt */}
@@ -610,6 +624,17 @@ export default function AllComplaintsList({
                       {/* Actions */}
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          {onEditComplaint && (
+                            <button
+                              type="button"
+                              onClick={() => onEditComplaint(c)}
+                              className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer border border-indigo-200"
+                              title="Admin Master Edit Details"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => setActiveModalComplaint(c)}
@@ -819,6 +844,20 @@ export default function AllComplaintsList({
             )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              {onEditComplaint && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const comp = activeModalComplaint;
+                    setActiveModalComplaint(null);
+                    onEditComplaint(comp);
+                  }}
+                  className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-lg cursor-pointer flex items-center gap-1.5"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  <span>Edit Details</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setActiveModalComplaint(null)}

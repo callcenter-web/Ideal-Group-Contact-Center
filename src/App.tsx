@@ -29,7 +29,8 @@ import {
   XCircle,
   Send,
   ShieldAlert,
-  BarChart2
+  BarChart2,
+  Edit3
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
@@ -45,6 +46,7 @@ import IdealMotorsLogo from "./components/IdealMotorsLogo";
 import UserProfileModal from "./components/UserProfileModal";
 import AllComplaintsList from "./components/AllComplaintsList";
 import CallCenterSLAReportModal from "./components/CallCenterSLAReportModal";
+import AdminEditComplaintModal from "./components/AdminEditComplaintModal";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
 import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
 import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
@@ -258,6 +260,16 @@ export default function App() {
   const [emailLogs, setEmailLogs] = useState<SystemicEmailLog[]>(() => getStoredSystemicEmailLogs());
   const [callCenterNotifications, setCallCenterNotifications] = useState<CallCenterNotification[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+
+  // Admin Master Complaint Edit Modal State
+  const [adminEditingComplaint, setAdminEditingComplaint] = useState<Complaint | null>(null);
+  const [showAdminEditModal, setShowAdminEditModal] = useState<boolean>(false);
+
+  const handleAdminSaveComplaint = (updated: Complaint) => {
+    const updatedList = complaints.map((c) => (c.id === updated.id ? updated : c));
+    saveComplaints(updatedList);
+    setAdminEditingComplaint(updated);
+  };
 
   const handleAddCalendarDate = (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
     const newEntry: WorkstationCalendarDate = {
@@ -981,10 +993,10 @@ export default function App() {
               calcSatisfaction = "Dissatisfied"; // Classify under Not Satisfied Customer Base
               calcFinalStatus = "Unreachable (Not Satisfied Base)";
               isConnectedNow = false;
-            } else if (["Not Satisfied", "No solution Received"].includes(formSecondAttemptFeedbackStatus)) {
+            } else if (["Not Satisfied", "No solution Received", "No Solution Received"].includes(formSecondAttemptFeedbackStatus) || ["No solution Received", "No Solution Received"].includes(formFeedbackStatus)) {
               calcStatus = "Pending";
               calcSatisfaction = "Dissatisfied";
-              calcFinalStatus = "Not Satisfied (Pending Station Action)";
+              calcFinalStatus = "Re-assigned to Station (No Solution Received)";
               isConnectedNow = true;
             } else if (formSecondAttemptFeedbackStatus === "Escalated") {
               calcStatus = "Pending";
@@ -999,6 +1011,8 @@ export default function App() {
             }
           }
 
+          const isNoSol = calcFinalStatus.includes("Re-assigned to Station");
+
           return {
             ...c,
             callCenterContactedDate: submitDate,
@@ -1008,6 +1022,11 @@ export default function App() {
             status: calcStatus,
             feedbackStatus: calcFeedbackStatus,
             finalStatus: calcFinalStatus,
+            stationResponseStatus: isNoSol ? "Rejected" : (c.stationResponseStatus || "Submitted to Call Center"),
+            stationResponseRejectionReason: isNoSol ? `Call Center Verification: Customer reported 'No solution received'. Re-assigned to Service Station for mandatory followup. Remarks: "${formCallCenterFinalRemarks || "No solution received"}"` : c.stationResponseRejectionReason,
+            stationResponseRejectedDate: isNoSol ? submitDate : c.stationResponseRejectedDate,
+            stationResponseRejectedBy: isNoSol ? (currentUser?.name || "Call Center Officer") : c.stationResponseRejectedBy,
+            stationContactedDate: isNoSol ? "" : (c.stationContactedDate || ""), // clear so it moves back into Service Station pending queue
             attemptCount: is1stAttempt ? 1 : 2,
             firstAttemptCallStatus: is1stAttempt ? formFirstAttemptCallStatus : (c.firstAttemptCallStatus || formFirstAttemptCallStatus),
             firstAttemptDate: is1stAttempt ? submitDate : (c.firstAttemptDate || submitDate),
@@ -1851,126 +1870,17 @@ NOTIFY pgrst, 'reload schema';
                 )}
               </div>
 
-              {/* Admin & Call Center Button for SLA & Aging Report */}
+              {/* Admin & Call Center Button for SLA & Analytics Reports */}
               <button
                 id="btn-call-center-sla-report"
                 type="button"
                 onClick={() => setShowSLAReportModal(true)}
-                className="mb-1 py-1.5 px-3 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white font-extrabold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap border border-blue-600/40"
-                title="View Call Center Pending Customer Contact Reports, SLA Compliance, and Aging Analysis"
+                className="mb-1 py-1.5 px-3.5 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white font-extrabold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap border border-blue-600/40"
+                title="View Service Station & Call Center Analytics Reports"
               >
                 <ShieldAlert className="h-3.5 w-3.5 text-amber-300" />
-                <span>Call Center Pending (SLA & Aging)</span>
+                <span>SLA & Analytics Reports</span>
               </button>
-            </div>
-
-            {/* Quick Sidebar Navigation / Queue Filters */}
-            <div className="flex flex-wrap items-center justify-between bg-slate-100/90 border border-slate-200/90 p-1.5 rounded-lg gap-2 shadow-2xs">
-              <div className="flex items-center gap-1.5 text-slate-700 font-extrabold text-[11px] px-2 shrink-0">
-                <Phone className="h-3.5 w-3.5 text-blue-600" />
-                <span>Call Center Quick Navigation:</span>
-              </div>
-              <div className="flex items-center gap-1 overflow-x-auto flex-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCurrentTab("analytics");
-                    setCallCenterQuickFilter("1st_attempt");
-                  }}
-                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    currentTab === "analytics" && callCenterQuickFilter === "1st_attempt"
-                      ? "bg-blue-600 text-white shadow-xs"
-                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-                  }`}
-                >
-                  <span>📞 1st Attempt</span>
-                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
-                    currentTab === "analytics" && callCenterQuickFilter === "1st_attempt" ? "bg-blue-800 text-white" : "bg-blue-100 text-blue-800"
-                  }`}>
-                    {complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCurrentTab("analytics");
-                    setCallCenterQuickFilter("2nd_attempt");
-                  }}
-                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    currentTab === "analytics" && callCenterQuickFilter === "2nd_attempt"
-                      ? "bg-amber-600 text-white shadow-xs"
-                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-                  }`}
-                >
-                  <span>🔁 2nd Attempt</span>
-                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
-                    currentTab === "analytics" && callCenterQuickFilter === "2nd_attempt" ? "bg-amber-800 text-white" : "bg-amber-100 text-amber-800"
-                  }`}>
-                    {complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus)).length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCurrentTab("analytics");
-                    setCallCenterQuickFilter("rejected");
-                  }}
-                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    currentTab === "analytics" && callCenterQuickFilter === "rejected"
-                      ? "bg-rose-600 text-white shadow-xs"
-                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-                  }`}
-                >
-                  <span>❌ Rejected List</span>
-                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
-                    currentTab === "analytics" && callCenterQuickFilter === "rejected" ? "bg-rose-800 text-white" : "bg-rose-100 text-rose-800"
-                  }`}>
-                    {complaints.filter(c => c.stationResponseStatus === "Rejected").length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCurrentTab("analytics");
-                    setCallCenterQuickFilter("completed");
-                  }}
-                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    currentTab === "analytics" && callCenterQuickFilter === "completed"
-                      ? "bg-emerald-600 text-white shadow-xs"
-                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-                  }`}
-                >
-                  <span>✅ Completed</span>
-                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
-                    currentTab === "analytics" && callCenterQuickFilter === "completed" ? "bg-emerald-800 text-white" : "bg-emerald-100 text-emerald-800"
-                  }`}>
-                    {complaints.filter(c => !!c.callCenterFinalRemarks || c.status === "Resolved").length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCurrentTab("analytics");
-                    setCallCenterQuickFilter("all");
-                  }}
-                  className={`py-1 px-2.5 text-[11px] font-extrabold rounded-md transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    currentTab === "analytics" && callCenterQuickFilter === "all"
-                      ? "bg-slate-800 text-white shadow-xs"
-                      : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-                  }`}
-                >
-                  <span>👥 All Station Contacted</span>
-                  <span className={`px-1.5 py-0.2 text-[9px] rounded-full font-black ${
-                    currentTab === "analytics" && callCenterQuickFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-800"
-                  }`}>
-                    {complaints.filter(c => isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks).length}
-                  </span>
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -1984,6 +1894,10 @@ NOTIFY pgrst, 'reload schema';
               setSelectedComplaintId(complaintId);
               setCurrentTab("analytics");
             }}
+            onEditComplaint={currentUser.role === "admin" ? (comp) => {
+              setAdminEditingComplaint(comp);
+              setShowAdminEditModal(true);
+            } : undefined}
             onDeleteComplaint={handleDeleteSingleComplaint}
             onDeleteAllComplaints={handleDeleteAllComplaints}
             calendarDates={calendarDates}
@@ -2019,7 +1933,11 @@ NOTIFY pgrst, 'reload schema';
 
         {/* REPORTS & AGING TAB */}
         {(currentUser.role === "admin" || currentUser.role === "callcenter") && currentTab === "reports" && (
-          <ReportsPanel complaints={complaints} theme={theme} />
+          <ReportsPanel 
+            complaints={complaints} 
+            theme={theme} 
+            onOpenSLAReportModal={() => setShowSLAReportModal(true)} 
+          />
         )}
 
         {/* CORE ANALYTICS BOARD / WORKSPACE VIEW */}
@@ -2409,7 +2327,22 @@ NOTIFY pgrst, 'reload schema';
                           {getSatisfactionBadge(selectedComplaint.currentSatisfaction)}
 
                           {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
-                            <div className="mt-2 text-right">
+                            <div className="mt-2 flex items-center justify-end gap-1.5 flex-wrap">
+                              {currentUser.role === "admin" && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAdminEditingComplaint(selectedComplaint);
+                                    setShowAdminEditModal(true);
+                                  }}
+                                  className="text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-[10px] font-extrabold px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0 shadow-2xs"
+                                  title="Admin Master Edit all uploaded details (Name, Phone, Dates, WO No, Vehicle, Category, Notes, etc.)"
+                                >
+                                  <Edit3 className="h-3 w-3 text-indigo-600" />
+                                  <span>Edit Details (Admin)</span>
+                                </button>
+                              )}
+
                               {deletingId !== selectedComplaint.id ? (
                                 <button
                                   type="button"
@@ -2451,12 +2384,34 @@ NOTIFY pgrst, 'reload schema';
                       {/* Live Ticking Time Counter Header */}
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
                         <div className="flex items-center gap-2">
-                          <div className="p-1.5 bg-blue-600 text-white rounded-lg shrink-0 shadow-2xs">
-                            <Clock className="h-4 w-4 animate-spin-slow" />
+                          <div className={`p-1.5 text-white rounded-lg shrink-0 shadow-2xs ${
+                            (selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied")
+                              ? "bg-emerald-600"
+                              : "bg-blue-600"
+                          }`}>
+                            <Clock className={`h-4 w-4 ${
+                              (selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied")
+                                ? ""
+                                : "animate-spin-slow"
+                            }`} />
                           </div>
                           <div>
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
-                              Complaint Time Elapsed (Live Tracker)
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block flex items-center gap-1.5">
+                              {(selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied") ? (
+                                <>
+                                  <span>Complaint Duration (Timer Frozen at Resolution)</span>
+                                  <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-1.5 py-0.2 rounded uppercase">
+                                    FROZEN
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>Complaint Time Elapsed (Live Floating Tracker)</span>
+                                  <span className="text-[8px] bg-blue-100 text-blue-800 border border-blue-300 font-bold px-1.5 py-0.2 rounded uppercase">
+                                    LIVE FLOATING
+                                  </span>
+                                </>
+                              )}
                             </span>
                             <span className="text-xs font-black text-blue-900 font-mono tracking-tight flex items-center gap-1">
                               <span>{selectedAge.days}d</span>
@@ -2465,7 +2420,9 @@ NOTIFY pgrst, 'reload schema';
                               <span className="text-slate-400">:</span>
                               <span>{String(selectedAge.minutes).padStart(2, "0")}m</span>
                               <span className="text-slate-400">:</span>
-                              <span className="text-blue-600 animate-pulse">{String(selectedAge.seconds).padStart(2, "0")}s</span>
+                              <span className={(selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied") ? "text-emerald-700" : "text-blue-600 animate-pulse"}>
+                                {String(selectedAge.seconds).padStart(2, "0")}s
+                              </span>
                             </span>
                           </div>
                         </div>
@@ -3761,6 +3718,16 @@ NOTIFY pgrst, 'reload schema';
             setSelectedComplaintId(id);
             setCurrentTab("analytics");
           }}
+        />
+      )}
+
+      {/* Admin Master Edit Complaint Modal */}
+      {currentUser.role === "admin" && adminEditingComplaint && showAdminEditModal && (
+        <AdminEditComplaintModal
+          complaint={adminEditingComplaint}
+          isOpen={showAdminEditModal}
+          onClose={() => setShowAdminEditModal(false)}
+          onSave={handleAdminSaveComplaint}
         />
       )}
 
