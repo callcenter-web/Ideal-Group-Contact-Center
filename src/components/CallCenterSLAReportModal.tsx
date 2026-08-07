@@ -86,15 +86,6 @@ export default function CallCenterSLAReportModal({
     )
   ).sort().reverse();
 
-  // Extract available distinct Call Center Officers / Agents from complaints dataset
-  const availableOfficers = Array.from(
-    new Set(
-      complaints
-        .map((c) => c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy)
-        .filter(Boolean)
-    )
-  ).sort();
-
   // Helper: check if station has contacted / actioned the customer
   const isStationContacted = (c: Complaint) => {
     if (c.stationResponseStatus === "Rejected") return false;
@@ -106,26 +97,42 @@ export default function CallCenterSLAReportModal({
     );
   };
 
-  // Helper: calculate Call Center age in days
+  // Extract available distinct Call Center Officers / Agents from complaints dataset (only for station-contacted complaints)
+  const availableOfficers = Array.from(
+    new Set(
+      complaints
+        .filter(isStationContacted)
+        .map((c) => c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy)
+        .filter(Boolean)
+    )
+  ).sort();
+
+  // Helper: calculate Call Center age / SLA difference in days (Difference between Call Center contact date or current date, and Service Station contact date)
   const getCallCenterAgeInDays = (c: Complaint) => {
-    const baseDateStr = c.stationContactedDate || c.date || todayStr;
-    const baseDate = new Date(baseDateStr);
-    const now = new Date(todayStr);
-    if (isNaN(baseDate.getTime())) return 0;
-    const diffTime = Math.max(0, now.getTime() - baseDate.getTime());
+    const stationDateStr = c.stationContactedDate || c.date || todayStr;
+    const ccDateStr = c.callCenterContactedDate || todayStr;
+
+    const stationDate = new Date(stationDateStr);
+    const ccDate = new Date(ccDateStr);
+
+    if (isNaN(stationDate.getTime()) || isNaN(ccDate.getTime())) return 0;
+    const diffTime = Math.max(0, ccDate.getTime() - stationDate.getTime());
     return Math.floor(diffTime / (1000 * 60 * 60 * 24));
   };
 
-  // Helper: SLA Status for Call Center (24 Hours SLA target after station response)
+  // Helper: SLA Status for Call Center (24 Hours SLA target based on difference between Call Center contact and Service Station response)
   const getCallCenterSLAStatus = (c: Complaint) => {
     const ageDays = getCallCenterAgeInDays(c);
     if (c.callCenterContactedDate) {
-      return { isBreached: false, label: "Contacted (On-Time)", color: "text-emerald-700 bg-emerald-50 border-emerald-200" };
+      if (ageDays <= 1) {
+        return { isBreached: false, label: "On-Time (<24h SLA)", color: "text-emerald-700 bg-emerald-50 border-emerald-200 font-bold" };
+      }
+      return { isBreached: true, label: `Delay (${ageDays}d diff)`, color: "text-amber-800 bg-amber-50 border-amber-300 font-bold" };
     }
     if (ageDays <= 1) {
-      return { isBreached: false, label: "On-Time (<24h SLA)", color: "text-emerald-700 bg-emerald-50 border-emerald-200" };
+      return { isBreached: false, label: "On-Time (<24h SLA)", color: "text-emerald-700 bg-emerald-50 border-emerald-200 font-bold" };
     }
-    return { isBreached: true, label: `SLA Breached (${ageDays}d pending)`, color: "text-rose-700 bg-rose-50 border-rose-300 font-extrabold" };
+    return { isBreached: true, label: `SLA Breached (${ageDays}d diff)`, color: "text-rose-700 bg-rose-50 border-rose-300 font-extrabold" };
   };
 
   // Helper: Aging Bucket
@@ -220,6 +227,10 @@ export default function CallCenterSLAReportModal({
   // B. CALL CENTER PERSPECTIVE CALCULATIONS
   // ==========================================
   const callCenterPerspectiveComplaints = dateFilteredComplaints.filter((c) => {
+    // Call Center queue ONLY includes customers contacted/actioned/submitted by Service Station
+    const isCcEligible = isStationContacted(c);
+    if (!isCcEligible) return false;
+
     // Service Station filter
     if (selectedStation !== "all") {
       const selected = STATIONS.find((s) => s.code === selectedStation);
@@ -298,7 +309,10 @@ export default function CallCenterSLAReportModal({
 
   // Officer Breakdown Table
   const officerStats = availableOfficers.map((officer) => {
-    const list = dateFilteredComplaints.filter((c) => (c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy) === officer);
+    const list = dateFilteredComplaints.filter((c) => {
+      const isCcEligible = isStationContacted(c);
+      return isCcEligible && (c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy) === officer;
+    });
     const total = list.length;
     const firstAttemptDone = list.filter((c) => !!c.firstAttemptCallStatus).length;
     const secondAttemptDone = list.filter((c) => !!c.secondAttemptFeedbackStatus).length;
@@ -1136,8 +1150,10 @@ export default function CallCenterSLAReportModal({
                       <tr>
                         <th className="py-2.5 px-3">WO No / Customer</th>
                         <th className="py-2.5 px-3">Service Station</th>
-                        <th className="py-2.5 px-3">Officer / Agent</th>
+                        <th className="py-2.5 px-3">Station Date</th>
                         <th className="py-2.5 px-3">CC Contact Date</th>
+                        <th className="py-2.5 px-3 text-center">Diff (Days)</th>
+                        <th className="py-2.5 px-3">Officer / Agent</th>
                         <th className="py-2.5 px-3">Attempt Status</th>
                         <th className="py-2.5 px-3 text-center">Feedback Status</th>
                         <th className="py-2.5 px-3 text-center">SLA Status</th>
@@ -1147,7 +1163,7 @@ export default function CallCenterSLAReportModal({
                     <tbody className="divide-y divide-slate-100">
                       {callCenterPerspectiveComplaints.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-slate-400 font-medium italic">
+                          <td colSpan={10} className="py-8 text-center text-slate-400 font-medium italic">
                             No call center customer records found matching your filters.
                           </td>
                         </tr>
@@ -1169,14 +1185,26 @@ export default function CallCenterSLAReportModal({
                                 </span>
                               </td>
 
-                              <td className="py-2.5 px-3">
-                                <span className="font-bold text-slate-800 text-[11px]">
-                                  {c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy || "Unassigned"}
-                                </span>
+                              <td className="py-2.5 px-3 text-slate-600 font-mono text-[11px]">
+                                {c.stationContactedDate || c.date || "N/A"}
                               </td>
 
                               <td className="py-2.5 px-3 text-slate-600 font-mono text-[11px]">
                                 {c.callCenterContactedDate || <span className="text-amber-600 font-semibold">Pending</span>}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center font-extrabold">
+                                <span className={`px-2 py-0.5 rounded text-[10px] ${
+                                  ageDays <= 1 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800 font-black"
+                                }`}>
+                                  {ageDays}d
+                                </span>
+                              </td>
+
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-slate-800 text-[11px]">
+                                  {c.callCenterOfficer || c.callCenterContactedBy || c.updatedBy || "Unassigned"}
+                                </span>
                               </td>
 
                               <td className="py-2.5 px-3">
