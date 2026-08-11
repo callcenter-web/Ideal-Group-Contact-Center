@@ -35,7 +35,7 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
-import { sanitizeComplaintForSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./utils/supabaseSanitizer";
+import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -415,8 +415,36 @@ export default function App() {
       }
 
       if (data) {
-        setComplaints(data);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(data));
+        const savedRaw = localStorage.getItem("ideal_group_complaints");
+        let savedList: Complaint[] = [];
+        if (savedRaw) {
+          try { savedList = JSON.parse(savedRaw); } catch (e) {}
+        }
+        const mergedData = data.map((sbRow: any) => {
+          const cached = savedList.find((c) => String(c.id) === String(sbRow.id));
+          const norm = normalizeComplaintFromSupabase(sbRow);
+          if (cached) {
+            return {
+              ...cached,
+              ...norm,
+              stationResponseStatus: (norm.stationResponseStatus && norm.stationResponseStatus.length > 0)
+                ? norm.stationResponseStatus
+                : (cached.stationResponseStatus || ""),
+              stationResponseRejectionReason: (norm.stationResponseRejectionReason && norm.stationResponseRejectionReason.length > 0)
+                ? norm.stationResponseRejectionReason
+                : (cached.stationResponseRejectionReason || ""),
+              stationResponseRejectedDate: (norm.stationResponseRejectedDate && norm.stationResponseRejectedDate.length > 0)
+                ? norm.stationResponseRejectedDate
+                : (cached.stationResponseRejectedDate || ""),
+              stationResponseRejectedBy: (norm.stationResponseRejectedBy && norm.stationResponseRejectedBy.length > 0)
+                ? norm.stationResponseRejectedBy
+                : (cached.stationResponseRejectedBy || ""),
+            };
+          }
+          return norm as Complaint;
+        });
+        setComplaints(mergedData);
+        localStorage.setItem("ideal_group_complaints", JSON.stringify(mergedData));
       }
       setSupabaseActive(true);
       setSupabaseError(null);
@@ -1099,8 +1127,13 @@ export default function App() {
           stationContactedDate: "", // Cleared so it is removed from Call Center queue and passed back to Service Station
           callCenterContactedDate: "",
           callCenterFinalRemarks: "",
-          firstAttemptCallStatus: undefined,
-          secondAttemptFeedbackStatus: undefined,
+          callCenterFinalSatisfaction: "" as SatisfactionLevel,
+          firstAttemptCallStatus: "",
+          firstAttemptDate: "",
+          firstAttemptNotes: "",
+          secondAttemptFeedbackStatus: "",
+          secondAttemptDate: "",
+          secondAttemptNotes: "",
           attemptCount: 0,
           updatedAt: today,
         };
@@ -1277,7 +1310,13 @@ export default function App() {
 
     // Status filter
     let matchesStatus = true;
-    if (statusFilter === "1st Attempt Required") {
+    if (currentUser.role === "agent") {
+      if (statusFilter === "Rejected") {
+        matchesStatus = c.stationResponseStatus === "Rejected";
+      } else {
+        matchesStatus = !isStationContacted(c);
+      }
+    } else if (statusFilter === "1st Attempt Required") {
       matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!c.firstAttemptCallStatus || c.attemptCount === 0);
     } else if (statusFilter === "2nd Attempt Required") {
       matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !c.callCenterFinalRemarks && c.status !== "Resolved" && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1) || !!c.secondAttemptFeedbackStatus);
@@ -2073,8 +2112,8 @@ NOTIFY pgrst, 'reload schema';
                         <button
                           type="button"
                           onClick={() => setStatusFilter("To Contact")}
-                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            (statusFilter === "To Contact" || statusFilter === "Pending")
+                          className={`flex-1 min-w-[140px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            (statusFilter === "To Contact" || statusFilter === "Pending" || statusFilter !== "Rejected")
                               ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
@@ -2084,35 +2123,13 @@ NOTIFY pgrst, 'reload schema';
                         <button
                           type="button"
                           onClick={() => setStatusFilter("Rejected")}
-                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[130px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             statusFilter === "Rejected"
                               ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
                           ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && c.stationResponseStatus === "Rejected").length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setStatusFilter("Station Contacted (Pending/In-Progress)")}
-                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            statusFilter === "Station Contacted (Pending/In-Progress)"
-                              ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          ✅ Submitted / Contacted ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isStationContacted(c)).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setStatusFilter("All")}
-                          className={`flex-1 min-w-[80px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            statusFilter === "All"
-                              ? "bg-white text-slate-800 shadow-xs border border-slate-300"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          📋 All ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station)).length})
                         </button>
                       </div>
                     )}
@@ -2130,11 +2147,9 @@ NOTIFY pgrst, 'reload schema';
                       <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
                     </div>
 
-                    {/* Filters Row */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      
-                      {/* Station filter: hidden if logged-in agent */}
-                      {currentUser.role === "admin" || currentUser.role === "callcenter" ? (
+                    {/* Filters Row (Call Center / Admin only; Service station shows lock station badge) */}
+                    {(currentUser.role === "admin" || currentUser.role === "callcenter") ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <div className="flex flex-col">
                           <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Service Station</label>
                           <select
@@ -2149,48 +2164,47 @@ NOTIFY pgrst, 'reload schema';
                             ))}
                           </select>
                         </div>
-                      ) : (
-                        <div className="flex flex-col justify-center bg-blue-50/50 border border-blue-100 px-2 py-1 rounded-md text-center">
-                          <span className="text-[9px] text-slate-500 block uppercase tracking-wider font-bold">Lock station:</span>
-                          <span className="text-xs text-blue-600 font-bold block">{currentUser.station} HQ</span>
+
+                        <div className="flex flex-col">
+                          <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Follow-up Status</label>
+                          <select
+                            id="filter-status"
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
+                          >
+                            <option value="All">All Statuses</option>
+                            <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
+                            <option value="Rejected">❌ Response Rejected by Call Center</option>
+                            <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
+                            <option value="Pending">Pending</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Contacted">Contacted</option>
+                            <option value="Resolved">Resolved</option>
+                          </select>
                         </div>
-                      )}
 
-                      <div className="flex flex-col">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Follow-up Status</label>
-                        <select
-                          id="filter-status"
-                          value={statusFilter}
-                          onChange={(e) => setStatusFilter(e.target.value)}
-                          className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
-                        >
-                          <option value="All">All Statuses</option>
-                          <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
-                          <option value="Rejected">❌ Response Rejected by Call Center</option>
-                          <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
-                          <option value="Pending">Pending</option>
-                          <option value="In Progress">In Progress</option>
-                          <option value="Contacted">Contacted</option>
-                          <option value="Resolved">Resolved</option>
-                        </select>
+                        <div className="flex flex-col">
+                          <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Complaint Category</label>
+                          <select
+                            id="filter-category"
+                            value={categoryFilter}
+                            onChange={(e) => setCategoryFilter(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
+                          >
+                            <option value="All">All Categories</option>
+                            {categories.map((cat) => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-
-                      <div className="flex flex-col">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Complaint Category</label>
-                        <select
-                          id="filter-category"
-                          value={categoryFilter}
-                          onChange={(e) => setCategoryFilter(e.target.value)}
-                          className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
-                        >
-                          <option value="All">All Categories</option>
-                          {categories.map((cat) => (
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                        </select>
+                    ) : (
+                      <div className="flex items-center justify-between text-xs text-slate-600 bg-blue-50/60 border border-blue-100 px-3 py-1.5 rounded-md font-medium">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Lock Station: <strong className="text-blue-700">{currentUser.station} HQ</strong></span>
+                        <span className="text-[11px] text-blue-700 font-semibold">Showing Pending Action Queue Only</span>
                       </div>
-
-                    </div>
+                    )}
                   </div>
                 </div>
 

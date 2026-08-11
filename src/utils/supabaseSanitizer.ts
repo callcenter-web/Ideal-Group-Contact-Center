@@ -79,6 +79,18 @@ export function sanitizeComplaintForSupabase(item: any): Record<string, any> {
     }
   }
 
+  // Ensure reset fields are explicitly passed as empty strings if undefined so Supabase clears them in DB
+  const resettableFields = [
+    "firstAttemptCallStatus", "firstAttemptDate", "firstAttemptNotes",
+    "secondAttemptFeedbackStatus", "secondAttemptDate", "secondAttemptNotes",
+    "callCenterContactedDate", "callCenterFinalRemarks", "callCenterFinalSatisfaction"
+  ];
+  for (const field of resettableFields) {
+    if (clean[field] === undefined) {
+      clean[field] = "";
+    }
+  }
+
   // Ensure both woNo and wo_no are populated if either exists
   const woVal = item.woNo !== undefined ? item.woNo : item.wo_no;
   if (woVal !== undefined) {
@@ -103,7 +115,11 @@ export function normalizeComplaintFromSupabase(item: any): Record<string, any> {
   return {
     ...item,
     woNo: item.woNo || item.wo_no || "",
-    assignedOfficerId: item.assignedOfficerId || item.assigned_officer_id || undefined
+    assignedOfficerId: item.assignedOfficerId || item.assigned_officer_id || undefined,
+    stationResponseStatus: item.stationResponseStatus || "",
+    stationResponseRejectionReason: item.stationResponseRejectionReason || "",
+    stationResponseRejectedDate: item.stationResponseRejectedDate || "",
+    stationResponseRejectedBy: item.stationResponseRejectedBy || ""
   };
 }
 
