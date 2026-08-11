@@ -195,7 +195,7 @@ export default function CallCenterSLAReportModal({
   });
 
   const totalStationCount = stationPerspectiveComplaints.length;
-  const pendingStationActionCount = stationPerspectiveComplaints.filter((c) => !isStationContacted(c) || c.status === "Pending").length;
+  const pendingStationActionCount = stationPerspectiveComplaints.filter((c) => !isStationContacted(c)).length;
   const contactedStationCount = stationPerspectiveComplaints.filter((c) => isStationContacted(c)).length;
   const resolvedStationCount = stationPerspectiveComplaints.filter((c) => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
   const reassignedStationCount = stationPerspectiveComplaints.filter((c) => c.stationResponseStatus === "Rejected" || c.finalStatus?.includes("Re-assigned")).length;
@@ -206,7 +206,7 @@ export default function CallCenterSLAReportModal({
   const stationBreakdownStats = STATIONS.map((st) => {
     const list = dateFilteredComplaints.filter((c) => matchesStationCodeOrName(c.station, st.code));
     const total = list.length;
-    const pending = list.filter((c) => !isStationContacted(c) || c.status === "Pending").length;
+    const pending = list.filter((c) => !isStationContacted(c)).length;
     const contacted = list.filter((c) => isStationContacted(c)).length;
     const resolved = list.filter((c) => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
     const reassigned = list.filter((c) => c.stationResponseStatus === "Rejected" || c.finalStatus?.includes("Re-assigned")).length;

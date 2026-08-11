@@ -73,6 +73,17 @@ export default function AllComplaintsList({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
 
+  // Helper: check if station has contacted/actioned customer
+  const isStationContacted = (c: Complaint) => {
+    if (c.stationResponseStatus === "Rejected") return false;
+    return !!(
+      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+      c.status === "Contacted" ||
+      c.stationResponseStatus === "Submitted to Call Center"
+    );
+  };
+
   // Filter logic
   const filteredComplaints = useMemo(() => {
     return complaints.filter((c) => {
@@ -96,10 +107,10 @@ export default function AllComplaintsList({
       let matchesStatus = true;
       if (statusFilter === "rejected") {
         matchesStatus = c.stationResponseStatus === "Rejected";
-      } else if (statusFilter === "to_contact") {
-        matchesStatus = c.status === "Pending" || c.stationResponseStatus === "Rejected" || !c.stationContactedDate;
+      } else if (statusFilter === "to_contact" || statusFilter === "pending") {
+        matchesStatus = !isStationContacted(c);
       } else if (statusFilter === "station_contacted") {
-        matchesStatus = !!(c.stationContactedDate || c.stationResolutionNotes || c.notes || c.status === "Contacted") && c.status !== "Resolved";
+        matchesStatus = isStationContacted(c) && c.status !== "Resolved";
       } else {
         matchesStatus = statusFilter === "all" || c.status === statusFilter;
       }

@@ -564,15 +564,18 @@ export default function App() {
     };
     setCurrentUser(userObj);
     localStorage.setItem("ideal_group_current_user", JSON.stringify(userObj));
-    // If agent, default station filter to their station
-    if (role === "agent" && stationCode) {
-      setStationFilter(stationCode);
+    // If agent, default station filter to their station and status filter to Pending Action ("To Contact")
+    if (role === "agent") {
+      if (stationCode) setStationFilter(stationCode);
+      setStatusFilter("To Contact");
+      setCurrentTab("analytics");
     } else {
       setStationFilter("All");
+      setStatusFilter("All");
     }
-    // Default call center view to "Awaiting" and switch tab to Recovery Workspace
+    // Default call center view to "1st_attempt" and switch tab to Recovery Workspace
     if (role === "callcenter") {
-      setCallCenterQuickFilter("awaiting");
+      setCallCenterQuickFilter("1st_attempt");
       setCurrentTab("analytics");
     }
     setSelectedComplaintId(null);
@@ -1282,8 +1285,8 @@ export default function App() {
       matchesStatus = c.stationResponseStatus === "Rejected";
     } else if (statusFilter === "Station Contacted (Pending/In-Progress)") {
       matchesStatus = isStationContacted(c) && c.status !== "Resolved";
-    } else if (statusFilter === "Pending") {
-      matchesStatus = c.status === "Pending" && !isStationContacted(c);
+    } else if (statusFilter === "Pending" || statusFilter === "To Contact") {
+      matchesStatus = !isStationContacted(c);
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
     }
@@ -2060,6 +2063,56 @@ NOTIFY pgrst, 'reload schema';
                           }`}
                         >
                           All Station Contacted ({complaints.filter(c => isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks).length})
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Service Station Filter Tabs (Only showing pending / actionable customers for station) */}
+                    {currentUser.role === "agent" && (
+                      <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter("To Contact")}
+                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            (statusFilter === "To Contact" || statusFilter === "Pending")
+                              ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          ⏳ Pending Station Contact ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && !isStationContacted(c)).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter("Rejected")}
+                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            statusFilter === "Rejected"
+                              ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && c.stationResponseStatus === "Rejected").length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter("Station Contacted (Pending/In-Progress)")}
+                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            statusFilter === "Station Contacted (Pending/In-Progress)"
+                              ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          ✅ Submitted / Contacted ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isStationContacted(c)).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter("All")}
+                          className={`flex-1 min-w-[80px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            statusFilter === "All"
+                              ? "bg-white text-slate-800 shadow-xs border border-slate-300"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          📋 All ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station)).length})
                         </button>
                       </div>
                     )}
