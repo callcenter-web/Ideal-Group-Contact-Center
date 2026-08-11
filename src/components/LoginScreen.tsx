@@ -329,9 +329,6 @@ export default function LoginScreen({ onLoginSuccess, theme = "light", toggleThe
       </div>
       
       <footer className="mt-8 flex flex-col items-center gap-3 text-center">
-        <p className={`text-[10px] font-mono uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"}`}>
-          Solution by Yash (All Rights Reserved) • Call Center Team: Usha, Irshana, Yathish, Pawani, Shevon
-        </p>
         <button
           type="button"
           onClick={toggleTheme}

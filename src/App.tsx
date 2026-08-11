@@ -3328,9 +3328,6 @@ NOTIFY pgrst, 'reload schema';
       <footer className={`w-full max-w-7xl mx-auto px-4 py-4 mt-auto border-t flex flex-col sm:flex-row items-center justify-between gap-3 text-center transition-all duration-500 ${
         isDark ? "border-slate-800 text-slate-400" : "border-slate-200 text-slate-500"
       }`}>
-        <p className="text-[10px] font-mono uppercase tracking-widest">
-          Solution by Yash (All Rights Reserved) • Passwords Protected
-        </p>
         <div className="flex items-center gap-3">
           <span className="text-[9px] uppercase tracking-wider font-bold">Theme Mode:</span>
           <button
@@ -3800,9 +3797,6 @@ NOTIFY pgrst, 'reload schema';
 
       {/* Unified Footer: Signature & Theme Switcher */}
       <footer className="shrink-0 mt-8 mb-6 flex flex-col items-center gap-3 text-center border-t pt-6 border-slate-200/30 dark:border-slate-800/30">
-        <p className={`text-[10px] font-mono uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"}`}>
-          Solution by Yash (All Rights Reserved) • Passwords Protected
-        </p>
         <button
           type="button"
           onClick={toggleTheme}
