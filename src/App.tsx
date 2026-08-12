@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Car, 
   Users, 
@@ -307,6 +307,59 @@ export default function App() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"analytics" | "list" | "stations" | "upload" | "reports">("analytics");
+
+  // Track complaints updated during background sync for subtle highlight/pulse animation
+  const [recentlyUpdatedStatusIds, setRecentlyUpdatedStatusIds] = useState<Set<string>>(new Set());
+  const prevComplaintStatusesRef = useRef<Map<string, { status: string; stationResponseStatus?: string }>>(new Map());
+
+  useEffect(() => {
+    if (!complaints || complaints.length === 0) return;
+
+    const prevMap = prevComplaintStatusesRef.current;
+    const changedIds: string[] = [];
+
+    if (prevMap.size === 0) {
+      // First load: store initial status values without animation
+      complaints.forEach((c) => {
+        prevMap.set(c.id, {
+          status: c.status,
+          stationResponseStatus: c.stationResponseStatus,
+        });
+      });
+      return;
+    }
+
+    complaints.forEach((c) => {
+      const prev = prevMap.get(c.id);
+      if (prev) {
+        if (prev.status !== c.status || prev.stationResponseStatus !== c.stationResponseStatus) {
+          changedIds.push(c.id);
+        }
+      }
+      prevMap.set(c.id, {
+        status: c.status,
+        stationResponseStatus: c.stationResponseStatus,
+      });
+    });
+
+    if (changedIds.length > 0) {
+      setRecentlyUpdatedStatusIds((prev) => {
+        const next = new Set(prev);
+        changedIds.forEach((id) => next.add(id));
+        return next;
+      });
+
+      const timer = setTimeout(() => {
+        setRecentlyUpdatedStatusIds((prev) => {
+          const next = new Set(prev);
+          changedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }, 4000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [complaints]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -1932,6 +1985,7 @@ NOTIFY pgrst, 'reload schema';
           <AllComplaintsList
             complaints={complaints}
             theme={theme}
+            recentlyUpdatedStatusIds={recentlyUpdatedStatusIds}
             onSelectComplaintInWorkspace={(complaintId) => {
               setSelectedComplaintId(complaintId);
               setCurrentTab("analytics");
@@ -2271,18 +2325,27 @@ NOTIFY pgrst, 'reload schema';
                     filteredComplaints.map((item) => {
                       const isSelected = selectedComplaintId === item.id;
                       const itemAge = getComplaintAgeInfo(item, tickerDate, calendarDates);
+                      const isUpdatedRecently = recentlyUpdatedStatusIds.has(item.id);
 
                       return (
                         <div
                           id={`complaint-card-${item.id}`}
                           key={item.id}
                           onClick={() => setSelectedComplaintId(item.id)}
-                          className={`p-3.5 rounded-lg border transition-all cursor-pointer select-none text-left ${
-                            isSelected 
-                              ? "border-blue-500 bg-blue-50/25 shadow-sm ring-1 ring-blue-500/10" 
-                              : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50"
+                          className={`p-3.5 rounded-lg border transition-all duration-500 cursor-pointer select-none text-left relative overflow-hidden ${
+                            isUpdatedRecently
+                              ? "border-amber-400 bg-amber-50/90 dark:bg-amber-950/40 shadow-md ring-2 ring-amber-400/80 animate-pulse"
+                              : isSelected 
+                                ? "border-blue-500 bg-blue-50/25 shadow-sm ring-1 ring-blue-500/10" 
+                                : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50"
                           }`}
                         >
+                          {isUpdatedRecently && (
+                            <div className="absolute top-0 right-0 bg-gradient-to-r from-amber-500 to-amber-600 text-white text-[9px] font-black px-2 py-0.5 rounded-bl shadow-xs flex items-center gap-1 uppercase tracking-wider animate-bounce z-10">
+                              <Sparkles className="h-2.5 w-2.5" />
+                              Status Updated
+                            </div>
+                          )}
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <span className="text-[10px] font-mono font-bold text-slate-400 block flex flex-wrap items-center gap-1">

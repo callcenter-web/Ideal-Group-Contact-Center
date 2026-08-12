@@ -27,6 +27,7 @@ import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "../utils/agingUtils
 interface AllComplaintsListProps {
   complaints: Complaint[];
   theme?: "light" | "dark";
+  recentlyUpdatedStatusIds?: Set<string>;
   onSelectComplaintInWorkspace: (complaintId: string) => void;
   onEditComplaint?: (complaint: Complaint) => void;
   onDeleteComplaint?: (complaintId: string) => void;
@@ -37,6 +38,7 @@ interface AllComplaintsListProps {
 export default function AllComplaintsList({
   complaints,
   theme = "light",
+  recentlyUpdatedStatusIds,
   onSelectComplaintInWorkspace,
   onEditComplaint,
   onDeleteComplaint,
@@ -484,17 +486,27 @@ export default function AllComplaintsList({
                     c.firstAttemptCallStatus === "Customer Unreachable" ||
                     c.secondAttemptFeedbackStatus === "Customer Unreachable";
                   const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+                  const isUpdatedRecently = recentlyUpdatedStatusIds?.has(c.id);
 
                   return (
                     <tr 
                       key={c.id} 
-                      className={`hover:bg-blue-50/40 transition-colors ${
-                        idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
-                      }`}
+                      className={`transition-colors duration-500 ${
+                        isUpdatedRecently
+                          ? "bg-amber-100/90 dark:bg-amber-900/40 border-l-4 border-l-amber-500 animate-pulse font-semibold"
+                          : idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
+                      } hover:bg-blue-50/40`}
                     >
                       {/* WO & Reg No */}
                       <td className="py-2.5 px-3">
-                        <div className="font-bold text-slate-900">{c.woNo || c.id}</div>
+                        <div className="flex items-center gap-1 font-bold text-slate-900">
+                          <span>{c.woNo || c.id}</span>
+                          {isUpdatedRecently && (
+                            <span className="text-[9px] bg-amber-500 text-white font-extrabold px-1.5 py-0.5 rounded shadow-xs uppercase tracking-wider animate-bounce">
+                              ✨ Status Updated
+                            </span>
+                          )}
+                        </div>
                         {c.vehicleRegNo && (
                           <div className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 inline-block mt-0.5">
                             {c.vehicleRegNo}
