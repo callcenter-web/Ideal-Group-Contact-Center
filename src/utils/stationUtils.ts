@@ -1,4 +1,5 @@
 import { STATIONS } from "../demoData";
+import { Complaint } from "../types";
 
 /**
  * Robustly checks if a complaint's station matches a station code or name filter.
@@ -27,4 +28,19 @@ export function matchesStationCodeOrName(complaintStation: string | undefined | 
   }
 
   return false;
+}
+
+/**
+ * Helper to check if a complaint has been contacted/actioned by the Service Station/Center.
+ * Returns true ONLY IF Contacted by Service Center = YES.
+ */
+export function isStationContacted(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  if (c.stationResponseStatus === "Rejected") return false;
+  return !!(
+    (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+    (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+    c.status === "Contacted" ||
+    c.stationResponseStatus === "Submitted to Call Center"
+  );
 }

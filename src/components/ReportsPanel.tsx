@@ -24,7 +24,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { matchesStationCodeOrName, isStationContacted } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 
 interface ReportsPanelProps {
@@ -164,15 +164,24 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
            matchesSearch;
   });
 
-  // Calculate high-level stats for the active filtered scope
-  const totalInScope = filteredComplaints.length;
+  // Calculate high-level stats for the active filtered scope (scopes to selected table station)
+  const activeStation = STATIONS.find(s => s.code === selectedStationCode);
+  const activeScopeTitle = selectedStationCode === "all"
+    ? "All Service Stations"
+    : (activeStation ? `${activeStation.name} (${activeStation.code})` : selectedStationCode);
+
+  const activeScopeComplaints = selectedStationCode === "all"
+    ? filteredComplaints
+    : filteredComplaints.filter(c => matchesStationCodeOrName(c.station, selectedStationCode));
+
+  const totalInScope = activeScopeComplaints.length;
   
   let greenCount = 0; // 0-3 Days (New)
   let yellowCount = 0; // 3-5 Days (Pending)
   let orangeCount = 0; // 6-10 Days (Escalated)
   let redCount = 0; // >10 Days (Critical)
 
-  filteredComplaints.forEach((c) => {
+  activeScopeComplaints.forEach((c) => {
     const { days } = getComplaintAging(c);
     if (days <= 3) greenCount++;
     else if (days <= 5) yellowCount++;
@@ -194,11 +203,13 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       stSum += getDaysDiff(c.date, stContactDate || todayStr);
       stCount++;
 
-      // 2) Avg Days to Contact Customer (Call Center) - calculated after service station contacted customer
-      const startAfterStation = c.stationContactedDate || c.date;
-      const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
-      ccSum += getDaysDiff(startAfterStation, ccContactDate);
-      ccCount++;
+      // 2) Avg Days to Contact Customer (Call Center) - calculated ONLY if contacted by Service Center
+      if (isStationContacted(c)) {
+        const startAfterStation = c.stationContactedDate || c.date;
+        const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
+        ccSum += getDaysDiff(startAfterStation, ccContactDate);
+        ccCount++;
+      }
 
       // 3) Avg Days to Solve Case
       const isResolved = 
@@ -441,7 +452,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   ];
 
   const feedbackStatusCounts = feedbackStatusLevels.reduce((acc, level) => {
-    acc[level] = filteredComplaints.filter(c => {
+    acc[level] = activeScopeComplaints.filter(c => {
       const status = c.feedbackStatus;
       if (level === "Satisfied After Resolution") {
         return status === "Satisfied After Resolution" || status === "Satisfied";
@@ -466,7 +477,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   // Status Breakdown
   const statusLevels = ["Pending", "In Progress", "Contacted", "Resolved"];
   const statusCounts = statusLevels.reduce((acc, level) => {
-    acc[level] = filteredComplaints.filter(c => c.status === level).length;
+    acc[level] = activeScopeComplaints.filter(c => c.status === level).length;
     return acc;
   }, {} as Record<string, number>);
 
@@ -1419,7 +1430,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                       <th className="py-2.5 px-2 text-center text-amber-600">3-5d</th>
                       <th className="py-2.5 px-2 text-center text-orange-600">6-10d</th>
                       <th className="py-2.5 px-2 text-center text-rose-600">&gt;10d</th>
-                      <th className="py-2.5 px-2 text-center">Res Rate</th>
+                      <th className="py-2.5 px-2 text-center">Resolution %</th>
                       <th className="py-2.5 px-2 text-center text-blue-600">Avg Days to Contact Customer (Service Station)</th>
                       <th className="py-2.5 px-2 text-center text-amber-600">Avg Days to Contact Customer (Call Center)</th>
                       <th className="py-2.5 px-2 text-center text-emerald-600">Average Days to Solve Case</th>
@@ -1489,8 +1500,19 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                     })}
                   </tbody>
                   <tfoot>
-                    <tr className={`font-black text-xs border-t-2 ${isDark ? "bg-slate-950 border-slate-700 text-slate-100" : "bg-slate-900 border-slate-800 text-white"}`}>
-                      <td className="py-3 px-3 uppercase tracking-wider">Overall Summary / Total</td>
+                    <tr 
+                      onClick={() => setSelectedStationCode("all")}
+                      className={`font-black text-xs border-t-2 cursor-pointer transition-all ${
+                        selectedStationCode === "all"
+                          ? isDark ? "bg-blue-950 border-blue-600 text-blue-200" : "bg-blue-900 border-blue-500 text-white"
+                          : isDark ? "bg-slate-950 border-slate-700 text-slate-100 hover:bg-slate-900" : "bg-slate-900 border-slate-800 text-white hover:bg-slate-800"
+                      }`}
+                      title="Click to view overall stats across all stations"
+                    >
+                      <td className="py-3 px-3 uppercase tracking-wider flex items-center gap-1">
+                        <span>Overall Summary / Total</span>
+                        {selectedStationCode === "all" && <span className="text-[9px] text-blue-400 font-bold">(Selected)</span>}
+                      </td>
                       <td className="py-3 px-2 text-center">{filteredComplaints.length}</td>
                       <td className="py-3 px-2 text-center text-emerald-400">{filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length}</td>
                       <td className="py-3 px-2 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.pending, 0)}</td>
@@ -1724,9 +1746,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               : "bg-emerald-50 border-emerald-200 text-emerald-900 shadow-xs"
           }`}>
             <div>
-              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-emerald-400/80" : "text-emerald-800"}`}>
-                New (0-3 Days)
-              </span>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-emerald-400/80" : "text-emerald-800"}`}>
+                  New (0-3 Days)
+                </span>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                  isDark ? "text-emerald-300 bg-emerald-950/80 border-emerald-800" : "text-emerald-800 bg-emerald-100 border-emerald-300"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-emerald-400" : "text-emerald-900"}`}>{greenCount}</p>
               <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Immediate initial response speed</p>
             </div>
@@ -1744,9 +1773,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               : "bg-amber-50 border-amber-200 text-amber-900 shadow-xs"
           }`}>
             <div>
-              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-800"}`}>
-                Pending (3-5 Days)
-              </span>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-800"}`}>
+                  Pending (3-5 Days)
+                </span>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                  isDark ? "text-amber-300 bg-amber-950/80 border-amber-800" : "text-amber-800 bg-amber-100 border-amber-300"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-amber-400" : "text-amber-900"}`}>{yellowCount}</p>
               <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Active customer interactions</p>
             </div>
@@ -1764,9 +1800,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               : "bg-orange-50 border-orange-200 text-orange-900 shadow-xs"
           }`}>
             <div>
-              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-orange-400/80" : "text-orange-850"}`}>
-                Escalated (6-10 Days)
-              </span>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-orange-400/80" : "text-orange-850"}`}>
+                  Escalated (6-10 Days)
+                </span>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                  isDark ? "text-orange-300 bg-orange-950/80 border-orange-800" : "text-orange-800 bg-orange-100 border-orange-300"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-orange-400" : "text-orange-900"}`}>{orangeCount}</p>
               <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-orange-500" : "text-orange-700"}`}>Forwarded for management view</p>
             </div>
@@ -1784,9 +1827,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               : "bg-rose-50 border-rose-200 text-rose-900 shadow-xs"
           }`}>
             <div>
-              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-rose-400/80" : "text-rose-800"}`}>
-                {"Critical (>10 Days)"}
-              </span>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-rose-400/80" : "text-rose-800"}`}>
+                  {"Critical (>10 Days)"}
+                </span>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                  isDark ? "text-rose-300 bg-rose-950/80 border-rose-800" : "text-rose-800 bg-rose-100 border-rose-300"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-rose-400" : "text-rose-900"}`}>{redCount}</p>
               <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>High-priority aging tickets</p>
             </div>
@@ -1804,9 +1854,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
           {/* Chart 1: Aging SLA Distribution (Horizontal Progress Bars) */}
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                Aging SLA Proportions
-              </h4>
+              <div className={`flex items-center justify-between mb-3.5 border-b pb-1.5 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
+                  Aging SLA Proportions
+                </h4>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[120px] ${
+                  isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-700 bg-blue-50 border-blue-200"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <div className="space-y-3.5">
                 {/* 0-3 Days (New) */}
                 <div>
@@ -1866,16 +1923,23 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               </div>
             </div>
             <p className={`text-[9px] font-bold mt-4 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
-              SLA levels represent date-to-date aging analysis thresholds.
+              SLA levels represent date-to-date aging analysis thresholds for {activeScopeTitle}.
             </p>
           </div>
 
           {/* Chart 2: Call Center Feedback Status Breakdown */}
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                Call Center Feedback Status
-              </h4>
+              <div className={`flex items-center justify-between mb-3.5 border-b pb-1.5 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
+                  Call Center Feedback Status
+                </h4>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[120px] ${
+                  isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-700 bg-blue-50 border-blue-200"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <div className="space-y-2">
                 {feedbackStatusLevels.map((level) => {
                   const count = feedbackStatusCounts[level] || 0;
@@ -1908,16 +1972,23 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               </div>
             </div>
             <p className={`text-[9px] font-bold mt-3 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
-              Evaluates current call center response status classifications.
+              Evaluates current call center response status classifications for {activeScopeTitle}.
             </p>
           </div>
 
           {/* Chart 3: Operational Status Distribution */}
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <h4 className={`text-[11px] font-black uppercase tracking-wider mb-3.5 border-b pb-1.5 ${textTitle} ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                Current Status
-              </h4>
+              <div className={`flex items-center justify-between mb-3.5 border-b pb-1.5 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
+                  Current Status
+                </h4>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[120px] ${
+                  isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-700 bg-blue-50 border-blue-200"
+                }`} title={activeScopeTitle}>
+                  {activeScopeTitle}
+                </span>
+              </div>
               <div className="space-y-3">
                 {statusLevels.map((level) => {
                   const count = statusCounts[level] || 0;

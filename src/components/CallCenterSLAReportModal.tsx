@@ -31,6 +31,7 @@ import html2canvas from "html2canvas";
 import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { parseComplaintDate } from "../utils/agingUtils";
 
 interface CallCenterSLAReportModalProps {
   isOpen: boolean;
@@ -130,6 +131,9 @@ export default function CallCenterSLAReportModal({
 
   // Helper: SLA Status for Call Center (24 Hours SLA target)
   const getCallCenterSLAStatus = (c: Complaint) => {
+    if (!isStationContacted(c)) {
+      return { isBreached: false, label: "Excluded (Not Station Contacted)", color: "text-slate-500 bg-slate-50 border-slate-200" };
+    }
     const ageDays = getCallCenterAgeInDays(c);
     if (c.callCenterContactedDate) {
       if (ageDays <= 1) {
@@ -302,11 +306,13 @@ export default function CallCenterSLAReportModal({
       stSum += getDaysDiffHelper(c.date, stContactDate || todayStr);
       stCount++;
 
-      // 2) Avg Days to Contact Customer (Call Center) - calculated after service station contacted customer
-      const startAfterStation = c.stationContactedDate || c.date;
-      const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
-      ccSum += getDaysDiffHelper(startAfterStation, ccContactDate);
-      ccCount++;
+      // 2) Avg Days to Contact Customer (Call Center) - calculated ONLY if contacted by Service Center
+      if (isStationContacted(c)) {
+        const startAfterStation = c.stationContactedDate || c.date;
+        const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
+        ccSum += getDaysDiffHelper(startAfterStation, ccContactDate);
+        ccCount++;
+      }
 
       // 3) Avg Days to Solve Case
       const isResolved = 
@@ -911,7 +917,7 @@ export default function CallCenterSLAReportModal({
                         <th className="py-2.5 px-2 text-center text-amber-700">3-5d</th>
                         <th className="py-2.5 px-2 text-center text-orange-700">6-10d</th>
                         <th className="py-2.5 px-2 text-center text-rose-700">&gt;10d</th>
-                        <th className="py-2.5 px-2 text-center">Res Rate</th>
+                        <th className="py-2.5 px-2 text-center">Resolution %</th>
                         <th className="py-2.5 px-2 text-center text-blue-700">Avg Days to Contact Customer (Service Station)</th>
                         <th className="py-2.5 px-2 text-center text-amber-700">Avg Days to Contact Customer (Call Center)</th>
                         <th className="py-2.5 px-2 text-center text-emerald-700">Average Days to Solve Case</th>
