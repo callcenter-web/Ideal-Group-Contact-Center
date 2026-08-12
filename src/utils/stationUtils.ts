@@ -44,3 +44,93 @@ export function isStationContacted(c: Complaint | null | undefined): boolean {
     c.stationResponseStatus === "Submitted to Call Center"
   );
 }
+
+/**
+ * CALL CENTER SLA ELIGIBILITY CRITICAL RULE:
+ * IF Service Center Contacted = YES (isStationContacted(c) === true)
+ *     -> Include the case in Call Center SLA calculation (Eligible)
+ * ELSE (NO / Blank / Not Contacted)
+ *     -> Exclude the case from Call Center SLA calculation
+ */
+export function isCallCenterSlaEligible(c: Complaint | null | undefined): boolean {
+  return isStationContacted(c);
+}
+
+/**
+ * Calculates Call Center SLA status (Target <= 24 hours / 1 Day after Service Station contact).
+ * Returns isBreached = false if on-time or eligible without delay.
+ */
+export function getCallCenterSLAStatus(c: Complaint | null | undefined): {
+  isEligible: boolean;
+  isBreached: boolean;
+  label: string;
+  delayDays: number;
+  color: string;
+} {
+  if (!c || !isCallCenterSlaEligible(c)) {
+    return {
+      isEligible: false,
+      isBreached: false,
+      label: "Excluded (Service Center Not Contacted)",
+      delayDays: 0,
+      color: "text-slate-500 bg-slate-100 border-slate-300 font-normal"
+    };
+  }
+
+  const stationDateStr = c.stationContactedDate || c.date || "2026-08-05";
+  const ccDateStr = c.callCenterContactedDate || "2026-08-05";
+
+  const stationDate = new Date(stationDateStr);
+  const ccDate = new Date(ccDateStr);
+
+  if (isNaN(stationDate.getTime()) || isNaN(ccDate.getTime())) {
+    return {
+      isEligible: true,
+      isBreached: false,
+      label: "On-Time (<24h SLA)",
+      delayDays: 0,
+      color: "text-emerald-700 bg-emerald-50 border-emerald-200 font-bold"
+    };
+  }
+
+  const diffMs = Math.max(0, ccDate.getTime() - stationDate.getTime());
+  const delayDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (c.callCenterContactedDate) {
+    if (delayDays <= 1) {
+      return {
+        isEligible: true,
+        isBreached: false,
+        label: "On-Time (<24h SLA)",
+        delayDays,
+        color: "text-emerald-700 bg-emerald-50 border-emerald-200 font-bold"
+      };
+    }
+    return {
+      isEligible: true,
+      isBreached: true,
+      label: `Delay (${delayDays}d diff)`,
+      delayDays,
+      color: "text-amber-800 bg-amber-50 border-amber-300 font-bold"
+    };
+  }
+
+  if (delayDays <= 1) {
+    return {
+      isEligible: true,
+      isBreached: false,
+      label: "On-Time (<24h SLA)",
+      delayDays,
+      color: "text-emerald-700 bg-emerald-50 border-emerald-200 font-bold"
+    };
+  }
+
+  return {
+    isEligible: true,
+    isBreached: true,
+    label: `SLA Breached (${delayDays}d diff)`,
+    delayDays,
+    color: "text-rose-700 bg-rose-50 border-rose-300 font-extrabold"
+  };
+}
+

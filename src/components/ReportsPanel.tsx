@@ -25,7 +25,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName, isStationContacted } from "../utils/stationUtils";
+import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 
@@ -249,6 +249,20 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     const escalated = stationComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated" || c.finalStatus?.includes("Re-assigned")).length;
     const pending = Math.max(0, total - resolved - escalated);
 
+    // Service Center Contact Status
+    const scContactedCount = stationComplaints.filter(c => isStationContacted(c)).length;
+    const scContactedPercent = total > 0 ? Math.round((scContactedCount / total) * 100) : 0;
+
+    // Call Center SLA Eligibility & Metrics (Requirement 2 & 3: CC SLA ONLY includes cases where SC Contacted = YES)
+    const ccEligibleCount = scContactedCount; // SC Contacted = YES
+    const ccExcludedCount = total - ccEligibleCount;
+    const ccContactedCount = stationComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate).length;
+    const ccContactedPercent = ccEligibleCount > 0 ? Math.round((ccContactedCount / ccEligibleCount) * 100) : 0;
+
+    const ccSlaMetCount = stationComplaints.filter(c => isStationContacted(c) && !getCallCenterSLAStatus(c).isBreached).length;
+    const ccSlaBreachedCount = stationComplaints.filter(c => isStationContacted(c) && getCallCenterSLAStatus(c).isBreached).length;
+    const ccSlaAchievementRate = ccEligibleCount > 0 ? Math.round((ccSlaMetCount / ccEligibleCount) * 100) : 100;
+
     // Aging Buckets
     let days0_3 = 0;
     let days3_5 = 0;
@@ -308,6 +322,15 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       days10Plus,
       resolutionRate,
       rate,
+      scContactedCount,
+      scContactedPercent,
+      ccEligibleCount,
+      ccExcludedCount,
+      ccContactedCount,
+      ccContactedPercent,
+      ccSlaMetCount,
+      ccSlaBreachedCount,
+      ccSlaAchievementRate,
       avgDaysStationContact,
       avgDaysCallCenterContact,
       avgDaysToSolveCase,
@@ -315,6 +338,26 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       avgAgingColor
     };
   });
+
+  // Grand summary totals across all stations
+  const grandTotal = stationMetrics.reduce((acc, sm) => acc + sm.total, 0);
+  const grandResolved = stationMetrics.reduce((acc, sm) => acc + sm.resolved, 0);
+  const grandPending = stationMetrics.reduce((acc, sm) => acc + sm.pending, 0);
+  const grandEscalated = stationMetrics.reduce((acc, sm) => acc + sm.escalated, 0);
+  const grandDays0_3 = stationMetrics.reduce((acc, sm) => acc + sm.days0_3, 0);
+  const grandDays3_5 = stationMetrics.reduce((acc, sm) => acc + sm.days3_5, 0);
+  const grandDays6_10 = stationMetrics.reduce((acc, sm) => acc + sm.days6_10, 0);
+  const grandDays10Plus = stationMetrics.reduce((acc, sm) => acc + sm.days10Plus, 0);
+  const grandScContacted = stationMetrics.reduce((acc, sm) => acc + sm.scContactedCount, 0);
+  const grandScContactedRate = grandTotal > 0 ? Math.round((grandScContacted / grandTotal) * 100) : 0;
+  const grandCcEligible = grandScContacted;
+  const grandCcExcluded = grandTotal - grandCcEligible;
+  const grandCcContacted = stationMetrics.reduce((acc, sm) => acc + sm.ccContactedCount, 0);
+  const grandCcContactedRate = grandCcEligible > 0 ? Math.round((grandCcContacted / grandCcEligible) * 100) : 0;
+  const grandCcSlaMet = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaMetCount, 0);
+  const grandCcSlaBreached = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaBreachedCount, 0);
+  const grandCcSlaRate = grandCcEligible > 0 ? Math.round((grandCcSlaMet / grandCcEligible) * 100) : 100;
+  const grandResolutionRate = grandTotal > 0 ? `${Math.round((grandResolved / grandTotal) * 100)}%` : "0%";
 
   // CSV Export: Detailed Aging Report
   const handleDownloadDetailedReport = () => {
@@ -391,7 +434,11 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       "3-5 Days (Pending)",
       "6-10 Days (Escalated)",
       ">10 Days (Critical)",
-      "Resolution Rate Overall(%) (Case open to resolve date)",
+      "Service Center Contact Status (YES/Total)",
+      "Call Center Contact Status (Contacted/Eligible)",
+      "Call Center SLA Eligible Cases (SC Contact = YES)",
+      "Call Center SLA Achievement (%)",
+      "Resolution Rate Overall (%)",
       "Avg Days to Contact Customer (Service Station)",
       "Avg Days to Contact Customer (Call Center)",
       "Average Days to Solve Case"
@@ -403,11 +450,15 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       sm.total.toString(),
       sm.resolved.toString(),
       sm.pending.toString(),
-      sm.escalated > 0 ? sm.escalated.toString() : "",
-      sm.days0_3 > 0 ? sm.days0_3.toString() : "",
-      sm.days3_5 > 0 ? sm.days3_5.toString() : "",
-      sm.days6_10 > 0 ? sm.days6_10.toString() : "",
-      sm.days10Plus > 0 ? sm.days10Plus.toString() : "",
+      sm.escalated > 0 ? sm.escalated.toString() : "0",
+      sm.days0_3 > 0 ? sm.days0_3.toString() : "0",
+      sm.days3_5 > 0 ? sm.days3_5.toString() : "0",
+      sm.days6_10 > 0 ? sm.days6_10.toString() : "0",
+      sm.days10Plus > 0 ? sm.days10Plus.toString() : "0",
+      `${sm.scContactedCount}/${sm.total} (${sm.scContactedPercent}%)`,
+      `${sm.ccContactedCount}/${sm.ccEligibleCount} (${sm.ccContactedPercent}%)`,
+      sm.ccEligibleCount.toString(),
+      `${sm.ccSlaAchievementRate}%`,
       sm.resolutionRate,
       sm.avgDaysStationContact.toString(),
       sm.avgDaysCallCenterContact.toString(),
@@ -417,83 +468,59 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     downloadCSV(headers, rows, `CX_Station_Performance_Report_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
-  // Graphical PDF Export for Service Station Table & Selected Breakdown
+  // Executive 4-Page Graphical PDF Export for Service Station SLA & Scorecard
   const handleDownloadStationGraphicalPDF = async () => {
     setIsGeneratingStationPDF(true);
     try {
-      const sectionElement = document.getElementById("station-scorecard-section");
-      if (!sectionElement) {
-        alert("Station scorecard section element not found.");
+      const pdfRoot = document.getElementById("executive-management-sla-pdf-root");
+      if (!pdfRoot) {
+        alert("Executive PDF root element not found.");
         return;
       }
 
-      // Temporarily hide elements marked with .pdf-hide
-      const pdfHides = sectionElement.querySelectorAll<HTMLElement>(".pdf-hide");
-      pdfHides.forEach((el) => { el.style.visibility = "hidden"; });
+      // Briefly render pdfRoot for html2canvas
+      pdfRoot.style.display = "block";
 
-      const canvas = await html2canvas(sectionElement, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: isDark ? "#020617" : "#ffffff",
-        logging: false,
-        onclone: (clonedDoc) => {
-          sanitizeDocOklch(clonedDoc);
-        },
-      });
-
-      pdfHides.forEach((el) => { el.style.visibility = "visible"; });
-
-      const imgData = canvas.toDataURL("image/png");
-      const isLandscape = canvas.width > canvas.height;
-      const pdf = new jsPDF(isLandscape ? "l" : "p", "mm", "a4");
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-
-      const margin = 10;
-      const imgWidth = pdfWidth - (margin * 2);
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      // Draw Header Title on PDF
-      pdf.setFillColor(30, 64, 175); // Royal Blue
-      pdf.rect(0, 0, pdfWidth, 16, "F");
-
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(11);
-      pdf.setTextColor(255, 255, 255);
-      pdf.text("SERVICE STATION SLA PERFORMANCE SCORECARD & GRAPHICS", margin, 11);
-
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "normal");
-      const activeStationLabel = selectedStationCode === "all" ? "All Stations Summary" : selectedStationCode;
-      pdf.text(`Selected Station: ${activeStationLabel}`, pdfWidth - margin, 11, { align: "right" });
-
-      let position = 20;
-      if (imgHeight <= (pdfHeight - 28)) {
-        pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
-      } else {
-        let heightLeft = imgHeight;
-        pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
-        heightLeft -= (pdfHeight - position);
-
-        while (heightLeft > 0) {
-          position = heightLeft - imgHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
-          heightLeft -= pdfHeight;
-        }
+      const pageElements = pdfRoot.querySelectorAll<HTMLElement>(".executive-pdf-page");
+      if (!pageElements || pageElements.length === 0) {
+        alert("No PDF page elements found.");
+        pdfRoot.style.display = "none";
+        return;
       }
 
-      // Footer
-      pdf.setFont("helvetica", "italic");
-      pdf.setFontSize(7);
-      pdf.setTextColor(148, 163, 184);
-      pdf.text(`Ideal Customer Experience Recovery Engine • Station Scorecard Report • ${new Date().toLocaleDateString()}`, margin, pdfHeight - 4);
+      const pdf = new jsPDF("l", "mm", "a4"); // Landscape A4 = 297mm x 210mm
+      const pdfWidth = 297;
+      const pdfHeight = 210;
 
-      pdf.save(`Station_SLA_Scorecard_Graphical_${selectedStationCode}_${new Date().toISOString().split("T")[0]}.pdf`);
+      for (let i = 0; i < pageElements.length; i++) {
+        const pageEl = pageElements[i];
+
+        const canvas = await html2canvas(pageEl, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          onclone: (clonedDoc) => {
+            sanitizeDocOklch(clonedDoc);
+          },
+        });
+
+        const imgData = canvas.toDataURL("image/png");
+        if (i > 0) {
+          pdf.addPage("a4", "l");
+        }
+        pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      }
+
+      pdfRoot.style.display = "none";
+
+      const today = new Date().toISOString().split("T")[0];
+      pdf.save(`Executive_SLA_Performance_Report_${selectedStationCode}_${today}.pdf`);
     } catch (err) {
-      console.error("Failed to export station graphical PDF:", err);
-      alert("Error generating graphical PDF. Please try again.");
+      console.error("Failed to export executive SLA PDF:", err);
+      alert("Error generating PDF. Please try again.");
+      const pdfRoot = document.getElementById("executive-management-sla-pdf-root");
+      if (pdfRoot) pdfRoot.style.display = "none";
     } finally {
       setIsGeneratingStationPDF(false);
     }
@@ -1530,16 +1557,18 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                     }`}>
                       <th className="py-3 px-4">Service Station</th>
                       <th className="py-3 px-3 text-center">Total</th>
-                      <th className="py-3 px-3 text-center">Resolved</th>
-                      <th className="py-3 px-3 text-center">Pending</th>
-                      <th className="py-3 px-3 text-center">Escalated</th>
+                      <th className="py-3 px-3 text-center text-emerald-600">Resolved</th>
+                      <th className="py-3 px-3 text-center text-amber-600">Pending</th>
+                      <th className="py-3 px-3 text-center text-rose-600">Escalated</th>
                       <th className="py-3 px-3 text-center text-emerald-600">0-3d (New)</th>
                       <th className="py-3 px-3 text-center text-amber-600">3-5d (Pending)</th>
                       <th className="py-3 px-3 text-center text-orange-600">6-10d (Escalated)</th>
                       <th className="py-3 px-3 text-center text-rose-600">&gt;10d (Critical)</th>
-                      <th className="py-3 px-3 text-center">Resolution %</th>
+                      <th className="py-3 px-3 text-center text-blue-600">SC Contact Status</th>
+                      <th className="py-3 px-3 text-center text-indigo-600">CC Contact Status</th>
+                      <th className="py-3 px-3 text-center text-sky-600">CC SLA Eligible</th>
+                      <th className="py-3 px-3 text-center text-purple-600">CC SLA %</th>
                       <th className="py-3 px-3 text-center text-blue-600">Avg Days Station Contact</th>
-                      <th className="py-3 px-3 text-center text-amber-600">Avg Days CC Contact</th>
                       <th className="py-3 px-3 text-center text-emerald-600">Avg Days Solve Case</th>
                     </tr>
                   </thead>
@@ -1599,16 +1628,26 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                           <td className="py-3 px-3 text-center font-bold text-rose-600 text-xs">
                             {sm.days10Plus || "-"}
                           </td>
-                          <td className="py-3 px-3 text-center">
-                            <span className={`font-black text-xs px-2 py-0.5 rounded ${isDark ? "bg-blue-950/60 text-blue-300" : "bg-blue-50 text-blue-700"}`}>
-                              {sm.resolutionRate}
+                          <td className="py-3 px-3 text-center font-bold text-blue-700 text-xs">
+                            {sm.scContactedCount}/{sm.total} ({sm.scContactedPercent}%)
+                          </td>
+                          <td className="py-3 px-3 text-center font-bold text-indigo-700 text-xs">
+                            {sm.ccContactedCount}/{sm.ccEligibleCount} ({sm.ccContactedPercent}%)
+                          </td>
+                          <td className="py-3 px-3 text-center font-black text-sky-700 text-xs bg-sky-50/50 rounded">
+                            {sm.ccEligibleCount}
+                          </td>
+                          <td className="py-3 px-3 text-center font-black text-xs">
+                            <span className={`px-2 py-0.5 rounded font-black ${
+                              sm.ccSlaAchievementRate >= 80 
+                                ? "bg-emerald-100 text-emerald-800 border border-emerald-200" 
+                                : "bg-amber-100 text-amber-800 border border-amber-200"
+                            }`}>
+                              {sm.ccSlaAchievementRate}%
                             </span>
                           </td>
                           <td className="py-3 px-3 text-center font-black text-blue-600 text-xs">
                             {sm.avgDaysStationContact} {sm.avgDaysStationContact === 1 ? "day" : "days"}
-                          </td>
-                          <td className="py-3 px-3 text-center font-black text-amber-600 text-xs">
-                            {sm.avgDaysCallCenterContact} {sm.avgDaysCallCenterContact === 1 ? "day" : "days"}
                           </td>
                           <td className="py-3 px-3 text-center font-black text-emerald-600 text-xs">
                             {sm.avgDaysToSolveCase} {sm.avgDaysToSolveCase === 1 ? "day" : "days"}
@@ -1631,19 +1670,19 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                         <span>Overall Summary / All Stations</span>
                         {selectedStationCode === "all" && <span className="text-[10px] bg-blue-500 text-white font-black px-2 py-0.5 rounded">(Selected)</span>}
                       </td>
-                      <td className="py-3.5 px-3 text-center">{filteredComplaints.length}</td>
-                      <td className="py-3.5 px-3 text-center text-emerald-400">{filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length}</td>
-                      <td className="py-3.5 px-3 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.pending, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.escalated, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-emerald-400">{stationMetrics.reduce((a, b) => a + b.days0_3, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.days3_5, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-orange-400">{stationMetrics.reduce((a, b) => a + b.days6_10, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.days10Plus, 0)}</td>
-                      <td className="py-3.5 px-3 text-center text-purple-300">
-                        {filteredComplaints.length > 0 ? Math.round((filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length / filteredComplaints.length) * 100) : 0}%
-                      </td>
+                      <td className="py-3.5 px-3 text-center">{grandTotal}</td>
+                      <td className="py-3.5 px-3 text-center text-emerald-400">{grandResolved}</td>
+                      <td className="py-3.5 px-3 text-center text-amber-400">{grandPending}</td>
+                      <td className="py-3.5 px-3 text-center text-rose-400">{grandEscalated}</td>
+                      <td className="py-3.5 px-3 text-center text-emerald-400">{grandDays0_3}</td>
+                      <td className="py-3.5 px-3 text-center text-amber-400">{grandDays3_5}</td>
+                      <td className="py-3.5 px-3 text-center text-orange-400">{grandDays6_10}</td>
+                      <td className="py-3.5 px-3 text-center text-rose-400">{grandDays10Plus}</td>
+                      <td className="py-3.5 px-3 text-center text-blue-300">{grandScContacted}/{grandTotal} ({grandScContactedRate}%)</td>
+                      <td className="py-3.5 px-3 text-center text-indigo-300">{grandCcContacted}/{grandCcEligible} ({grandCcContactedRate}%)</td>
+                      <td className="py-3.5 px-3 text-center text-sky-300">{grandCcEligible}</td>
+                      <td className="py-3.5 px-3 text-center text-purple-300">{grandCcSlaRate}%</td>
                       <td className="py-3.5 px-3 text-center text-blue-300">{overallReportAging.avgDaysStationContact} days</td>
-                      <td className="py-3.5 px-3 text-center text-amber-300">{overallReportAging.avgDaysCallCenterContact} days</td>
                       <td className="py-3.5 px-3 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase} days</td>
                     </tr>
                   </tfoot>
@@ -2339,6 +2378,553 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
 
         </div>
 
+      </div>
+
+      {/* HIDDEN 4-PAGE EXECUTIVE SLA PDF ROOT CONTAINER */}
+      <div
+        id="executive-management-sla-pdf-root"
+        className="bg-slate-100 text-slate-900 font-sans"
+        style={{
+          display: "none",
+          position: "absolute",
+          left: "-9999px",
+          top: 0,
+          width: "1122px",
+          zIndex: -1
+        }}
+      >
+        {/* ================= PAGE 1: MANAGEMENT SUMMARY & SLA ELIGIBILITY FLOWCHART ================= */}
+        <div
+          className="executive-pdf-page bg-white p-8 border border-slate-200 text-slate-900 flex flex-col justify-between"
+          style={{ width: "1122px", minHeight: "793px", boxSizing: "border-box" }}
+        >
+          <div>
+            {/* Header Bar */}
+            <div className="bg-slate-900 text-white p-5 rounded-xl mb-5 flex items-center justify-between border-b-4 border-blue-600">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="bg-blue-600 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded tracking-wider">
+                    Ideal CX Engine
+                  </span>
+                  <span className="text-xs font-bold text-slate-300">Executive Report</span>
+                </div>
+                <h1 className="text-xl font-black uppercase tracking-wider text-white mt-1">
+                  SERVICE STATION &amp; CALL CENTER SLA PERFORMANCE SCORECARD
+                </h1>
+                <p className="text-xs text-slate-300 font-medium mt-0.5">
+                  Page 1: Executive Management Summary &amp; SLA Eligibility Logic Standard
+                </p>
+              </div>
+              <div className="text-right border-l border-slate-700 pl-4">
+                <p className="text-xs font-bold text-blue-400">Date: {new Date().toLocaleDateString()}</p>
+                <p className="text-[11px] font-bold text-slate-200">
+                  Station Filter: {selectedStationCode === "all" ? "All Service Stations" : selectedStationCode}
+                </p>
+                <p className="text-[10px] text-slate-400">Confidential Corporate Scorecard</p>
+              </div>
+            </div>
+
+            {/* KPI Metric Cards Grid (3x3 Grid) */}
+            <div className="grid grid-cols-3 gap-3 mb-5">
+              <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Total Complaints Volume</span>
+                <div className="text-2xl font-black text-slate-900 mt-1">{filteredComplaints.length}</div>
+                <span className="text-[10px] font-bold text-slate-500">All registered complaints</span>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block">Service Center Contacted (YES)</span>
+                <div className="text-2xl font-black text-emerald-900 mt-1">{grandScContacted} <span className="text-xs font-bold text-emerald-700">({grandScContactedRate}%)</span></div>
+                <span className="text-[10px] font-bold text-emerald-700">Actioned by station</span>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-blue-800 uppercase tracking-wider block">Call Center SLA Eligible Queue</span>
+                <div className="text-2xl font-black text-blue-900 mt-1">{grandCcEligible}</div>
+                <span className="text-[10px] font-bold text-blue-700">Service Center Contacted = YES</span>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">Excluded from Call Center SLA</span>
+                <div className="text-2xl font-black text-amber-900 mt-1">{grandCcExcluded}</div>
+                <span className="text-[10px] font-bold text-amber-700">Service Center Not Contacted</span>
+              </div>
+
+              <div className="bg-purple-50 border border-purple-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-purple-800 uppercase tracking-wider block">Total Resolved Cases</span>
+                <div className="text-2xl font-black text-purple-900 mt-1">{grandResolved} <span className="text-xs font-bold text-purple-700">({grandResolutionRate})</span></div>
+                <span className="text-[10px] font-bold text-purple-700">Cases completed</span>
+              </div>
+
+              <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-xl">
+                <span className="text-[10px] font-black text-rose-800 uppercase tracking-wider block">Pending &amp; Escalated Cases</span>
+                <div className="text-2xl font-black text-rose-900 mt-1">{grandPending + grandEscalated}</div>
+                <span className="text-[10px] font-bold text-rose-700">{grandPending} Pending / {grandEscalated} Escalated</span>
+              </div>
+
+              <div className="bg-blue-900 text-white p-3.5 rounded-xl border border-blue-800">
+                <span className="text-[10px] font-black text-blue-300 uppercase tracking-wider block">Call Center SLA Achievement %</span>
+                <div className="text-2xl font-black text-white mt-1">{grandCcSlaRate}%</div>
+                <span className="text-[10px] text-blue-200">On-Time &lt;= 24h (Eligible Cases Only)</span>
+              </div>
+
+              <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block">Avg Service Center Contact Speed</span>
+                <div className="text-2xl font-black text-white mt-1">{overallReportAging.avgDaysStationContact} <span className="text-xs text-slate-400 font-normal">Days</span></div>
+                <span className="text-[10px] text-slate-300">Registration &rarr; SC Contact</span>
+              </div>
+
+              <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider block">Avg Total Resolution Speed</span>
+                <div className="text-2xl font-black text-white mt-1">{overallReportAging.avgDaysToSolveCase} <span className="text-xs text-slate-400 font-normal">Days</span></div>
+                <span className="text-[10px] text-slate-300">Registration &rarr; Final Solution</span>
+              </div>
+            </div>
+
+            {/* SLA ELIGIBILITY FLOWCHART GRAPHIC (REQUIREMENT 7) */}
+            <div className="border border-slate-200 rounded-2xl p-5 bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+              <div className="flex items-center justify-between mb-3 border-b pb-2">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-2">
+                  <span className="p-1 bg-blue-600 text-white rounded">
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                  </span>
+                  SLA Eligibility Decision Flowchart Architecture
+                </h3>
+                <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded border border-blue-200">
+                  Rule Standard: Service Center Contact Filter
+                </span>
+              </div>
+
+              {/* Visual Flowchart Elements */}
+              <div className="flex flex-col items-center space-y-3 my-2">
+                {/* Node 1: Total Volume */}
+                <div className="w-full max-w-lg bg-slate-900 text-white p-2.5 rounded-xl text-center shadow-sm border border-slate-800">
+                  <span className="text-[10px] text-blue-400 font-black uppercase tracking-wider block">1. Total Customer Complaints Received</span>
+                  <span className="text-sm font-black">{filteredComplaints.length} Total Complaints in System Database</span>
+                </div>
+
+                {/* Arrow */}
+                <div className="text-blue-600 font-black text-lg">&darr;</div>
+
+                {/* Node 2: Decision Node */}
+                <div className="w-full max-w-lg bg-blue-50 border-2 border-blue-300 p-2.5 rounded-xl text-center">
+                  <span className="text-[10px] text-blue-900 font-black uppercase tracking-wider block">2. Service Center Contacted Status Filter Check</span>
+                  <span className="text-xs font-bold text-slate-800">Has the Service Center contacted or actioned the customer?</span>
+                </div>
+
+                {/* Split Arrows */}
+                <div className="grid grid-cols-2 gap-8 w-full max-w-2xl">
+                  {/* Branch YES */}
+                  <div className="flex flex-col items-center">
+                    <div className="text-emerald-600 font-black text-xs uppercase bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 mb-1">
+                      YES (Service Center Contacted = YES) &darr;
+                    </div>
+                    <div className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl w-full text-center">
+                      <span className="text-[10px] text-emerald-900 font-black uppercase block">Included in Call Center SLA</span>
+                      <span className="text-sm font-black text-emerald-950 block">{grandCcEligible} Eligible Cases ({grandScContactedRate}%)</span>
+                      <p className="text-[10px] text-emerald-800 mt-1">Included in Call Center SLA denominator &amp; achievement score ({grandCcSlaRate}% On-Time)</p>
+                    </div>
+                  </div>
+
+                  {/* Branch NO */}
+                  <div className="flex flex-col items-center">
+                    <div className="text-amber-800 font-black text-xs uppercase bg-amber-100 px-3 py-1 rounded-full border border-amber-300 mb-1">
+                      NO / BLANK (Not Contacted) &darr;
+                    </div>
+                    <div className="bg-amber-50 border-2 border-amber-300 p-3 rounded-xl w-full text-center">
+                      <span className="text-[10px] text-amber-900 font-black uppercase block">Excluded from Call Center SLA</span>
+                      <span className="text-sm font-black text-amber-950 block">{grandCcExcluded} Excluded Cases</span>
+                      <p className="text-[10px] text-amber-800 mt-1">Excluded from SLA denominator. Retained in full table for operational tracking.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Page 1 */}
+          <div className="border-t border-slate-200 pt-3 flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+            <span>Ideal Customer Experience Recovery Engine &bull; Management Summary</span>
+            <span>Confidential Enterprise Report &bull; Page 1 of 4</span>
+          </div>
+        </div>
+
+        {/* ================= PAGE 2: COMPLETE SERVICE STATION TABLE ================= */}
+        <div
+          className="executive-pdf-page bg-white p-8 border border-slate-200 text-slate-900 flex flex-col justify-between"
+          style={{ width: "1122px", minHeight: "793px", boxSizing: "border-box" }}
+        >
+          <div>
+            {/* Header Bar Page 2 */}
+            <div className="bg-slate-900 text-white p-4 rounded-xl mb-4 flex items-center justify-between border-b-4 border-blue-600">
+              <div>
+                <h2 className="text-lg font-black uppercase tracking-wider text-white">
+                  COMPLETE SERVICE STATION SLA PERFORMANCE MATRIX
+                </h2>
+                <p className="text-xs text-slate-300 font-medium">
+                  Page 2: Full Service Station Breakdown (All Service Stations &amp; Operational Metrics)
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="bg-blue-600 text-white text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                  All 15 Columns Included
+                </span>
+              </div>
+            </div>
+
+            {/* Full Width Table */}
+            <div className="border border-slate-200 rounded-xl overflow-hidden mb-4">
+              <table className="w-full text-left border-collapse text-[10px]">
+                <thead>
+                  <tr className="bg-slate-900 text-white font-black uppercase text-[8.5px] border-b border-slate-800">
+                    <th className="py-2.5 px-3">Service Station</th>
+                    <th className="py-2.5 px-2 text-center">Total</th>
+                    <th className="py-2.5 px-2 text-center text-emerald-300">Resolved</th>
+                    <th className="py-2.5 px-2 text-center text-amber-300">Pending</th>
+                    <th className="py-2.5 px-2 text-center text-rose-300">Escalated</th>
+                    <th className="py-2.5 px-2 text-center text-emerald-400">0-3d</th>
+                    <th className="py-2.5 px-2 text-center text-amber-400">3-5d</th>
+                    <th className="py-2.5 px-2 text-center text-orange-400">6-10d</th>
+                    <th className="py-2.5 px-2 text-center text-rose-400">&gt;10d</th>
+                    <th className="py-2.5 px-2 text-center text-blue-300">SC Contact Status</th>
+                    <th className="py-2.5 px-2 text-center text-indigo-300">CC Contact Status</th>
+                    <th className="py-2.5 px-2 text-center text-sky-300">CC SLA Eligible</th>
+                    <th className="py-2.5 px-2 text-center text-purple-300">CC SLA %</th>
+                    <th className="py-2.5 px-2 text-center">Avg SC Contact</th>
+                    <th className="py-2.5 px-2 text-center">Avg Solve Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {stationMetrics.map((sm, idx) => (
+                    <tr key={sm.code} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/70"}>
+                      <td className="py-2 px-3">
+                        <span className="font-bold text-slate-900 block">{sm.name}</span>
+                        <span className="text-[8.5px] font-mono text-slate-500">{sm.code}</span>
+                      </td>
+                      <td className="py-2 px-2 text-center font-black text-slate-900">{sm.total}</td>
+                      <td className="py-2 px-2 text-center font-bold text-emerald-700">{sm.resolved}</td>
+                      <td className="py-2 px-2 text-center font-bold text-amber-700">{sm.pending}</td>
+                      <td className="py-2 px-2 text-center font-bold text-rose-700">{sm.escalated}</td>
+                      <td className="py-2 px-2 text-center font-bold text-emerald-600">{sm.days0_3 || "—"}</td>
+                      <td className="py-2 px-2 text-center font-bold text-amber-600">{sm.days3_5 || "—"}</td>
+                      <td className="py-2 px-2 text-center font-bold text-orange-600">{sm.days6_10 || "—"}</td>
+                      <td className="py-2 px-2 text-center font-bold text-rose-600">{sm.days10Plus || "—"}</td>
+                      <td className="py-2 px-2 text-center font-bold text-blue-800">
+                        {sm.scContactedCount}/{sm.total} ({sm.scContactedPercent}%)
+                      </td>
+                      <td className="py-2 px-2 text-center font-bold text-indigo-800">
+                        {sm.ccContactedCount}/{sm.ccEligibleCount} ({sm.ccContactedPercent}%)
+                      </td>
+                      <td className="py-2 px-2 text-center font-black text-sky-800 bg-sky-50 rounded">
+                        {sm.ccEligibleCount}
+                      </td>
+                      <td className="py-2 px-2 text-center font-black text-purple-800 bg-purple-50 rounded">
+                        {sm.ccSlaAchievementRate}%
+                      </td>
+                      <td className="py-2 px-2 text-center font-semibold text-slate-700">{sm.avgDaysStationContact}d</td>
+                      <td className="py-2 px-2 text-center font-semibold text-slate-700">{sm.avgDaysToSolveCase}d</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-900 text-white font-black text-[9.5px]">
+                    <td className="py-2.5 px-3 uppercase">OVERALL SUMMARY / GRAND TOTAL</td>
+                    <td className="py-2.5 px-2 text-center text-white">{grandTotal}</td>
+                    <td className="py-2.5 px-2 text-center text-emerald-400">{grandResolved}</td>
+                    <td className="py-2.5 px-2 text-center text-amber-400">{grandPending}</td>
+                    <td className="py-2.5 px-2 text-center text-rose-400">{grandEscalated}</td>
+                    <td className="py-2.5 px-2 text-center text-emerald-400">{grandDays0_3}</td>
+                    <td className="py-2.5 px-2 text-center text-amber-400">{grandDays3_5}</td>
+                    <td className="py-2.5 px-2 text-center text-orange-400">{grandDays6_10}</td>
+                    <td className="py-2.5 px-2 text-center text-rose-400">{grandDays10Plus}</td>
+                    <td className="py-2.5 px-2 text-center text-blue-300">{grandScContacted}/{grandTotal} ({grandScContactedRate}%)</td>
+                    <td className="py-2.5 px-2 text-center text-indigo-300">{grandCcContacted}/{grandCcEligible} ({grandCcContactedRate}%)</td>
+                    <td className="py-2.5 px-2 text-center text-sky-300">{grandCcEligible}</td>
+                    <td className="py-2.5 px-2 text-center text-purple-300">{grandCcSlaRate}%</td>
+                    <td className="py-2.5 px-2 text-center">{overallReportAging.avgDaysStationContact}d</td>
+                    <td className="py-2.5 px-2 text-center">{overallReportAging.avgDaysToSolveCase}d</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          {/* Footer Page 2 */}
+          <div className="border-t border-slate-200 pt-3 flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+            <span>Ideal Customer Experience Recovery Engine &bull; Station Scorecard Matrix</span>
+            <span>Confidential Enterprise Report &bull; Page 2 of 4</span>
+          </div>
+        </div>
+
+        {/* ================= PAGE 3: SLA GRAPHICS & CHARTS ================= */}
+        <div
+          className="executive-pdf-page bg-white p-8 border border-slate-200 text-slate-900 flex flex-col justify-between"
+          style={{ width: "1122px", minHeight: "793px", boxSizing: "border-box" }}
+        >
+          <div>
+            {/* Header Bar Page 3 */}
+            <div className="bg-slate-900 text-white p-4 rounded-xl mb-4 flex items-center justify-between border-b-4 border-blue-600">
+              <div>
+                <h2 className="text-lg font-black uppercase tracking-wider text-white">
+                  EXECUTIVE SLA PERFORMANCE &amp; ANALYTICS CHARTS
+                </h2>
+                <p className="text-xs text-slate-300 font-medium">
+                  Page 3: Visual Analytics (Volume Distribution, SLA Meters, Aging Buckets, Contact Qualification)
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="bg-blue-600 text-white text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                  6 Management Charts
+                </span>
+              </div>
+            </div>
+
+            {/* Grid of 6 Analytics Cards */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              {/* Chart 1: Case Volume by Station */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">1. Total Case Volume by Service Station</h4>
+                <div className="space-y-1.5">
+                  {stationMetrics.map((sm) => {
+                    const pct = grandTotal > 0 ? Math.round((sm.total / grandTotal) * 100) : 0;
+                    return (
+                      <div key={sm.code} className="text-[10px]">
+                        <div className="flex justify-between font-bold text-slate-700">
+                          <span>{sm.name}</span>
+                          <span>{sm.total} cases ({pct}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden mt-0.5">
+                          <div className="bg-blue-600 h-full rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Chart 2: Resolution Status Ratio */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">2. Case Resolution Progress Velocity</h4>
+                <div className="space-y-2">
+                  <div className="text-[10px] font-bold text-slate-700 flex justify-between">
+                    <span>Resolved: {grandResolved}</span>
+                    <span>Pending: {grandPending}</span>
+                    <span>Escalated: {grandEscalated}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 h-4 rounded-lg overflow-hidden flex">
+                    <div className="bg-emerald-500 h-full" style={{ width: `${grandTotal > 0 ? (grandResolved/grandTotal)*100 : 0}%` }} title="Resolved" />
+                    <div className="bg-amber-400 h-full" style={{ width: `${grandTotal > 0 ? (grandPending/grandTotal)*100 : 0}%` }} title="Pending" />
+                    <div className="bg-rose-500 h-full" style={{ width: `${grandTotal > 0 ? (grandEscalated/grandTotal)*100 : 0}%` }} title="Escalated" />
+                  </div>
+                  <div className="flex text-[9px] gap-3 font-semibold text-slate-600 mt-2">
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-emerald-500 rounded" /> Resolved ({grandResolutionRate})</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-400 rounded" /> Pending ({grandTotal > 0 ? Math.round((grandPending/grandTotal)*100) : 0}%)</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-rose-500 rounded" /> Escalated ({grandTotal > 0 ? Math.round((grandEscalated/grandTotal)*100) : 0}%)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart 3: Call Center SLA Performance % by Station */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">3. Call Center SLA Achievement Meter</h4>
+                <div className="space-y-1.5">
+                  {stationMetrics.map((sm) => (
+                    <div key={sm.code} className="text-[10px]">
+                      <div className="flex justify-between font-bold text-slate-700">
+                        <span>{sm.name}</span>
+                        <span className={sm.ccSlaAchievementRate >= 80 ? "text-emerald-700 font-extrabold" : "text-amber-700 font-extrabold"}>
+                          {sm.ccSlaAchievementRate}% On-Time ({sm.ccEligibleCount} Eligible)
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden mt-0.5">
+                        <div
+                          className={sm.ccSlaAchievementRate >= 80 ? "bg-emerald-500 h-full rounded-full" : "bg-amber-500 h-full rounded-full"}
+                          style={{ width: `${sm.ccSlaAchievementRate}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Chart 4: Aging SLA Distribution */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">4. Overall Case Aging SLA Distribution</h4>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-4 gap-2 text-center text-[10px]">
+                    <div className="bg-emerald-100 p-2 rounded border border-emerald-300">
+                      <span className="font-bold text-emerald-900 block">0–3 Days</span>
+                      <span className="text-lg font-black text-emerald-950">{grandDays0_3}</span>
+                    </div>
+                    <div className="bg-amber-100 p-2 rounded border border-amber-300">
+                      <span className="font-bold text-amber-900 block">3–5 Days</span>
+                      <span className="text-lg font-black text-amber-950">{grandDays3_5}</span>
+                    </div>
+                    <div className="bg-orange-100 p-2 rounded border border-orange-300">
+                      <span className="font-bold text-orange-900 block">6–10 Days</span>
+                      <span className="text-lg font-black text-orange-950">{grandDays6_10}</span>
+                    </div>
+                    <div className="bg-rose-100 p-2 rounded border border-rose-300">
+                      <span className="font-bold text-rose-900 block">&gt;10 Days</span>
+                      <span className="text-lg font-black text-rose-950">{grandDays10Plus}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart 5: SC Contacted vs Not Contacted */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">5. Service Center Contact Qualification Rate</h4>
+                <div className="flex items-center gap-4 text-xs font-bold my-2">
+                  <div className="bg-emerald-100 border border-emerald-300 p-3 rounded-xl flex-1 text-center">
+                    <span className="text-emerald-900 block text-[10px] font-black uppercase">SC Contacted = YES</span>
+                    <span className="text-xl font-black text-emerald-950">{grandScContacted} Cases</span>
+                    <span className="text-[10px] text-emerald-800 block font-semibold">{grandScContactedRate}% of total workload</span>
+                  </div>
+                  <div className="bg-amber-100 border border-amber-300 p-3 rounded-xl flex-1 text-center">
+                    <span className="text-amber-900 block text-[10px] font-black uppercase">SC Contacted = NO</span>
+                    <span className="text-xl font-black text-amber-950">{grandCcExcluded} Cases</span>
+                    <span className="text-[10px] text-amber-800 block font-semibold">{100 - grandScContactedRate}% excluded from CC SLA</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart 6: CC SLA Eligible Flow */}
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-2">6. Call Center SLA Eligible vs Excluded Ratio</h4>
+                <div className="space-y-2 text-[10px]">
+                  <div className="flex justify-between font-bold text-slate-700">
+                    <span>Eligible: {grandCcEligible} ({grandScContactedRate}%)</span>
+                    <span>Excluded: {grandCcExcluded} ({100 - grandScContactedRate}%)</span>
+                  </div>
+                  <div className="w-full bg-amber-300 h-4 rounded-lg overflow-hidden flex">
+                    <div className="bg-blue-600 h-full" style={{ width: `${grandScContactedRate}%` }} />
+                  </div>
+                  <p className="text-[9px] text-slate-500 font-semibold mt-1">
+                    Call Center SLA denominator includes ONLY cases where Service Center Contacted = YES.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Page 3 */}
+          <div className="border-t border-slate-200 pt-3 flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+            <span>Ideal Customer Experience Recovery Engine &bull; Executive SLA Analytics</span>
+            <span>Confidential Enterprise Report &bull; Page 3 of 4</span>
+          </div>
+        </div>
+
+        {/* ================= PAGE 4: SELECTED STATION DETAILS ================= */}
+        <div
+          className="executive-pdf-page bg-white p-8 border border-slate-200 text-slate-900 flex flex-col justify-between"
+          style={{ width: "1122px", minHeight: "793px", boxSizing: "border-box" }}
+        >
+          <div>
+            {/* Header Bar Page 4 */}
+            <div className="bg-slate-900 text-white p-4 rounded-xl mb-4 flex items-center justify-between border-b-4 border-blue-600">
+              <div>
+                <h2 className="text-lg font-black uppercase tracking-wider text-white">
+                  DETAILED SERVICE STATION DEEP DIVE ANALYSIS
+                </h2>
+                <p className="text-xs text-slate-300 font-medium">
+                  Page 4: Focused Operational &amp; Customer Satisfaction Metrics for Selected Center
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="bg-blue-600 text-white text-[11px] font-black uppercase px-3 py-1 rounded">
+                  Station: {selectedStationCode === "all" ? "All Service Stations Overview" : selectedStationCode}
+                </span>
+              </div>
+            </div>
+
+            {/* Selected Station Detailed Analysis Grid */}
+            <div className="grid grid-cols-3 gap-4 mb-5">
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                <span className="text-[10px] font-black uppercase text-slate-500 block mb-1">Station Complaint Volume</span>
+                <div className="text-3xl font-black text-slate-900">{totalInScope}</div>
+                <span className="text-[10px] font-bold text-slate-500">Total complaints assigned</span>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                <span className="text-[10px] font-black uppercase text-emerald-800 block mb-1">Service Center Contact Rate</span>
+                <div className="text-3xl font-black text-emerald-900">
+                  {totalInScope > 0 ? Math.round((activeScopeComplaints.filter(c => isStationContacted(c)).length / totalInScope) * 100) : 0}%
+                </div>
+                <span className="text-[10px] font-bold text-emerald-700">
+                  {activeScopeComplaints.filter(c => isStationContacted(c)).length} of {totalInScope} contacted
+                </span>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl">
+                <span className="text-[10px] font-black uppercase text-blue-800 block mb-1">Call Center SLA Achievement</span>
+                <div className="text-3xl font-black text-blue-900">
+                  {(() => {
+                    const eligible = activeScopeComplaints.filter(c => isStationContacted(c));
+                    const met = eligible.filter(c => !getCallCenterSLAStatus(c).isBreached).length;
+                    return eligible.length > 0 ? `${Math.round((met / eligible.length) * 100)}%` : "100%";
+                  })()}
+                </div>
+                <span className="text-[10px] font-bold text-blue-700">Evaluated on SC Contacted = YES cases</span>
+              </div>
+            </div>
+
+            {/* Operational Speed & Aging Summary */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-3">Speed &amp; Resolution Velocity Benchmarks</h4>
+                <div className="space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-bold text-slate-600">Avg Service Station Contact Speed:</span>
+                    <span className="font-black text-slate-900">{overallReportAging.avgDaysStationContact} Working Days</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-bold text-slate-600">Avg Call Center Verification Speed:</span>
+                    <span className="font-black text-slate-900">{overallReportAging.avgDaysCallCenterContact} Working Days</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-600">Average Total Case Solve Speed:</span>
+                    <span className="font-black text-emerald-700">{overallReportAging.avgDaysToSolveCase} Working Days</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 p-4 rounded-xl bg-slate-50">
+                <h4 className="text-xs font-black uppercase text-slate-800 mb-3">Customer Satisfaction &amp; Feedback Breakdown</h4>
+                <div className="space-y-2 text-xs font-bold">
+                  <div className="flex justify-between items-center bg-emerald-100 text-emerald-900 p-2 rounded">
+                    <span>Satisfied / Resolution Accepted</span>
+                    <span>{activeScopeComplaints.filter(c => c.feedbackStatus === "Satisfied" || c.currentSatisfaction === "Satisfied").length} Cases</span>
+                  </div>
+                  <div className="flex justify-between items-center bg-amber-100 text-amber-900 p-2 rounded">
+                    <span>Follow-Up / Solution In Progress</span>
+                    <span>{activeScopeComplaints.filter(c => c.status === "In Progress" || c.status === "Contacted").length} Cases</span>
+                  </div>
+                  <div className="flex justify-between items-center bg-rose-100 text-rose-900 p-2 rounded">
+                    <span>Unresolved / Escalated</span>
+                    <span>{activeScopeComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated").length} Cases</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Operational Notes */}
+            <div className="bg-slate-900 text-white p-4 rounded-xl text-xs">
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-wider block mb-1">Management Performance Audit Note</span>
+              <p className="text-slate-300 leading-relaxed font-normal">
+                All calculations presented in this executive report strictly follow the Service Center Contact SLA Eligibility Standard.
+                Cases where <span className="text-emerald-400 font-bold">Service Center Contacted = YES</span> are evaluated for Call Center SLA turn-around time.
+                Uncontacted or pending cases remain fully visible across database tables for operational tracking and audit history.
+              </p>
+            </div>
+          </div>
+
+          {/* Footer Page 4 */}
+          <div className="border-t border-slate-200 pt-3 flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+            <span>Ideal Customer Experience Recovery Engine &bull; Deep Dive Report</span>
+            <span>Confidential Enterprise Report &bull; Page 4 of 4</span>
+          </div>
+        </div>
       </div>
 
     </div>
