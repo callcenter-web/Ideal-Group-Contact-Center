@@ -35,7 +35,7 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
-import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./utils/supabaseSanitizer";
+import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -491,22 +491,7 @@ export default function App() {
           const cached = savedList.find((c) => String(c.id) === String(sbRow.id));
           const norm = normalizeComplaintFromSupabase(sbRow);
           if (cached) {
-            return {
-              ...cached,
-              ...norm,
-              stationResponseStatus: (norm.stationResponseStatus && norm.stationResponseStatus.length > 0)
-                ? norm.stationResponseStatus
-                : (cached.stationResponseStatus || ""),
-              stationResponseRejectionReason: (norm.stationResponseRejectionReason && norm.stationResponseRejectionReason.length > 0)
-                ? norm.stationResponseRejectionReason
-                : (cached.stationResponseRejectionReason || ""),
-              stationResponseRejectedDate: (norm.stationResponseRejectedDate && norm.stationResponseRejectedDate.length > 0)
-                ? norm.stationResponseRejectedDate
-                : (cached.stationResponseRejectedDate || ""),
-              stationResponseRejectedBy: (norm.stationResponseRejectedBy && norm.stationResponseRejectedBy.length > 0)
-                ? norm.stationResponseRejectedBy
-                : (cached.stationResponseRejectedBy || ""),
-            };
+            return mergeComplaintObjects(cached, norm);
           }
           return norm as Complaint;
         });
@@ -541,20 +526,34 @@ export default function App() {
             localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
             return data.complaints;
           }
-          const serverMap = new Map<string, Complaint>();
-          data.complaints.forEach((c: Complaint) => {
-            if (c && c.id) serverMap.set(String(c.id).trim().toUpperCase(), c);
+          const prevMap = new Map<string, Complaint>();
+          prev.forEach((p) => {
+            if (p && p.id) prevMap.set(String(p.id).trim().toUpperCase(), p);
           });
 
-          const combinedMap = new Map<string, Complaint>(serverMap);
-          prev.forEach((p) => {
-            const key = String(p.id).trim().toUpperCase();
-            if (!combinedMap.has(key)) {
-              combinedMap.set(key, p);
+          const mergedMap = new Map<string, Complaint>();
+          data.complaints.forEach((serverComp: Complaint) => {
+            if (!serverComp || !serverComp.id) return;
+            const key = String(serverComp.id).trim().toUpperCase();
+            const localComp = prevMap.get(key);
+            if (localComp) {
+              mergedMap.set(key, mergeComplaintObjects(localComp, serverComp));
+            } else {
+              mergedMap.set(key, serverComp);
             }
           });
 
-          const merged = Array.from(combinedMap.values());
+          // Also retain any local-only records
+          prev.forEach((p) => {
+            if (p && p.id) {
+              const key = String(p.id).trim().toUpperCase();
+              if (!mergedMap.has(key)) {
+                mergedMap.set(key, p);
+              }
+            }
+          });
+
+          const merged = Array.from(mergedMap.values());
           localStorage.setItem("ideal_group_complaints", JSON.stringify(merged));
           return merged;
         });
@@ -1033,15 +1032,23 @@ export default function App() {
             formFeedbackStatus !== "Customer Unreachable" && 
             formFinalStatus !== "Unreachable";
 
+          const isSatisfiedAgent = 
+            formFeedbackStatus === "Satisfied" ||
+            ["Satisfied", "Very Satisfied"].includes(formSatisfaction) ||
+            ["Closed", "Completed", "Resolved"].includes(formFinalStatus) ||
+            formStatus === "Resolved";
+
           return {
             ...c,
             stationContactedDate: submitDateTime,
             stationResolutionNotes: formStationResolutionNotes,
             agentName: formAgentName || `${currentUser.station} Adviser`,
-            status: "Contacted" as FollowUpStatus, // Auto mark as Contacted
+            status: isSatisfiedAgent ? ("Resolved" as FollowUpStatus) : ("Contacted" as FollowUpStatus),
+            currentSatisfaction: isSatisfiedAgent ? ("Satisfied" as SatisfactionLevel) : (formSatisfaction || c.currentSatisfaction),
+            callCenterFinalSatisfaction: isSatisfiedAgent ? ("Satisfied" as SatisfactionLevel) : c.callCenterFinalSatisfaction,
             stationResponseStatus: "Submitted to Call Center",
-            feedbackStatus: formFeedbackStatus,
-            finalStatus: formFinalStatus,
+            feedbackStatus: isSatisfiedAgent ? "Satisfied" : formFeedbackStatus,
+            finalStatus: isSatisfiedAgent ? "Closed" : formFinalStatus,
             solutionProvidedByAftermarket: formStationResolutionNotes, // Sync with action taken
             solutionDate: submitDateTime, // Sync with contacted date and time
             followUpDate: formFollowUpDate,

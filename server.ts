@@ -6,7 +6,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO_COMPLAINTS, CALL_CENTER_OFFICERS, STATIONS } from "./src/demoData";
-import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert } from "./src/utils/supabaseSanitizer";
+import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./src/utils/supabaseSanitizer";
 
 dotenv.config();
 
@@ -221,28 +221,13 @@ Ensure your response is highly detailed, professional, and directly actionable f
         });
       }
 
-      // Keep cache in sync with active db while preserving any local rejection details if DB columns are unmigrated
+      // Keep cache in sync with active db using intelligent merge to prevent overwriting updated records
       if (data && data.length > 0) {
         const merged = data.map((sbRow: any) => {
           const cachedRow = localComplaintsCache.find((c) => String(c.id) === String(sbRow.id));
           const normalized = normalizeComplaintFromSupabase(sbRow);
           if (cachedRow) {
-            return {
-              ...cachedRow,
-              ...normalized,
-              stationResponseStatus: (normalized.stationResponseStatus && normalized.stationResponseStatus.length > 0)
-                ? normalized.stationResponseStatus
-                : (cachedRow.stationResponseStatus || ""),
-              stationResponseRejectionReason: (normalized.stationResponseRejectionReason && normalized.stationResponseRejectionReason.length > 0)
-                ? normalized.stationResponseRejectionReason
-                : (cachedRow.stationResponseRejectionReason || ""),
-              stationResponseRejectedDate: (normalized.stationResponseRejectedDate && normalized.stationResponseRejectedDate.length > 0)
-                ? normalized.stationResponseRejectedDate
-                : (cachedRow.stationResponseRejectedDate || ""),
-              stationResponseRejectedBy: (normalized.stationResponseRejectedBy && normalized.stationResponseRejectedBy.length > 0)
-                ? normalized.stationResponseRejectedBy
-                : (cachedRow.stationResponseRejectedBy || ""),
-            };
+            return mergeComplaintObjects(cachedRow, normalized);
           }
           return normalized;
         });
@@ -287,7 +272,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
         const key = String(incoming.id).trim().toUpperCase();
         const existing = mergedMap.get(key);
         if (existing) {
-          mergedMap.set(key, { ...existing, ...incoming });
+          mergedMap.set(key, mergeComplaintObjects(existing, incoming));
         } else {
           mergedMap.set(key, incoming);
         }

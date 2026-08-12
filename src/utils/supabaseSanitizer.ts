@@ -108,6 +108,93 @@ export function sanitizeComplaintForSupabase(item: any): Record<string, any> {
 }
 
 /**
+ * Intelligently merges two complaint objects (a and b) for the same ID.
+ * Respects updatedAt timestamps and prevents loss of populated values (e.g., stationContactedDate, Satisfied statuses).
+ */
+export function mergeComplaintObjects(a: any, b: any): any {
+  if (!a) return b;
+  if (!b) return a;
+
+  const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+  const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+
+  const primary = dateB >= dateA ? b : a;
+  const fallback = dateB >= dateA ? a : b;
+
+  const result: any = { ...fallback, ...primary };
+
+  const keysToPreserveNonEmpty = [
+    "stationContactedDate",
+    "stationResolutionNotes",
+    "callCenterContactedDate",
+    "callCenterFinalRemarks",
+    "callCenterFinalSatisfaction",
+    "currentSatisfaction",
+    "feedbackStatus",
+    "finalStatus",
+    "status",
+    "solutionProvidedByAftermarket",
+    "solutionDate",
+    "firstAttemptCallStatus",
+    "firstAttemptDate",
+    "firstAttemptNotes",
+    "secondAttemptFeedbackStatus",
+    "secondAttemptDate",
+    "secondAttemptNotes",
+    "stationResponseStatus",
+    "stationResponseRejectionReason",
+    "stationResponseRejectedDate",
+    "stationResponseRejectedBy",
+    "agentName",
+    "advisorName"
+  ];
+
+  for (const key of keysToPreserveNonEmpty) {
+    const valP = primary[key];
+    const valF = fallback[key];
+    const isPEmpty = valP === undefined || valP === null || valP === "";
+    const isFPopulated = valF !== undefined && valF !== null && valF !== "";
+    if (isPEmpty && isFPopulated) {
+      result[key] = valF;
+    }
+  }
+
+  // CRITICAL: If either record was marked as Resolved / Satisfied / Closed / Completed,
+  // do NOT revert back to Pending/Contacted unless explicitly changed to Rejected/Re-assigned
+  const isASatisfied = 
+    a.status === "Resolved" || 
+    a.feedbackStatus === "Satisfied" || 
+    a.currentSatisfaction === "Satisfied" || 
+    a.callCenterFinalSatisfaction === "Satisfied" ||
+    a.finalStatus === "Closed" ||
+    a.finalStatus === "Completed";
+
+  const isBSatisfied = 
+    b.status === "Resolved" || 
+    b.feedbackStatus === "Satisfied" || 
+    b.currentSatisfaction === "Satisfied" || 
+    b.callCenterFinalSatisfaction === "Satisfied" ||
+    b.finalStatus === "Closed" ||
+    b.finalStatus === "Completed";
+
+  if ((isASatisfied || isBSatisfied) && result.stationResponseStatus !== "Rejected" && !result.finalStatus?.includes("Re-assigned")) {
+    result.status = "Resolved";
+    result.feedbackStatus = "Satisfied";
+    if (!result.currentSatisfaction || result.currentSatisfaction === "Dissatisfied" || result.currentSatisfaction === "Neutral") {
+      result.currentSatisfaction = "Satisfied";
+    }
+    if (!result.callCenterFinalSatisfaction) {
+      result.callCenterFinalSatisfaction = "Satisfied";
+    }
+    if (result.finalStatus === "Open" || result.finalStatus === "In Progress" || !result.finalStatus) {
+      result.finalStatus = "Closed";
+    }
+  }
+
+  return result;
+}
+
+/**
  * Normalizes complaint objects fetched from Supabase, ensuring woNo and assignedOfficerId are available.
  */
 export function normalizeComplaintFromSupabase(item: any): Record<string, any> {
