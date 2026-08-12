@@ -274,12 +274,30 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
 
-      // Update local memory cache directly with the full provided array and persist to disk
-      localComplaintsCache = complaintsArray;
+      // Merge incoming complaints into local memory cache by ID/woNo instead of overwriting, preventing data loss across IP addresses
+      const mergedMap = new Map<string, any>();
+      localComplaintsCache.forEach((c) => {
+        if (c && c.id) {
+          mergedMap.set(String(c.id).trim().toUpperCase(), c);
+        }
+      });
+
+      complaintsArray.forEach((incoming) => {
+        if (!incoming || !incoming.id) return;
+        const key = String(incoming.id).trim().toUpperCase();
+        const existing = mergedMap.get(key);
+        if (existing) {
+          mergedMap.set(key, { ...existing, ...incoming });
+        } else {
+          mergedMap.set(key, incoming);
+        }
+      });
+
+      localComplaintsCache = Array.from(mergedMap.values());
       savePersistentData();
 
       // Perform resilient write to Supabase with automatic column mismatch handling
-      const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, complaintsArray);
+      const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, localComplaintsCache);
 
       if (error) {
         console.error("Supabase UPSERT error:", error);

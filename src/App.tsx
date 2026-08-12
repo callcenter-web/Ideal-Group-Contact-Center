@@ -66,6 +66,12 @@ const SUPABASE_URL = "https://qsistbvaukxuwebqupiy.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Npa3x5SHHp65jinonZFnKA_56lBMOQb";
 export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const getFormattedDateTime = (d: Date = new Date()): string => {
+  const dateStr = d.toISOString().split("T")[0];
+  const timeStr = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return `${dateStr} ${timeStr}`;
+};
+
 export default function App() {
   // State
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -521,9 +527,29 @@ export default function App() {
       }
 
       const data = JSON.parse(text);
-      if (data.complaints) {
-        setComplaints(data.complaints);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      if (data.complaints && Array.isArray(data.complaints)) {
+        setComplaints((prev) => {
+          if (!prev || prev.length === 0) {
+            localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+            return data.complaints;
+          }
+          const serverMap = new Map<string, Complaint>();
+          data.complaints.forEach((c: Complaint) => {
+            if (c && c.id) serverMap.set(String(c.id).trim().toUpperCase(), c);
+          });
+
+          const combinedMap = new Map<string, Complaint>(serverMap);
+          prev.forEach((p) => {
+            const key = String(p.id).trim().toUpperCase();
+            if (!combinedMap.has(key)) {
+              combinedMap.set(key, p);
+            }
+          });
+
+          const merged = Array.from(combinedMap.values());
+          localStorage.setItem("ideal_group_complaints", JSON.stringify(merged));
+          return merged;
+        });
       }
       setSupabaseActive(data.isSupabaseActive);
       if (!data.isSupabaseActive && data.error) {
@@ -556,16 +582,13 @@ export default function App() {
     fetchComplaints();
   }, []);
 
-  // Periodic auto-retry if Supabase connection is currently marked offline/error
+  // Continuous background synchronization across IP addresses and devices every 5 seconds
   useEffect(() => {
-    if (supabaseActive === false) {
-      const interval = setInterval(() => {
-        console.log("Auto-retrying Supabase connection check...");
-        fetchComplaints();
-      }, 15000);
-      return () => clearInterval(interval);
-    }
-  }, [supabaseActive]);
+    const syncInterval = setInterval(() => {
+      fetchComplaints();
+    }, 5000);
+    return () => clearInterval(syncInterval);
+  }, []);
 
   const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
     try {
@@ -994,14 +1017,14 @@ export default function App() {
         }
         
         if (currentUser?.role === "agent") {
-          const submitDate = new Date().toISOString().split("T")[0];
+          const submitDateTime = getFormattedDateTime();
           isConnectedNow = 
             formFeedbackStatus !== "Customer Unreachable" && 
             formFinalStatus !== "Unreachable";
 
           return {
             ...c,
-            stationContactedDate: submitDate,
+            stationContactedDate: submitDateTime,
             stationResolutionNotes: formStationResolutionNotes,
             agentName: formAgentName || `${currentUser.station} Adviser`,
             status: "Contacted" as FollowUpStatus, // Auto mark as Contacted
@@ -1009,14 +1032,18 @@ export default function App() {
             feedbackStatus: formFeedbackStatus,
             finalStatus: formFinalStatus,
             solutionProvidedByAftermarket: formStationResolutionNotes, // Sync with action taken
-            solutionDate: submitDate, // Sync with contacted date
+            solutionDate: submitDateTime, // Sync with contacted date and time
             followUpDate: formFollowUpDate,
-            updatedAt: submitDate
+            updatedAt: new Date().toISOString()
           };
         }
 
         if (currentUser?.role === "callcenter") {
-          const submitDate = formCallCenterContactedDate || new Date().toISOString().split("T")[0];
+          const submitDate = formCallCenterContactedDate ? (
+            formCallCenterContactedDate.includes(" ") 
+              ? formCallCenterContactedDate 
+              : `${formCallCenterContactedDate} ${new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })}`
+          ) : getFormattedDateTime();
           const is1stAttempt = formAttemptStage === "1st Attempt";
 
           let calcStatus: FollowUpStatus = "Pending";
@@ -1288,9 +1315,9 @@ export default function App() {
       setFormAgentName(selectedComplaint.agentName || (currentUser?.role === "agent" ? currentUser.station + " Agent" : ""));
       
       // Load custom fields
-      setFormStationContactedDate(selectedComplaint.stationContactedDate || new Date().toISOString().split("T")[0]);
+      setFormStationContactedDate(selectedComplaint.stationContactedDate || getFormattedDateTime());
       setFormStationResolutionNotes(selectedComplaint.stationResolutionNotes || "");
-      setFormCallCenterContactedDate(new Date().toISOString().split("T")[0]);
+      setFormCallCenterContactedDate(selectedComplaint.callCenterContactedDate || getFormattedDateTime());
       setFormCallCenterFinalRemarks(selectedComplaint.callCenterFinalRemarks || "");
       setFormCallCenterFinalSatisfaction(selectedComplaint.callCenterFinalSatisfaction || "Neutral");
       setFormAssignedStation(selectedComplaint.station || "");

@@ -182,10 +182,65 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
     const resolved = stationComplaints.filter(c => c.status === "Resolved").length;
-    const pending = total - resolved;
+    const escalated = stationComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated").length;
+    const pending = Math.max(0, total - resolved - escalated);
+
+    // Aging Buckets
+    let days0_3 = 0;
+    let days3_5 = 0;
+    let days6_10 = 0;
+    let days10Plus = 0;
+
+    stationComplaints.forEach((c) => {
+      const { days } = getComplaintAging(c);
+      if (days <= 3) days0_3++;
+      else if (days <= 5) days3_5++;
+      else if (days <= 10) days6_10++;
+      else days10Plus++;
+    });
+
+    const resolutionRate = total > 0 ? `${Math.round((resolved / total) * 100)}%` : "0%";
     const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
-    
-    // Average aging
+
+    // 1) Average Aging Pending to contacted (Days)
+    let pendingToContactedSum = 0;
+    let pendingToContactedCount = 0;
+    stationComplaints.forEach((c) => {
+      const contactedDate = c.stationContactedDate || c.callCenterContactedDate;
+      const start = c.date;
+      const end = contactedDate || "2026-06-24";
+      pendingToContactedSum += getDaysDiff(start, end);
+      pendingToContactedCount++;
+    });
+    const avgPendingToContacted = pendingToContactedCount > 0 ? Math.round(pendingToContactedSum / pendingToContactedCount) : 0;
+
+    // 2) Average Aging contacted to escalated (Days)
+    let contactedToEscalatedSum = 0;
+    let contactedToEscalatedCount = 0;
+    stationComplaints
+      .filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated")
+      .forEach((c) => {
+        const start = c.stationContactedDate || c.date;
+        const end = c.stationResponseRejectedDate || c.updatedAt || "2026-06-24";
+        contactedToEscalatedSum += getDaysDiff(start, end);
+        contactedToEscalatedCount++;
+      });
+    const avgContactedToEscalated = contactedToEscalatedCount > 0 ? Math.round(contactedToEscalatedSum / contactedToEscalatedCount) : "";
+
+    // 3) Average Aging contacted to resolved (Days)
+    let contactedToResolvedSum = 0;
+    let contactedToResolvedCount = 0;
+    stationComplaints
+      .filter(c => c.status === "Resolved")
+      .forEach((c) => {
+        const start = c.stationContactedDate || c.date;
+        const end = c.solutionDate || c.callCenterContactedDate || c.updatedAt || "2026-06-24";
+        contactedToResolvedSum += getDaysDiff(start, end);
+        contactedToResolvedCount++;
+      });
+    const avgContactedToResolved = contactedToResolvedCount > 0 ? Math.round(contactedToResolvedSum / contactedToResolvedCount) : "";
+
+    // Overall Average aging
     let totalAgingDays = 0;
     stationComplaints.forEach((c) => {
       totalAgingDays += getComplaintAging(c).days;
@@ -215,7 +270,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       total,
       resolved,
       pending,
+      escalated,
+      days0_3,
+      days3_5,
+      days6_10,
+      days10Plus,
+      resolutionRate,
       rate,
+      avgPendingToContacted,
+      avgContactedToEscalated,
+      avgContactedToResolved,
       avgAging,
       avgAgingColor
     };
@@ -291,8 +355,15 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       "Total Complaints",
       "Resolved Complaints",
       "Pending/In-Progress Complaints",
-      "Resolution Rate (%)",
-      "Average Aging (Days)"
+      "Escalated/Rejected",
+      "0-3 Days (New)",
+      "3-5 Days (Pending)",
+      "6-10 Days (Escalated)",
+      ">10 Days (Critical)",
+      "Resolution Rate Overall(%) (Case open to resolve date)",
+      "Average Aging Pending to contacted(Days)",
+      "Average Aging contacted to escalated(Days)",
+      "Average Aging contacted to resolved(Days)"
     ];
 
     const rows = stationMetrics.map((sm) => [
@@ -301,8 +372,15 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       sm.total.toString(),
       sm.resolved.toString(),
       sm.pending.toString(),
-      `${sm.rate}%`,
-      sm.avgAging.toString()
+      sm.escalated > 0 ? sm.escalated.toString() : "",
+      sm.days0_3 > 0 ? sm.days0_3.toString() : "",
+      sm.days3_5 > 0 ? sm.days3_5.toString() : "",
+      sm.days6_10 > 0 ? sm.days6_10.toString() : "",
+      sm.days10Plus > 0 ? sm.days10Plus.toString() : "",
+      sm.resolutionRate,
+      sm.avgPendingToContacted.toString(),
+      sm.avgContactedToEscalated !== "" ? sm.avgContactedToEscalated.toString() : "",
+      sm.avgContactedToResolved !== "" ? sm.avgContactedToResolved.toString() : ""
     ]);
 
     downloadCSV(headers, rows, `CX_Station_Performance_Report_${new Date().toISOString().split('T')[0]}.csv`);
@@ -730,14 +808,17 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       pdf.rect(12, tableY, 186, 8, "F");
 
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8);
+      pdf.setFontSize(7);
       pdf.setTextColor(255, 255, 255);
-      pdf.text("SERVICE STATION", 16, tableY + 5);
-      pdf.text("LOCATION NAME", 45, tableY + 5);
-      pdf.text("CASE COUNT", 105, tableY + 5, { align: "center" });
-      pdf.text("RESOLVED", 130, tableY + 5, { align: "center" });
-      pdf.text("RECOVERY RATE", 160, tableY + 5, { align: "center" });
-      pdf.text("AVG SLA (DAYS)", 188, tableY + 5, { align: "center" });
+      pdf.text("CODE", 14, tableY + 5);
+      pdf.text("LOCATION NAME", 34, tableY + 5);
+      pdf.text("TOTAL", 80, tableY + 5, { align: "center" });
+      pdf.text("RESOLVED", 95, tableY + 5, { align: "center" });
+      pdf.text("PENDING", 112, tableY + 5, { align: "center" });
+      pdf.text("ESCALATED", 130, tableY + 5, { align: "center" });
+      pdf.text("0-3d / 3-5d / 6-10d / >10d", 158, tableY + 5, { align: "center" });
+      pdf.text("RES RATE", 182, tableY + 5, { align: "center" });
+      pdf.text("AVG SLA", 195, tableY + 5, { align: "center" });
 
       tableY += 8;
 
@@ -754,21 +835,34 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
         pdf.line(12, tableY + 11, 198, tableY + 11);
 
         pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(8.5);
+        pdf.setFontSize(7.5);
         pdf.setTextColor(15, 23, 42);
-        pdf.text(sm.code, 16, tableY + 7);
+        pdf.text(sm.code, 14, tableY + 7);
 
         pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(8);
+        pdf.setFontSize(7);
         pdf.setTextColor(71, 85, 105);
-        pdf.text(sm.name, 45, tableY + 7);
+        const nameShort = sm.name.length > 22 ? sm.name.substring(0, 22) + "..." : sm.name;
+        pdf.text(nameShort, 34, tableY + 7);
 
         pdf.setFont("helvetica", "bold");
-        pdf.text(`${sm.total}`, 105, tableY + 7, { align: "center" });
+        pdf.text(`${sm.total}`, 80, tableY + 7, { align: "center" });
 
         pdf.setFont("helvetica", "normal");
-        pdf.text(`${sm.resolved}`, 130, tableY + 7, { align: "center" });
+        pdf.setTextColor(16, 185, 129);
+        pdf.text(`${sm.resolved}`, 95, tableY + 7, { align: "center" });
 
+        pdf.setTextColor(245, 158, 11);
+        pdf.text(`${sm.pending}`, 112, tableY + 7, { align: "center" });
+
+        pdf.setTextColor(239, 68, 68);
+        pdf.text(`${sm.escalated}`, 130, tableY + 7, { align: "center" });
+
+        pdf.setTextColor(71, 85, 105);
+        pdf.setFontSize(6.5);
+        pdf.text(`${sm.days0_3} / ${sm.days3_5} / ${sm.days6_10} / ${sm.days10Plus}`, 158, tableY + 7, { align: "center" });
+
+        pdf.setFontSize(7.5);
         // Highlight Recovery Rate
         if (sm.rate >= 80) {
           pdf.setTextColor(5, 150, 105); // green
@@ -779,11 +873,11 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
         } else {
           pdf.setTextColor(30, 41, 59); // dark text
         }
-        pdf.text(`${sm.rate}%`, 160, tableY + 7, { align: "center" });
+        pdf.text(`${sm.resolutionRate}`, 182, tableY + 7, { align: "center" });
 
         pdf.setFont("helvetica", "normal");
         pdf.setTextColor(71, 85, 105);
-        pdf.text(`${sm.avgAging}`, 188, tableY + 7, { align: "center" });
+        pdf.text(`${sm.avgPendingToContacted}d`, 195, tableY + 7, { align: "center" });
 
         tableY += 11;
       });
@@ -1263,16 +1357,23 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                 </button>
               </div>
 
-              <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
-                <table className="w-full text-left border-collapse">
+              <div className="overflow-x-auto max-h-[340px] overflow-y-auto">
+                <table className="w-full text-left border-collapse whitespace-nowrap">
                   <thead>
                     <tr className={`border-b text-[9px] font-black uppercase tracking-wider transition-colors duration-500 ${
                       isDark ? "border-slate-800 bg-slate-950/80 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"
                     }`}>
-                      <th className="py-2.5 px-3">Filter</th>
-                      <th className="py-2.5 px-3 text-center">Case Count</th>
-                      <th className="py-2.5 px-3 text-center">Recovery Rate</th>
-                      <th className="py-2.5 px-3 text-right">Avg SLA</th>
+                      <th className="py-2.5 px-3">Service Station</th>
+                      <th className="py-2.5 px-2 text-center">Total</th>
+                      <th className="py-2.5 px-2 text-center">Resolved</th>
+                      <th className="py-2.5 px-2 text-center">Pending</th>
+                      <th className="py-2.5 px-2 text-center">Escalated</th>
+                      <th className="py-2.5 px-2 text-center text-emerald-600">0-3d</th>
+                      <th className="py-2.5 px-2 text-center text-amber-600">3-5d</th>
+                      <th className="py-2.5 px-2 text-center text-orange-600">6-10d</th>
+                      <th className="py-2.5 px-2 text-center text-rose-600">&gt;10d</th>
+                      <th className="py-2.5 px-2 text-center">Res Rate</th>
+                      <th className="py-2.5 px-3 text-right">Avg SLA (Pending&rarr;Contacted)</th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
@@ -1294,19 +1395,40 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                         >
                           <td className="py-2.5 px-3">
                             <p className={`font-bold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{sm.name}</p>
+                            <span className="text-[9px] text-slate-400 font-mono">{sm.code}</span>
                           </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <span className={`font-black px-2.5 py-0.5 rounded border text-[11px] ${
+                          <td className="py-2.5 px-2 text-center">
+                            <span className={`font-black px-2 py-0.5 rounded border text-[10px] ${
                               isDark ? "text-slate-300 bg-slate-950 border-slate-800" : "text-slate-700 bg-slate-100 border-slate-200"
                             }`}>{sm.total}</span>
                           </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <p className={`font-black text-[11px] ${isDark ? "text-red-400" : "text-blue-600"}`}>{sm.rate}%</p>
-                            <p className={`text-[9px] font-semibold ${isDark ? "text-slate-500" : "text-slate-400"}`}>{sm.resolved} of {sm.total}</p>
+                          <td className="py-2.5 px-2 text-center font-bold text-emerald-600">
+                            {sm.resolved}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-amber-600">
+                            {sm.pending}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-rose-600">
+                            {sm.escalated}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-emerald-600 text-[10px]">
+                            {sm.days0_3 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-amber-600 text-[10px]">
+                            {sm.days3_5 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-orange-600 text-[10px]">
+                            {sm.days6_10 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-rose-600 text-[10px]">
+                            {sm.days10Plus || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center">
+                            <p className={`font-black text-[10px] ${isDark ? "text-red-400" : "text-blue-600"}`}>{sm.resolutionRate}</p>
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <span className={sm.avgAgingColor}>
-                              {sm.avgAging} {sm.avgAging === 1 ? "day" : "days"}
+                              {sm.avgPendingToContacted} {sm.avgPendingToContacted === 1 ? "day" : "days"}
                             </span>
                           </td>
                         </tr>

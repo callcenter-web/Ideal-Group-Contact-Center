@@ -206,20 +206,55 @@ export default function CallCenterSLAReportModal({
   const stationBreakdownStats = STATIONS.map((st) => {
     const list = dateFilteredComplaints.filter((c) => matchesStationCodeOrName(c.station, st.code));
     const total = list.length;
-    const pending = list.filter((c) => !isStationContacted(c)).length;
-    const contacted = list.filter((c) => isStationContacted(c)).length;
     const resolved = list.filter((c) => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
     const reassigned = list.filter((c) => c.stationResponseStatus === "Rejected" || c.finalStatus?.includes("Re-assigned")).length;
-    const resRate = total > 0 ? Math.round((resolved / total) * 100) : 100;
+    const pending = Math.max(0, total - resolved - reassigned);
+    const resRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+
+    let days0_3 = 0;
+    let days3_5 = 0;
+    let days6_10 = 0;
+    let days10Plus = 0;
+
+    const getDaysDiffHelper = (startStr: string, endStr: string): number => {
+      if (!startStr || !endStr) return 0;
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+      const diffTime = end.getTime() - start.getTime();
+      return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    };
+
+    list.forEach((c) => {
+      const resolveDate = c.callCenterContactedDate || c.stationContactedDate || c.updatedAt || todayStr;
+      const days = c.status === "Resolved" ? getDaysDiffHelper(c.date, resolveDate) : getDaysDiffHelper(c.date, todayStr);
+      if (days <= 3) days0_3++;
+      else if (days <= 5) days3_5++;
+      else if (days <= 10) days6_10++;
+      else days10Plus++;
+    });
+
+    let pendingToContactedSum = 0;
+    let pendingToContactedCount = 0;
+    list.forEach((c) => {
+      const contactedDate = c.stationContactedDate || c.callCenterContactedDate;
+      pendingToContactedSum += getDaysDiffHelper(c.date, contactedDate || todayStr);
+      pendingToContactedCount++;
+    });
+    const avgPendingToContacted = pendingToContactedCount > 0 ? Math.round(pendingToContactedSum / pendingToContactedCount) : 0;
 
     return {
       station: st,
       total,
       pending,
-      contacted,
       resolved,
       reassigned,
-      resRate
+      resRate,
+      days0_3,
+      days3_5,
+      days6_10,
+      days10Plus,
+      avgPendingToContacted
     };
   });
 
@@ -648,16 +683,20 @@ export default function CallCenterSLAReportModal({
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-xs border-collapse whitespace-nowrap">
                     <thead>
                       <tr className="bg-slate-100 text-slate-700 font-bold text-[10px] uppercase border-b border-slate-200">
                         <th className="py-2.5 px-3">Service Station</th>
-                        <th className="py-2.5 px-3 text-center">Total Assigned</th>
-                        <th className="py-2.5 px-3 text-center">Pending Action</th>
-                        <th className="py-2.5 px-3 text-center">Station Contacted</th>
-                        <th className="py-2.5 px-3 text-center">Resolved</th>
-                        <th className="py-2.5 px-3 text-center">Re-assigned Back</th>
-                        <th className="py-2.5 px-3 text-center">Resolution Rate</th>
+                        <th className="py-2.5 px-2 text-center">Total Assigned</th>
+                        <th className="py-2.5 px-2 text-center">Resolved</th>
+                        <th className="py-2.5 px-2 text-center">Pending</th>
+                        <th className="py-2.5 px-2 text-center">Re-assigned/Escalated</th>
+                        <th className="py-2.5 px-2 text-center text-emerald-700">0-3d (New)</th>
+                        <th className="py-2.5 px-2 text-center text-amber-700">3-5d (Pending)</th>
+                        <th className="py-2.5 px-2 text-center text-orange-700">6-10d (Esc)</th>
+                        <th className="py-2.5 px-2 text-center text-rose-700">&gt;10d (Crit)</th>
+                        <th className="py-2.5 px-2 text-center">Resolution Rate</th>
+                        <th className="py-2.5 px-3 text-right">Avg SLA (Days)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -677,11 +716,10 @@ export default function CallCenterSLAReportModal({
                               </span>
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-center font-black text-blue-900">{st.total}</td>
-                          <td className="py-2.5 px-3 text-center font-bold text-amber-700">{st.pending}</td>
-                          <td className="py-2.5 px-3 text-center font-bold text-emerald-700">{st.contacted}</td>
-                          <td className="py-2.5 px-3 text-center font-bold text-purple-700">{st.resolved}</td>
-                          <td className="py-2.5 px-3 text-center font-bold text-rose-700">
+                          <td className="py-2.5 px-2 text-center font-black text-blue-900">{st.total}</td>
+                          <td className="py-2.5 px-2 text-center font-bold text-emerald-700">{st.resolved}</td>
+                          <td className="py-2.5 px-2 text-center font-bold text-amber-700">{st.pending}</td>
+                          <td className="py-2.5 px-2 text-center font-bold text-rose-700">
                             {st.reassigned > 0 ? (
                               <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded text-[10px] font-black">
                                 {st.reassigned}
@@ -690,10 +728,25 @@ export default function CallCenterSLAReportModal({
                               <span className="text-slate-400">0</span>
                             )}
                           </td>
-                          <td className="py-2.5 px-3 text-center font-black">
+                          <td className="py-2.5 px-2 text-center font-bold text-emerald-700 text-[10px]">
+                            {st.days0_3 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-amber-700 text-[10px]">
+                            {st.days3_5 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-orange-700 text-[10px]">
+                            {st.days6_10 || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-bold text-rose-700 text-[10px]">
+                            {st.days10Plus || "-"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-black">
                             <span className={`px-2 py-0.5 rounded text-[10px] ${st.resRate >= 80 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
                               {st.resRate}%
                             </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-bold text-slate-600">
+                            {st.avgPendingToContacted} {st.avgPendingToContacted === 1 ? "day" : "days"}
                           </td>
                         </tr>
                       ))}
