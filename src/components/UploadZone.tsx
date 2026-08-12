@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Complaint } from "../types";
+import { formatAndSanitizeDate, sanitizeComplaintDates } from "../utils/agingUtils";
 
 interface UploadZoneProps {
   onDataLoaded: (newComplaints: Complaint[], overwrite: boolean) => void;
@@ -232,13 +233,19 @@ export default function UploadZone({
           const customDate = entryDate || new Date().toISOString().split("T")[0];
           const customDateTime = getFormattedEntryDateTime();
 
-          const finalDate = (applyMode === "force" || !(finishDate || earliestStartDate))
-            ? customDate
-            : (finishDate || earliestStartDate);
+          const cleanFinishDate = formatAndSanitizeDate(finishDate);
+          const cleanEarliestStartDate = formatAndSanitizeDate(earliestStartDate);
+          const cleanCallCenterDate = formatAndSanitizeDate(callCenterDateStr);
 
-          const finalReceivedDateTime = (applyMode === "force" || !(finishDate || earliestStartDate))
+          const rawDate = (applyMode === "force" || !(cleanFinishDate || cleanEarliestStartDate))
+            ? customDate
+            : (cleanFinishDate || cleanEarliestStartDate);
+
+          const finalDate = formatAndSanitizeDate(rawDate) || customDate;
+
+          const finalReceivedDateTime = (applyMode === "force" || !(cleanFinishDate || cleanEarliestStartDate))
             ? customDateTime
-            : `${finishDate || earliestStartDate} 08:00 AM`;
+            : `${finalDate} 08:00 AM`;
 
           // Generate primary ID strictly based on WO Number if available
           const primaryWoNo = woNo ? woNo.trim() : "";
@@ -263,7 +270,7 @@ export default function UploadZone({
           if (!customerPhone) missingFields.push("Phone No");
           if (!primaryWoNo) missingFields.push("WO Number");
 
-          const complaintObj: Complaint = {
+          const rawComplaint: Complaint = {
             id: primaryId,
             customerName: customerName || "Unknown Customer",
             customerPhone: customerPhone || "N/A",
@@ -278,6 +285,7 @@ export default function UploadZone({
             status: "Pending",
             notes: "",
             agentName: "",
+            callCenterContactedDate: cleanCallCenterDate,
             
             month,
             company,
@@ -297,10 +305,12 @@ export default function UploadZone({
 
             stationContactedDate: "",
             stationResolutionNotes: "",
-            callCenterContactedDate: callCenterDateStr || "",
+            callCenterContactedDate: cleanCallCenterDate || "",
             callCenterFinalRemarks: "",
             callCenterFinalSatisfaction: undefined
           };
+
+          const complaintObj = sanitizeComplaintDates(rawComplaint);
 
           return {
             id: primaryId,

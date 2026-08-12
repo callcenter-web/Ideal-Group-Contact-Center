@@ -19,12 +19,21 @@ export const parseComplaintDate = (dateStr?: string, dateTimeStr?: string): Date
   const str = dateTimeStr || dateStr;
   if (!str) return new Date();
 
+  const clean = String(str).trim();
+  if (!clean) return new Date();
+
+  // Check Excel serial number (e.g. 46235 or 46235.22916666667)
+  const numVal = Number(clean);
+  if (!isNaN(numVal) && numVal > 20000 && numVal < 70000) {
+    const jsDate = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+    if (!isNaN(jsDate.getTime())) return jsDate;
+  }
+
   // Try standard parsing
-  const d = new Date(str);
+  const d = new Date(clean);
   if (!isNaN(d.getTime())) return d;
 
   // Try YYYY-MM-DD or DD-MM-YYYY
-  const clean = str.trim();
   const parts = clean.split(/[\/\-\s]/);
   if (parts.length >= 3) {
     if (parts[0].length === 4) {
@@ -56,6 +65,59 @@ export const parseComplaintDate = (dateStr?: string, dateTimeStr?: string): Date
   }
 
   return new Date();
+};
+
+export const formatAndSanitizeDate = (val: any): string => {
+  if (val === null || val === undefined || val === "") {
+    return "";
+  }
+  const strVal = String(val).trim();
+  if (!strVal) return "";
+
+  // Check Excel serial number
+  const numVal = Number(strVal);
+  if (!isNaN(numVal) && numVal > 20000 && numVal < 70000) {
+    const jsDate = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+    if (!isNaN(jsDate.getTime())) {
+      return jsDate.toISOString().split("T")[0];
+    }
+  }
+
+  // ISO date format YYYY-MM-DD...
+  if (/^\d{4}-\d{2}-\d{2}/.test(strVal)) {
+    return strVal.slice(0, 10);
+  }
+
+  const parsed = parseComplaintDate(strVal);
+  if (parsed && !isNaN(parsed.getTime())) {
+    return parsed.toISOString().split("T")[0];
+  }
+
+  return strVal;
+};
+
+export const sanitizeComplaintDates = (c: Complaint): Complaint => {
+  if (!c) return c;
+  const cleanDate = formatAndSanitizeDate(c.date) || new Date().toISOString().split("T")[0];
+  const cleanStationContact = c.stationContactedDate ? formatAndSanitizeDate(c.stationContactedDate) : c.stationContactedDate;
+  const cleanCCContact = c.callCenterContactedDate ? formatAndSanitizeDate(c.callCenterContactedDate) : c.callCenterContactedDate;
+  const cleanSolution = c.solutionDate ? formatAndSanitizeDate(c.solutionDate) : c.solutionDate;
+
+  let cleanReceived = c.receivedDateTime;
+  if (cleanReceived && /^\d{5}/.test(cleanReceived.trim())) {
+    cleanReceived = `${cleanDate} 08:00 AM`;
+  } else if (!cleanReceived) {
+    cleanReceived = `${cleanDate} 08:00 AM`;
+  }
+
+  return {
+    ...c,
+    date: cleanDate,
+    stationContactedDate: cleanStationContact,
+    callCenterContactedDate: cleanCCContact,
+    solutionDate: cleanSolution,
+    receivedDateTime: cleanReceived
+  };
 };
 
 export const calculateNonSundayMs = (

@@ -37,6 +37,7 @@ import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, 
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
+import { sanitizeComplaintDates } from "./utils/agingUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
 import StationOverview from "./components/StationOverview";
@@ -577,13 +578,18 @@ export default function App() {
     const saved = localStorage.getItem("ideal_group_complaints");
     if (saved) {
       try {
-        setComplaints(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setComplaints(parsed.map(sanitizeComplaintDates));
+        } else {
+          setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
+        }
       } catch (e) {
         console.error("Failed to parse saved complaints:", e);
-        setComplaints(DEMO_COMPLAINTS);
+        setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
       }
     } else {
-      setComplaints(DEMO_COMPLAINTS);
+      setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
     }
 
     fetchComplaints();

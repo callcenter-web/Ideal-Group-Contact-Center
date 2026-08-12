@@ -16,13 +16,16 @@ import {
   Activity,
   ShieldAlert,
   Building2,
-  Headphones
+  Headphones,
+  Calculator,
+  Printer
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
@@ -63,8 +66,8 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   // Helper: date difference in days
   const getDaysDiff = (startStr: string, endStr: string): number => {
     if (!startStr || !endStr) return 0;
-    const start = new Date(startStr);
-    const end = new Date(endStr);
+    const start = parseComplaintDate(startStr);
+    const end = parseComplaintDate(endStr);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
     const diffTime = end.getTime() - start.getTime();
     return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
@@ -177,12 +180,59 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     else redCount++;
   });
 
+  // Helper for overall list aging metrics
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const getOverallReportAgingStats = (complaintList: Complaint[]) => {
+    let stSum = 0, stCount = 0;
+    let ccSum = 0, ccCount = 0;
+    let solveSum = 0, solveCount = 0;
+
+    complaintList.forEach((c) => {
+      // 1) Avg Days to Contact Customer (Service Station)
+      const stContactDate = c.stationContactedDate;
+      stSum += getDaysDiff(c.date, stContactDate || todayStr);
+      stCount++;
+
+      // 2) Avg Days to Contact Customer (Call Center) - calculated after service station contacted customer
+      const startAfterStation = c.stationContactedDate || c.date;
+      const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
+      ccSum += getDaysDiff(startAfterStation, ccContactDate);
+      ccCount++;
+
+      // 3) Avg Days to Solve Case
+      const isResolved = 
+        c.status === "Resolved" || 
+        c.finalStatus === "Closed" || 
+        c.finalStatus === "Completed" || 
+        c.finalStatus === "Resolved" ||
+        c.feedbackStatus === "Satisfied" || 
+        c.feedbackStatus === "Satisfied After Resolution" || 
+        c.currentSatisfaction === "Satisfied" || 
+        c.currentSatisfaction === "Very Satisfied";
+
+      if (isResolved) {
+        const resolveDate = c.solutionDate || c.updatedAt || todayStr;
+        solveSum += getDaysDiff(c.date, resolveDate);
+        solveCount++;
+      }
+    });
+
+    return {
+      avgDaysStationContact: stCount > 0 ? Math.round(stSum / stCount) : 0,
+      avgDaysCallCenterContact: ccCount > 0 ? Math.round(ccSum / ccCount) : 0,
+      avgDaysToSolveCase: solveCount > 0 ? Math.round(solveSum / solveCount) : 0,
+    };
+  };
+
+  const overallReportAging = getOverallReportAgingStats(filteredComplaints);
+
   // Calculate Service Station Wise Metrics
   const stationMetrics = STATIONS.map((station) => {
     const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
-    const resolved = stationComplaints.filter(c => c.status === "Resolved").length;
-    const escalated = stationComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated").length;
+    const resolved = stationComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
+    const escalated = stationComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated" || c.finalStatus?.includes("Re-assigned")).length;
     const pending = Math.max(0, total - resolved - escalated);
 
     // Aging Buckets
@@ -202,43 +252,10 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     const resolutionRate = total > 0 ? `${Math.round((resolved / total) * 100)}%` : "0%";
     const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
 
-    // 1) Average Aging Pending to contacted (Days)
-    let pendingToContactedSum = 0;
-    let pendingToContactedCount = 0;
-    stationComplaints.forEach((c) => {
-      const contactedDate = c.stationContactedDate || c.callCenterContactedDate;
-      const start = c.date;
-      const end = contactedDate || "2026-06-24";
-      pendingToContactedSum += getDaysDiff(start, end);
-      pendingToContactedCount++;
-    });
-    const avgPendingToContacted = pendingToContactedCount > 0 ? Math.round(pendingToContactedSum / pendingToContactedCount) : 0;
-
-    // 2) Average Aging contacted to escalated (Days)
-    let contactedToEscalatedSum = 0;
-    let contactedToEscalatedCount = 0;
-    stationComplaints
-      .filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated")
-      .forEach((c) => {
-        const start = c.stationContactedDate || c.date;
-        const end = c.stationResponseRejectedDate || c.updatedAt || "2026-06-24";
-        contactedToEscalatedSum += getDaysDiff(start, end);
-        contactedToEscalatedCount++;
-      });
-    const avgContactedToEscalated = contactedToEscalatedCount > 0 ? Math.round(contactedToEscalatedSum / contactedToEscalatedCount) : "";
-
-    // 3) Average Aging contacted to resolved (Days)
-    let contactedToResolvedSum = 0;
-    let contactedToResolvedCount = 0;
-    stationComplaints
-      .filter(c => c.status === "Resolved")
-      .forEach((c) => {
-        const start = c.stationContactedDate || c.date;
-        const end = c.solutionDate || c.callCenterContactedDate || c.updatedAt || "2026-06-24";
-        contactedToResolvedSum += getDaysDiff(start, end);
-        contactedToResolvedCount++;
-      });
-    const avgContactedToResolved = contactedToResolvedCount > 0 ? Math.round(contactedToResolvedSum / contactedToResolvedCount) : "";
+    const stationAging = getOverallReportAgingStats(stationComplaints);
+    const avgDaysStationContact = stationAging.avgDaysStationContact;
+    const avgDaysCallCenterContact = stationAging.avgDaysCallCenterContact;
+    const avgDaysToSolveCase = stationAging.avgDaysToSolveCase;
 
     // Overall Average aging
     let totalAgingDays = 0;
@@ -277,9 +294,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       days10Plus,
       resolutionRate,
       rate,
-      avgPendingToContacted,
-      avgContactedToEscalated,
-      avgContactedToResolved,
+      avgDaysStationContact,
+      avgDaysCallCenterContact,
+      avgDaysToSolveCase,
       avgAging,
       avgAgingColor
     };
@@ -361,9 +378,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       "6-10 Days (Escalated)",
       ">10 Days (Critical)",
       "Resolution Rate Overall(%) (Case open to resolve date)",
-      "Average Aging Pending to contacted(Days)",
-      "Average Aging contacted to escalated(Days)",
-      "Average Aging contacted to resolved(Days)"
+      "Avg Days to Contact Customer (Service Station)",
+      "Avg Days to Contact Customer (Call Center)",
+      "Average Days to Solve Case"
     ];
 
     const rows = stationMetrics.map((sm) => [
@@ -378,9 +395,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       sm.days6_10 > 0 ? sm.days6_10.toString() : "",
       sm.days10Plus > 0 ? sm.days10Plus.toString() : "",
       sm.resolutionRate,
-      sm.avgPendingToContacted.toString(),
-      sm.avgContactedToEscalated !== "" ? sm.avgContactedToEscalated.toString() : "",
-      sm.avgContactedToResolved !== "" ? sm.avgContactedToResolved.toString() : ""
+      sm.avgDaysStationContact.toString(),
+      sm.avgDaysCallCenterContact.toString(),
+      sm.avgDaysToSolveCase.toString()
     ]);
 
     downloadCSV(headers, rows, `CX_Station_Performance_Report_${new Date().toISOString().split('T')[0]}.csv`);
@@ -1254,6 +1271,36 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
         isDark ? "bg-slate-950/60 border-slate-900" : "bg-slate-50 border-slate-200"
       }`}>
         
+        {/* SLA & AGING FORMULAS REFERENCE BANNER */}
+        <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 shadow-md">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-blue-400 font-black text-xs uppercase tracking-wider">
+              <Calculator className="h-4 w-4" />
+              SLA & Aging Formulas Reference
+            </div>
+            <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded font-mono font-bold">
+              Operational Metrics Standard
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+            <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+              <span className="font-bold text-amber-300 block mb-0.5">1. Service Station Contact SLA</span>
+              <p className="text-slate-300 font-mono text-[10px]">Avg Days to Contact Customer (Service Station) = Station Contact Date - Registration Date</p>
+              <p className="text-slate-400 text-[10px] mt-1 font-semibold">Target: ≤ 2 Working Days (Excludes Sunday)</p>
+            </div>
+            <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+              <span className="font-bold text-emerald-300 block mb-0.5">2. Call Center Contact SLA</span>
+              <p className="text-slate-300 font-mono text-[10px]">Avg Days to Contact Customer (Call Center) = Call Center Contact Date - Registration Date</p>
+              <p className="text-slate-400 text-[10px] mt-1 font-semibold">Target: ≤ 24 Hours (1 Day)</p>
+            </div>
+            <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+              <span className="font-bold text-rose-300 block mb-0.5">3. Case Resolution SLA</span>
+              <p className="text-slate-300 font-mono text-[10px]">Average Days to Solve Case = Resolution / Solution Date - Registration Date</p>
+              <p className="text-slate-400 text-[10px] mt-1 font-semibold">Note: Speed of total case solution</p>
+            </div>
+          </div>
+        </div>
+        
         {/* PDF Heading Block (Only rendered clearly when downloaded) */}
         <div className="hidden border-b-2 border-slate-200 pb-4 mb-4" style={{ display: 'none' }} id="pdf-report-header">
           <div className="flex items-center justify-between">
@@ -1373,7 +1420,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                       <th className="py-2.5 px-2 text-center text-orange-600">6-10d</th>
                       <th className="py-2.5 px-2 text-center text-rose-600">&gt;10d</th>
                       <th className="py-2.5 px-2 text-center">Res Rate</th>
-                      <th className="py-2.5 px-3 text-right">Avg SLA (Pending&rarr;Contacted)</th>
+                      <th className="py-2.5 px-2 text-center text-blue-600">Avg Days to Contact Customer (Service Station)</th>
+                      <th className="py-2.5 px-2 text-center text-amber-600">Avg Days to Contact Customer (Call Center)</th>
+                      <th className="py-2.5 px-2 text-center text-emerald-600">Average Days to Solve Case</th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
@@ -1426,15 +1475,38 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                           <td className="py-2.5 px-2 text-center">
                             <p className={`font-black text-[10px] ${isDark ? "text-red-400" : "text-blue-600"}`}>{sm.resolutionRate}</p>
                           </td>
-                          <td className="py-2.5 px-3 text-right">
-                            <span className={sm.avgAgingColor}>
-                              {sm.avgPendingToContacted} {sm.avgPendingToContacted === 1 ? "day" : "days"}
-                            </span>
+                          <td className="py-2.5 px-2 text-center font-extrabold text-blue-600">
+                            {sm.avgDaysStationContact} {sm.avgDaysStationContact === 1 ? "day" : "days"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-extrabold text-amber-600">
+                            {sm.avgDaysCallCenterContact} {sm.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-extrabold text-emerald-600">
+                            {sm.avgDaysToSolveCase} {sm.avgDaysToSolveCase === 1 ? "day" : "days"}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
+                  <tfoot>
+                    <tr className={`font-black text-xs border-t-2 ${isDark ? "bg-slate-950 border-slate-700 text-slate-100" : "bg-slate-900 border-slate-800 text-white"}`}>
+                      <td className="py-3 px-3 uppercase tracking-wider">Overall Summary / Total</td>
+                      <td className="py-3 px-2 text-center">{filteredComplaints.length}</td>
+                      <td className="py-3 px-2 text-center text-emerald-400">{filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length}</td>
+                      <td className="py-3 px-2 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.pending, 0)}</td>
+                      <td className="py-3 px-2 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.escalated, 0)}</td>
+                      <td className="py-3 px-2 text-center text-emerald-400">{stationMetrics.reduce((a, b) => a + b.days0_3, 0)}</td>
+                      <td className="py-3 px-2 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.days3_5, 0)}</td>
+                      <td className="py-3 px-2 text-center text-orange-400">{stationMetrics.reduce((a, b) => a + b.days6_10, 0)}</td>
+                      <td className="py-3 px-2 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.days10Plus, 0)}</td>
+                      <td className="py-3 px-2 text-center text-purple-300">
+                        {filteredComplaints.length > 0 ? Math.round((filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length / filteredComplaints.length) * 100) : 0}%
+                      </td>
+                      <td className="py-3 px-2 text-center text-blue-300">{overallReportAging.avgDaysStationContact} days</td>
+                      <td className="py-3 px-2 text-center text-amber-300">{overallReportAging.avgDaysCallCenterContact} days</td>
+                      <td className="py-3 px-2 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase} days</td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>

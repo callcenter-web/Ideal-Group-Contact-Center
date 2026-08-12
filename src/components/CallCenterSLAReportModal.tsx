@@ -20,8 +20,14 @@ import {
   Headphones,
   AlertCircle,
   RotateCcw,
-  CheckCircle
+  CheckCircle,
+  Calculator,
+  FileText,
+  Printer,
+  BarChart3
 } from "lucide-react";
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
@@ -47,12 +53,14 @@ export default function CallCenterSLAReportModal({
   const [perspective, setPerspective] = useState<"station" | "callcenter">("station");
 
   // Shared Filters
+  const [timePreset, setTimePreset] = useState<"all" | "daily" | "weekly" | "monthly">("all");
   const [monthFilter, setMonthFilter] = useState<string>("all");
   const [startDateFilter, setStartDateFilter] = useState<string>("");
   const [endDateFilter, setEndDateFilter] = useState<string>("");
   const [selectedStation, setSelectedStation] = useState<string>("all");
   const [feedbackStatusFilter, setFeedbackStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   // Station Perspective Specific Filters
   const [stationWorkflowStatusFilter, setStationWorkflowStatusFilter] = useState<string>("all");
@@ -107,7 +115,7 @@ export default function CallCenterSLAReportModal({
     )
   ).sort();
 
-  // Helper: calculate Call Center age / SLA difference in days (Difference between Call Center contact date or current date, and Service Station contact date)
+  // Helper: calculate Call Center age / SLA difference in days
   const getCallCenterAgeInDays = (c: Complaint) => {
     const stationDateStr = c.stationContactedDate || c.date || todayStr;
     const ccDateStr = c.callCenterContactedDate || todayStr;
@@ -120,7 +128,7 @@ export default function CallCenterSLAReportModal({
     return Math.floor(diffTime / (1000 * 60 * 60 * 24));
   };
 
-  // Helper: SLA Status for Call Center (24 Hours SLA target based on difference between Call Center contact and Service Station response)
+  // Helper: SLA Status for Call Center (24 Hours SLA target)
   const getCallCenterSLAStatus = (c: Complaint) => {
     const ageDays = getCallCenterAgeInDays(c);
     if (c.callCenterContactedDate) {
@@ -143,16 +151,87 @@ export default function CallCenterSLAReportModal({
     return "11+";
   };
 
-  // Master Filter by Date Range / Month first
+  // Master Filter by Time Preset / Date Range / Month
   const dateFilteredComplaints = complaints.filter((c) => {
-    if (monthFilter !== "all") {
-      const cMonth = c.month || (c.date ? c.date.substring(0, 7) : "");
-      if (!cMonth.includes(monthFilter)) return false;
+    const complaintDateStr = c.date || todayStr;
+
+    if (timePreset === "daily") {
+      // Daily = Complaints from today or last 24-48h
+      const cDate = new Date(complaintDateStr);
+      const refDate = new Date(todayStr);
+      const diffDays = (refDate.getTime() - cDate.getTime()) / (1000 * 3600 * 24);
+      if (diffDays > 2) return false;
+    } else if (timePreset === "weekly") {
+      // Weekly = Complaints from last 7 days
+      const cDate = new Date(complaintDateStr);
+      const refDate = new Date(todayStr);
+      const diffDays = (refDate.getTime() - cDate.getTime()) / (1000 * 3600 * 24);
+      if (diffDays > 7) return false;
+    } else if (timePreset === "monthly") {
+      // Monthly = Complaints from last 30 days or month filter
+      if (monthFilter !== "all") {
+        const cMonth = c.month || (c.date ? c.date.substring(0, 7) : "");
+        if (!cMonth.includes(monthFilter)) return false;
+      } else {
+        const cDate = new Date(complaintDateStr);
+        const refDate = new Date(todayStr);
+        const diffDays = (refDate.getTime() - cDate.getTime()) / (1000 * 3600 * 24);
+        if (diffDays > 31) return false;
+      }
+    } else {
+      if (monthFilter !== "all") {
+        const cMonth = c.month || (c.date ? c.date.substring(0, 7) : "");
+        if (!cMonth.includes(monthFilter)) return false;
+      }
     }
-    if (startDateFilter && c.date && c.date < startDateFilter) return false;
-    if (endDateFilter && c.date && c.date > endDateFilter) return false;
+
+    if (startDateFilter && complaintDateStr < startDateFilter) return false;
+    if (endDateFilter && complaintDateStr > endDateFilter) return false;
     return true;
   });
+
+  // Handler to generate graphical PDF of report
+  const handleExportGraphicalPDF = async () => {
+    const reportElement = document.getElementById("sla-modal-report-content");
+    if (!reportElement) return;
+    setIsGeneratingPDF(true);
+
+    try {
+      const canvas = await html2canvas(reportElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: isDark ? "#0f172a" : "#ffffff"
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pdfWidth = 210;
+      const pdfHeight = 297;
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save(`Graphical_SLA_Performance_Report_${perspective}_${timePreset}_${todayStr}.pdf`);
+    } catch (err) {
+      console.error("Graphical PDF export error:", err);
+      alert("Opening print view for graphical PDF download...");
+      window.print();
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
 
   // ==========================================
   // A. SERVICE STATION PERSPECTIVE CALCULATIONS
@@ -202,6 +281,60 @@ export default function CallCenterSLAReportModal({
 
   const stationResolutionRate = totalStationCount > 0 ? Math.round((resolvedStationCount / totalStationCount) * 100) : 100;
 
+  // Helper for overall list aging metrics
+  const getDaysDiffHelper = (startStr: string, endStr: string): number => {
+    if (!startStr || !endStr) return 0;
+    const start = parseComplaintDate(startStr);
+    const end = parseComplaintDate(endStr);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+    const diffTime = end.getTime() - start.getTime();
+    return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+  };
+
+  const getOverallAgingStats = (complaintList: Complaint[]) => {
+    let stSum = 0, stCount = 0;
+    let ccSum = 0, ccCount = 0;
+    let solveSum = 0, solveCount = 0;
+
+    complaintList.forEach((c) => {
+      // 1) Avg Days to Contact Customer (Service Station)
+      const stContactDate = c.stationContactedDate;
+      stSum += getDaysDiffHelper(c.date, stContactDate || todayStr);
+      stCount++;
+
+      // 2) Avg Days to Contact Customer (Call Center) - calculated after service station contacted customer
+      const startAfterStation = c.stationContactedDate || c.date;
+      const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
+      ccSum += getDaysDiffHelper(startAfterStation, ccContactDate);
+      ccCount++;
+
+      // 3) Avg Days to Solve Case
+      const isResolved = 
+        c.status === "Resolved" || 
+        c.finalStatus === "Closed" || 
+        c.finalStatus === "Completed" || 
+        c.finalStatus === "Resolved" ||
+        c.feedbackStatus === "Satisfied" || 
+        c.feedbackStatus === "Satisfied After Resolution" || 
+        c.currentSatisfaction === "Satisfied" || 
+        c.currentSatisfaction === "Very Satisfied";
+
+      if (isResolved) {
+        const resolveDate = c.solutionDate || c.updatedAt || todayStr;
+        solveSum += getDaysDiffHelper(c.date, resolveDate);
+        solveCount++;
+      }
+    });
+
+    return {
+      avgDaysStationContact: stCount > 0 ? Math.round(stSum / stCount) : 0,
+      avgDaysCallCenterContact: ccCount > 0 ? Math.round(ccSum / ccCount) : 0,
+      avgDaysToSolveCase: solveCount > 0 ? Math.round(solveSum / solveCount) : 0,
+    };
+  };
+
+  const overallStationAging = getOverallAgingStats(stationPerspectiveComplaints);
+
   // Station-wise detailed breakdown array
   const stationBreakdownStats = STATIONS.map((st) => {
     const list = dateFilteredComplaints.filter((c) => matchesStationCodeOrName(c.station, st.code));
@@ -216,15 +349,6 @@ export default function CallCenterSLAReportModal({
     let days6_10 = 0;
     let days10Plus = 0;
 
-    const getDaysDiffHelper = (startStr: string, endStr: string): number => {
-      if (!startStr || !endStr) return 0;
-      const start = new Date(startStr);
-      const end = new Date(endStr);
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-      const diffTime = end.getTime() - start.getTime();
-      return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-    };
-
     list.forEach((c) => {
       const resolveDate = c.callCenterContactedDate || c.stationContactedDate || c.updatedAt || todayStr;
       const days = c.status === "Resolved" ? getDaysDiffHelper(c.date, resolveDate) : getDaysDiffHelper(c.date, todayStr);
@@ -234,14 +358,7 @@ export default function CallCenterSLAReportModal({
       else days10Plus++;
     });
 
-    let pendingToContactedSum = 0;
-    let pendingToContactedCount = 0;
-    list.forEach((c) => {
-      const contactedDate = c.stationContactedDate || c.callCenterContactedDate;
-      pendingToContactedSum += getDaysDiffHelper(c.date, contactedDate || todayStr);
-      pendingToContactedCount++;
-    });
-    const avgPendingToContacted = pendingToContactedCount > 0 ? Math.round(pendingToContactedSum / pendingToContactedCount) : 0;
+    const aging = getOverallAgingStats(list);
 
     return {
       station: st,
@@ -254,7 +371,9 @@ export default function CallCenterSLAReportModal({
       days3_5,
       days6_10,
       days10Plus,
-      avgPendingToContacted
+      avgDaysStationContact: aging.avgDaysStationContact,
+      avgDaysCallCenterContact: aging.avgDaysCallCenterContact,
+      avgDaysToSolveCase: aging.avgDaysToSolveCase
     };
   });
 
@@ -509,6 +628,16 @@ export default function CallCenterSLAReportModal({
 
             <button
               type="button"
+              onClick={handleExportGraphicalPDF}
+              disabled={isGeneratingPDF}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2 px-3 rounded-xl shadow-sm flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            >
+              <Printer className="h-4 w-4" />
+              <span>{isGeneratingPDF ? "Generating PDF..." : "Graphical PDF"}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleExportCSV}
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
             >
@@ -526,16 +655,84 @@ export default function CallCenterSLAReportModal({
           </div>
         </div>
 
-        {/* MODAL BODY */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        {/* MODAL BODY (CONTENT CAPTURED BY GRAPHICAL PDF) */}
+        <div id="sla-modal-report-content" className="p-6 overflow-y-auto space-y-6">
 
-          {/* MONTHLY & DATE RANGE FILTER TOOLBAR */}
+          {/* SLA & AGING FORMULAS REFERENCE BANNER */}
+          <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 shadow-md">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-blue-400 font-black text-xs uppercase tracking-wider">
+                <Calculator className="h-4 w-4" />
+                SLA & Aging Formulas Reference
+              </div>
+              <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded font-mono font-bold">
+                Operational Metrics Standard
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+              <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+                <span className="font-bold text-amber-300 block mb-0.5">1. Station Initial Contact SLA</span>
+                <p className="text-slate-300 font-mono text-[10px]">Contact SLA = Station Contact Date - Registration Date</p>
+                <p className="text-slate-400 text-[10px] mt-1 font-semibold">Target: ≤ 2 Working Days (Excludes Sunday)</p>
+              </div>
+              <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+                <span className="font-bold text-emerald-300 block mb-0.5">2. Call Center Verification SLA</span>
+                <p className="text-slate-300 font-mono text-[10px]">Call Center SLA = CC Contact Date - Station Response Date</p>
+                <p className="text-slate-400 text-[10px] mt-1 font-semibold">Target: ≤ 24 Hours (1 Day)</p>
+              </div>
+              <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700">
+                <span className="font-bold text-rose-300 block mb-0.5">3. Avg Aging Contacted to Escalated (Rejected)</span>
+                <p className="text-slate-300 font-mono text-[10px]">Avg Escalation Age = Σ(Date Rejected Back to Station - Date Contacted) / Total Escalated</p>
+                <p className="text-slate-400 text-[10px] mt-1 font-semibold">Note: Escalated = Complaints Rejected back to Service Station</p>
+              </div>
+            </div>
+          </div>
+
+          {/* TIME PERIOD SUMMARY PRESETS & DATE RANGE FILTER TOOLBAR */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-blue-600 shrink-0" />
               <span className="text-xs font-black uppercase text-slate-800 tracking-wider">
-                Monthly & Date Range Filters:
+                Summary Timeframe:
               </span>
+              <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg border border-slate-300">
+                <button
+                  type="button"
+                  onClick={() => setTimePreset("daily")}
+                  className={`px-2.5 py-1 rounded text-[11px] font-black transition-all cursor-pointer ${
+                    timePreset === "daily" ? "bg-blue-600 text-white shadow-xs" : "text-slate-700 hover:text-slate-900"
+                  }`}
+                >
+                  Daily Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimePreset("weekly")}
+                  className={`px-2.5 py-1 rounded text-[11px] font-black transition-all cursor-pointer ${
+                    timePreset === "weekly" ? "bg-blue-600 text-white shadow-xs" : "text-slate-700 hover:text-slate-900"
+                  }`}
+                >
+                  Weekly Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimePreset("monthly")}
+                  className={`px-2.5 py-1 rounded text-[11px] font-black transition-all cursor-pointer ${
+                    timePreset === "monthly" ? "bg-blue-600 text-white shadow-xs" : "text-slate-700 hover:text-slate-900"
+                  }`}
+                >
+                  Monthly Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimePreset("all")}
+                  className={`px-2.5 py-1 rounded text-[11px] font-black transition-all cursor-pointer ${
+                    timePreset === "all" ? "bg-blue-600 text-white shadow-xs" : "text-slate-700 hover:text-slate-900"
+                  }`}
+                >
+                  All Data
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -544,10 +741,13 @@ export default function CallCenterSLAReportModal({
                 <label className="text-[10px] font-extrabold uppercase text-slate-500">Month:</label>
                 <select
                   value={monthFilter}
-                  onChange={(e) => setMonthFilter(e.target.value)}
+                  onChange={(e) => {
+                    setMonthFilter(e.target.value);
+                    if (e.target.value !== "all") setTimePreset("monthly");
+                  }}
                   className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
                 >
-                  <option value="all">All Months (Entire Dataset)</option>
+                  <option value="all">All Months</option>
                   {availableMonths.map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -601,72 +801,88 @@ export default function CallCenterSLAReportModal({
             <div className="space-y-6">
 
               {/* METRICS SUMMARY BAR */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-xl shadow-2xs">
-                  <span className="text-[10px] font-black text-blue-700 uppercase tracking-wider block mb-1">
-                    Total Station Complaints
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider block mb-1">
+                    Total Complaints
                   </span>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-blue-900">{totalStationCount}</span>
-                    <span className="text-[10px] bg-blue-200 text-blue-800 font-bold px-1.5 py-0.5 rounded">
-                      Selected Range
-                    </span>
+                    <span className="text-xl font-black text-blue-900">{totalStationCount}</span>
                   </div>
-                  <p className="text-[10px] text-blue-600 mt-1 font-semibold">Assigned across stations</p>
+                  <p className="text-[9px] text-blue-600 mt-1 font-semibold">In selected range</p>
                 </div>
 
-                <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-xl shadow-2xs">
-                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block mb-1">
-                    Pending Station Action
+                <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-amber-800 uppercase tracking-wider block mb-1">
+                    Pending Action
                   </span>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-amber-900">{pendingStationActionCount}</span>
-                    <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
-                      Unactioned
-                    </span>
+                    <span className="text-xl font-black text-amber-900">{pendingStationActionCount}</span>
                   </div>
-                  <p className="text-[10px] text-amber-700 mt-1 font-semibold">Awaiting initial station response</p>
+                  <p className="text-[9px] text-amber-700 mt-1 font-semibold">Unactioned</p>
                 </div>
 
-                <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl shadow-2xs">
-                  <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block mb-1">
-                    Station Contacted Rate
+                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block mb-1">
+                    Contacted Rate
                   </span>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-emerald-900">
+                    <span className="text-xl font-black text-emerald-900">
                       {totalStationCount > 0 ? Math.round((contactedStationCount / totalStationCount) * 100) : 100}%
                     </span>
-                    <span className="text-[10px] bg-emerald-200 text-emerald-900 font-bold px-1.5 py-0.5 rounded">
-                      {contactedStationCount} / {totalStationCount}
-                    </span>
                   </div>
-                  <p className="text-[10px] text-emerald-700 mt-1 font-semibold">Customers contacted by stations</p>
+                  <p className="text-[9px] text-emerald-700 mt-1 font-semibold">{contactedStationCount} Contacted</p>
                 </div>
 
-                <div className="bg-purple-50 border border-purple-200 p-3.5 rounded-xl shadow-2xs">
-                  <span className="text-[10px] font-black text-purple-800 uppercase tracking-wider block mb-1">
-                    Station Resolution Rate
+                <div className="bg-purple-50 border border-purple-200 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-purple-800 uppercase tracking-wider block mb-1">
+                    Resolution Rate
                   </span>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-purple-900">{stationResolutionRate}%</span>
-                    <span className="text-[10px] bg-purple-200 text-purple-900 font-bold px-1.5 py-0.5 rounded">
-                      {resolvedStationCount} Resolved
-                    </span>
+                    <span className="text-xl font-black text-purple-900">{stationResolutionRate}%</span>
                   </div>
-                  <p className="text-[10px] text-purple-700 mt-1 font-semibold">Fully closed or satisfied</p>
+                  <p className="text-[9px] text-purple-700 mt-1 font-semibold">{resolvedStationCount} Resolved</p>
                 </div>
 
-                <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-xl shadow-2xs">
-                  <span className="text-[10px] font-black text-rose-800 uppercase tracking-wider block mb-1">
-                    Re-Assigned from CC
+                <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-rose-800 uppercase tracking-wider block mb-1">
+                    Re-Assigned / Esc.
                   </span>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-rose-900">{reassignedStationCount}</span>
-                    <span className="text-[10px] bg-rose-200 text-rose-900 font-black px-1.5 py-0.5 rounded">
-                      Mandatory Followup
-                    </span>
+                    <span className="text-xl font-black text-rose-900">{reassignedStationCount}</span>
                   </div>
-                  <p className="text-[10px] text-rose-700 mt-1 font-bold">No Solution Received feedback</p>
+                  <p className="text-[9px] text-rose-700 mt-1 font-bold">Rejected back</p>
+                </div>
+
+                {/* 3 AGING SLA SUMMARY CARDS */}
+                <div className="bg-slate-900 border border-slate-800 text-slate-100 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-blue-400 uppercase tracking-wider block mb-1">
+                    Avg Days to Contact Customer (Service Station)
+                  </span>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xl font-black text-white">{overallStationAging.avgDaysStationContact} <span className="text-xs text-slate-400 font-normal">Days</span></span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 font-semibold">Registration &rarr; Station Contact</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 text-slate-100 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider block mb-1">
+                    Avg Days to Contact Customer (Call Center)
+                  </span>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xl font-black text-white">{overallStationAging.avgDaysCallCenterContact} <span className="text-xs text-slate-400 font-normal">Days</span></span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 font-semibold">Registration &rarr; Call Center Contact</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 text-slate-100 p-3 rounded-xl shadow-2xs">
+                  <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider block mb-1">
+                    Average Days to Solve Case
+                  </span>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xl font-black text-white">{overallStationAging.avgDaysToSolveCase} <span className="text-xs text-slate-400 font-normal">Days</span></span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 font-semibold">Registration &rarr; Resolution</p>
                 </div>
               </div>
 
@@ -675,7 +891,7 @@ export default function CallCenterSLAReportModal({
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                     <MapPin className="h-4 w-4 text-blue-600" />
-                    <span>Service Station Performance & Resolution Summary</span>
+                    <span>Service Station Performance & SLA Aging Summary</span>
                   </h3>
                   <span className="text-[11px] font-bold text-slate-500">
                     Click row to filter list below
@@ -690,13 +906,15 @@ export default function CallCenterSLAReportModal({
                         <th className="py-2.5 px-2 text-center">Total Assigned</th>
                         <th className="py-2.5 px-2 text-center">Resolved</th>
                         <th className="py-2.5 px-2 text-center">Pending</th>
-                        <th className="py-2.5 px-2 text-center">Re-assigned/Escalated</th>
-                        <th className="py-2.5 px-2 text-center text-emerald-700">0-3d (New)</th>
-                        <th className="py-2.5 px-2 text-center text-amber-700">3-5d (Pending)</th>
-                        <th className="py-2.5 px-2 text-center text-orange-700">6-10d (Esc)</th>
-                        <th className="py-2.5 px-2 text-center text-rose-700">&gt;10d (Crit)</th>
-                        <th className="py-2.5 px-2 text-center">Resolution Rate</th>
-                        <th className="py-2.5 px-3 text-right">Avg SLA (Days)</th>
+                        <th className="py-2.5 px-2 text-center">Re-assigned/Esc.</th>
+                        <th className="py-2.5 px-2 text-center text-emerald-700">0-3d</th>
+                        <th className="py-2.5 px-2 text-center text-amber-700">3-5d</th>
+                        <th className="py-2.5 px-2 text-center text-orange-700">6-10d</th>
+                        <th className="py-2.5 px-2 text-center text-rose-700">&gt;10d</th>
+                        <th className="py-2.5 px-2 text-center">Res Rate</th>
+                        <th className="py-2.5 px-2 text-center text-blue-700">Avg Days to Contact Customer (Service Station)</th>
+                        <th className="py-2.5 px-2 text-center text-amber-700">Avg Days to Contact Customer (Call Center)</th>
+                        <th className="py-2.5 px-2 text-center text-emerald-700">Average Days to Solve Case</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -745,12 +963,35 @@ export default function CallCenterSLAReportModal({
                               {st.resRate}%
                             </span>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-slate-600">
-                            {st.avgPendingToContacted} {st.avgPendingToContacted === 1 ? "day" : "days"}
+                          <td className="py-2.5 px-2 text-center font-extrabold text-blue-700">
+                            {st.avgDaysStationContact} {st.avgDaysStationContact === 1 ? "day" : "days"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-extrabold text-amber-700">
+                            {st.avgDaysCallCenterContact} {st.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                          </td>
+                          <td className="py-2.5 px-2 text-center font-extrabold text-emerald-700">
+                            {st.avgDaysToSolveCase} {st.avgDaysToSolveCase === 1 ? "day" : "days"}
                           </td>
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-900 text-white font-black text-xs border-t-2 border-slate-700">
+                        <td className="py-3 px-3 uppercase tracking-wider">Overall Summary / Total</td>
+                        <td className="py-3 px-2 text-center">{totalStationCount}</td>
+                        <td className="py-3 px-2 text-center text-emerald-400">{resolvedStationCount}</td>
+                        <td className="py-3 px-2 text-center text-amber-400">{pendingStationActionCount}</td>
+                        <td className="py-3 px-2 text-center text-rose-400">{reassignedStationCount}</td>
+                        <td className="py-3 px-2 text-center text-emerald-400">{stationBreakdownStats.reduce((a, b) => a + b.days0_3, 0)}</td>
+                        <td className="py-3 px-2 text-center text-amber-400">{stationBreakdownStats.reduce((a, b) => a + b.days3_5, 0)}</td>
+                        <td className="py-3 px-2 text-center text-orange-400">{stationBreakdownStats.reduce((a, b) => a + b.days6_10, 0)}</td>
+                        <td className="py-3 px-2 text-center text-rose-400">{stationBreakdownStats.reduce((a, b) => a + b.days10Plus, 0)}</td>
+                        <td className="py-3 px-2 text-center text-purple-300">{stationResolutionRate}%</td>
+                        <td className="py-3 px-2 text-center text-blue-300">{overallStationAging.avgDaysStationContact} days</td>
+                        <td className="py-3 px-2 text-center text-amber-300">{overallStationAging.avgDaysCallCenterContact} days</td>
+                        <td className="py-3 px-2 text-center text-emerald-300">{overallStationAging.avgDaysToSolveCase} days</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
