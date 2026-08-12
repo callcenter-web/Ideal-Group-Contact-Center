@@ -45,6 +45,18 @@ export default function AdminEditComplaintModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const isStationChanged = station.trim() !== (complaint.station || "").trim();
+
+    // If station changed and user didn't manually edit stationContactedDate, clear it so new station sees it as pending contact
+    const newStationContactedDate = isStationChanged && stationContactedDate === complaint.stationContactedDate
+      ? ""
+      : stationContactedDate.trim();
+
+    const newStationResolutionNotes = isStationChanged && stationResolutionNotes === complaint.stationResolutionNotes
+      ? `Re-assigned to new service station: ${station.trim()}`
+      : stationResolutionNotes.trim();
+
     const updated: Complaint = {
       ...complaint,
       customerName: customerName.trim(),
@@ -61,11 +73,12 @@ export default function AdminEditComplaintModal({
       mileage: mileage.trim(),
       description: description.trim(),
       initialSatisfaction,
-      status,
-      feedbackStatus,
-      finalStatus,
-      stationContactedDate: stationContactedDate.trim(),
-      stationResolutionNotes: stationResolutionNotes.trim(),
+      status: isStationChanged ? "Pending" : status,
+      feedbackStatus: isStationChanged ? "Pending" : feedbackStatus,
+      finalStatus: isStationChanged ? "Open" : finalStatus,
+      stationResponseStatus: isStationChanged ? "Submitted to Call Center" : (complaint.stationResponseStatus || "Submitted to Call Center"),
+      stationContactedDate: newStationContactedDate,
+      stationResolutionNotes: newStationResolutionNotes,
       callCenterContactedDate: callCenterContactedDate.trim(),
       callCenterFinalRemarks: callCenterFinalRemarks.trim(),
       updatedAt: new Date().toISOString().split("T")[0],
@@ -266,6 +279,14 @@ export default function AdminEditComplaintModal({
                     </option>
                   ))}
                 </select>
+                {station.trim() !== (complaint.station || "").trim() && (
+                  <div className="mt-1.5 p-2 bg-amber-50 border border-amber-300 rounded-lg text-[10px] text-amber-900 font-bold flex items-start gap-1">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <span>
+                      Re-assigning from <strong className="text-slate-900">{complaint.station}</strong> to <strong className="text-blue-700">{station}</strong>. Record will pass to the new station's queue for contact & resolution.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -272,9 +272,17 @@ export default function App() {
   const [showAdminEditModal, setShowAdminEditModal] = useState<boolean>(false);
 
   const handleAdminSaveComplaint = (updated: Complaint) => {
+    const original = complaints.find((c) => c.id === updated.id);
+    const isStationChanged = original && original.station !== updated.station;
+
     const updatedList = complaints.map((c) => (c.id === updated.id ? updated : c));
     saveComplaints(updatedList);
     setAdminEditingComplaint(updated);
+
+    // If service station changed, dispatch automated email notification to the new station
+    if (isStationChanged) {
+      dispatchSystemicEmailsForComplaints([updated]);
+    }
   };
 
   const handleAddCalendarDate = (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
@@ -995,6 +1003,7 @@ export default function App() {
           c.status === "Pending";
 
         if (currentUser?.role === "admin") {
+          const isStationChanged = formAssignedStation && formAssignedStation !== c.station;
           isConnectedNow = 
             formStatus !== "Pending" && 
             formFeedbackStatus !== "Customer Unreachable" && 
@@ -1003,12 +1012,14 @@ export default function App() {
           return {
             ...c,
             station: formAssignedStation,
-            status: formStatus,
+            status: isStationChanged ? "Pending" as FollowUpStatus : formStatus,
             currentSatisfaction: formSatisfaction,
             notes: formNotes,
             agentName: formAgentName,
-            feedbackStatus: formFeedbackStatus,
-            finalStatus: formFinalStatus,
+            feedbackStatus: isStationChanged ? "Pending" : formFeedbackStatus,
+            finalStatus: isStationChanged ? "Open" : formFinalStatus,
+            stationContactedDate: isStationChanged ? "" : (c.stationContactedDate || ""),
+            stationResponseStatus: isStationChanged ? "Submitted to Call Center" : c.stationResponseStatus,
             solutionProvidedByAftermarket: formSolutionProvided,
             solutionDate: formSolutionDate,
             followUpDate: formFollowUpDate,
