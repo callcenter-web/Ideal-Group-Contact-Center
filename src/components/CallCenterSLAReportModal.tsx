@@ -32,6 +32,7 @@ import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
 import { parseComplaintDate } from "../utils/agingUtils";
+import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 
 interface CallCenterSLAReportModalProps {
   isOpen: boolean;
@@ -205,7 +206,10 @@ export default function CallCenterSLAReportModal({
         scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: isDark ? "#0f172a" : "#ffffff"
+        backgroundColor: isDark ? "#0f172a" : "#ffffff",
+        onclone: (clonedDoc) => {
+          sanitizeDocOklch(clonedDoc);
+        },
       });
 
       const imgData = canvas.toDataURL("image/png");

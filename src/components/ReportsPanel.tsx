@@ -18,7 +18,8 @@ import {
   Building2,
   Headphones,
   Calculator,
-  Printer
+  Printer,
+  Loader2
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
@@ -26,6 +27,7 @@ import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName, isStationContacted } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
+import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
@@ -50,6 +52,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   const [endDate, setEndDate] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
+  const [isGeneratingStationPDF, setIsGeneratingStationPDF] = useState<boolean>(false);
   const [selectedStationCode, setSelectedStationCode] = useState<string>("Rathmalana");
 
   const handleResetFilters = () => {
@@ -412,6 +415,88 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     ]);
 
     downloadCSV(headers, rows, `CX_Station_Performance_Report_${new Date().toISOString().split('T')[0]}.csv`);
+  };
+
+  // Graphical PDF Export for Service Station Table & Selected Breakdown
+  const handleDownloadStationGraphicalPDF = async () => {
+    setIsGeneratingStationPDF(true);
+    try {
+      const sectionElement = document.getElementById("station-scorecard-section");
+      if (!sectionElement) {
+        alert("Station scorecard section element not found.");
+        return;
+      }
+
+      // Temporarily hide elements marked with .pdf-hide
+      const pdfHides = sectionElement.querySelectorAll<HTMLElement>(".pdf-hide");
+      pdfHides.forEach((el) => { el.style.visibility = "hidden"; });
+
+      const canvas = await html2canvas(sectionElement, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: isDark ? "#020617" : "#ffffff",
+        logging: false,
+        onclone: (clonedDoc) => {
+          sanitizeDocOklch(clonedDoc);
+        },
+      });
+
+      pdfHides.forEach((el) => { el.style.visibility = "visible"; });
+
+      const imgData = canvas.toDataURL("image/png");
+      const isLandscape = canvas.width > canvas.height;
+      const pdf = new jsPDF(isLandscape ? "l" : "p", "mm", "a4");
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      const margin = 10;
+      const imgWidth = pdfWidth - (margin * 2);
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      // Draw Header Title on PDF
+      pdf.setFillColor(30, 64, 175); // Royal Blue
+      pdf.rect(0, 0, pdfWidth, 16, "F");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("SERVICE STATION SLA PERFORMANCE SCORECARD & GRAPHICS", margin, 11);
+
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      const activeStationLabel = selectedStationCode === "all" ? "All Stations Summary" : selectedStationCode;
+      pdf.text(`Selected Station: ${activeStationLabel}`, pdfWidth - margin, 11, { align: "right" });
+
+      let position = 20;
+      if (imgHeight <= (pdfHeight - 28)) {
+        pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
+      } else {
+        let heightLeft = imgHeight;
+        pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
+        heightLeft -= (pdfHeight - position);
+
+        while (heightLeft > 0) {
+          position = heightLeft - imgHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
+          heightLeft -= pdfHeight;
+        }
+      }
+
+      // Footer
+      pdf.setFont("helvetica", "italic");
+      pdf.setFontSize(7);
+      pdf.setTextColor(148, 163, 184);
+      pdf.text(`Ideal Customer Experience Recovery Engine • Station Scorecard Report • ${new Date().toLocaleDateString()}`, margin, pdfHeight - 4);
+
+      pdf.save(`Station_SLA_Scorecard_Graphical_${selectedStationCode}_${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (err) {
+      console.error("Failed to export station graphical PDF:", err);
+      alert("Error generating graphical PDF. Please try again.");
+    } finally {
+      setIsGeneratingStationPDF(false);
+    }
   };
 
   // Shared download handler using Blob for robust client-side downloads
@@ -905,7 +990,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
 
         pdf.setFont("helvetica", "normal");
         pdf.setTextColor(71, 85, 105);
-        pdf.text(`${sm.avgPendingToContacted}d`, 195, tableY + 7, { align: "center" });
+        pdf.text(`${sm.avgDaysStationContact}d`, 195, tableY + 7, { align: "center" });
 
         tableY += 11;
       });
@@ -1384,56 +1469,78 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
         </div>
 
         {/* INTERACTIVE SERVICE STATION PERFORMANCE SCORECARD */}
-        <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 rounded-2xl border transition-all duration-500 ${
-          isDark ? "bg-slate-900/40 border-slate-800" : "bg-slate-100/50 border-slate-200"
-        }`}>
-          {/* Left Column: Service Station Table List */}
-          <div className={`lg:col-span-7 rounded-xl border p-4 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
+        <div id="station-scorecard-section" className="col-span-12 space-y-6">
+          {/* Top Block: Service Station Table List (Full Page Width) */}
+          <div className={`w-full rounded-2xl border p-5 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <div className={`flex items-center justify-between border-b pb-3 mb-3 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3 mb-4 ${isDark ? "border-slate-800" : "border-slate-200"}`}>
                 <div>
-                  <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${textTitle}`}>
+                  <h3 className={`text-sm font-black uppercase tracking-wider flex items-center gap-2 ${textTitle}`}>
                     <MapPin className="h-4 w-4 text-blue-600" />
-                    Service Station Performance
+                    Service Station Performance Scorecard
                   </h3>
-                  <p className={`text-[10px] font-bold mt-0.5 ${textSub}`}>
-                    Click any Service Station below to view its dynamic aging graphics & customer satisfaction score.
+                  <p className={`text-xs font-bold mt-0.5 ${textSub}`}>
+                    Click any Service Station row to dynamically update the graphical breakdown and SLA metrics below.
                   </p>
                 </div>
-                <button
-                  id="btn-download-station-csv"
-                  type="button"
-                  onClick={handleDownloadStationReport}
-                  className={`pdf-hide border font-bold text-[10px] py-1 px-2.5 rounded transition-all flex items-center gap-1 cursor-pointer ${
-                    isDark 
-                      ? "bg-slate-950 border-slate-800 hover:bg-slate-900 text-slate-200" 
-                      : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
-                  }`}
-                >
-                  <Download className="h-3 w-3" />
-                  Download CSV
-                </button>
+                
+                <div className="flex items-center gap-2 pdf-hide">
+                  <button
+                    id="btn-download-station-csv"
+                    type="button"
+                    onClick={handleDownloadStationReport}
+                    className={`border font-bold text-xs py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isDark 
+                        ? "bg-slate-900 border-slate-700 hover:bg-slate-800 text-slate-200" 
+                        : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    <Download className="h-3.5 w-3.5 text-slate-500" />
+                    Download CSV
+                  </button>
+
+                  <button
+                    id="btn-download-station-graphical-pdf"
+                    type="button"
+                    onClick={handleDownloadStationGraphicalPDF}
+                    disabled={isGeneratingStationPDF}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-1.5 px-3.5 rounded-lg shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isGeneratingStationPDF ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Generating PDF...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="h-3.5 w-3.5 text-blue-100" />
+                        Download Graphical PDF
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-x-auto max-h-[340px] overflow-y-auto">
+              {/* Table Container - Fits full width */}
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
                 <table className="w-full text-left border-collapse whitespace-nowrap">
                   <thead>
-                    <tr className={`border-b text-[9px] font-black uppercase tracking-wider transition-colors duration-500 ${
-                      isDark ? "border-slate-800 bg-slate-950/80 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"
+                    <tr className={`border-b text-[10px] font-black uppercase tracking-wider transition-colors duration-500 ${
+                      isDark ? "border-slate-800 bg-slate-950/90 text-slate-400" : "border-slate-200 bg-slate-50/90 text-slate-600"
                     }`}>
-                      <th className="py-2.5 px-3">Service Station</th>
-                      <th className="py-2.5 px-2 text-center">Total</th>
-                      <th className="py-2.5 px-2 text-center">Resolved</th>
-                      <th className="py-2.5 px-2 text-center">Pending</th>
-                      <th className="py-2.5 px-2 text-center">Escalated</th>
-                      <th className="py-2.5 px-2 text-center text-emerald-600">0-3d</th>
-                      <th className="py-2.5 px-2 text-center text-amber-600">3-5d</th>
-                      <th className="py-2.5 px-2 text-center text-orange-600">6-10d</th>
-                      <th className="py-2.5 px-2 text-center text-rose-600">&gt;10d</th>
-                      <th className="py-2.5 px-2 text-center">Resolution %</th>
-                      <th className="py-2.5 px-2 text-center text-blue-600">Avg Days to Contact Customer (Service Station)</th>
-                      <th className="py-2.5 px-2 text-center text-amber-600">Avg Days to Contact Customer (Call Center)</th>
-                      <th className="py-2.5 px-2 text-center text-emerald-600">Average Days to Solve Case</th>
+                      <th className="py-3 px-4">Service Station</th>
+                      <th className="py-3 px-3 text-center">Total</th>
+                      <th className="py-3 px-3 text-center">Resolved</th>
+                      <th className="py-3 px-3 text-center">Pending</th>
+                      <th className="py-3 px-3 text-center">Escalated</th>
+                      <th className="py-3 px-3 text-center text-emerald-600">0-3d (New)</th>
+                      <th className="py-3 px-3 text-center text-amber-600">3-5d (Pending)</th>
+                      <th className="py-3 px-3 text-center text-orange-600">6-10d (Escalated)</th>
+                      <th className="py-3 px-3 text-center text-rose-600">&gt;10d (Critical)</th>
+                      <th className="py-3 px-3 text-center">Resolution %</th>
+                      <th className="py-3 px-3 text-center text-blue-600">Avg Days Station Contact</th>
+                      <th className="py-3 px-3 text-center text-amber-600">Avg Days CC Contact</th>
+                      <th className="py-3 px-3 text-center text-emerald-600">Avg Days Solve Case</th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
@@ -1446,53 +1553,64 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                           className={`cursor-pointer transition-all ${
                             isSelected 
                               ? isDark 
-                                ? "bg-red-950/20 border-l-4 border-l-red-600" 
-                                : "bg-blue-50/70 border-l-4 border-l-blue-600" 
+                                ? "bg-blue-950/40 border-l-4 border-l-blue-500 text-blue-200" 
+                                : "bg-blue-50/90 border-l-4 border-l-blue-600 text-blue-950 font-medium" 
                               : isDark 
                                 ? "hover:bg-slate-950/30 text-slate-300" 
-                                : "hover:bg-slate-50/50 text-slate-700"
+                                : "hover:bg-slate-50/70 text-slate-700"
                           }`}
                         >
-                          <td className="py-2.5 px-3">
-                            <p className={`font-bold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{sm.name}</p>
-                            <span className="text-[9px] text-slate-400 font-mono">{sm.code}</span>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <div>
+                                <p className={`font-bold ${isDark ? "text-slate-100" : "text-slate-900"}`}>{sm.name}</p>
+                                <span className="text-[10px] text-slate-400 font-mono font-bold">{sm.code}</span>
+                              </div>
+                              {isSelected && (
+                                <span className="text-[9px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  Selected
+                                </span>
+                              )}
+                            </div>
                           </td>
-                          <td className="py-2.5 px-2 text-center">
-                            <span className={`font-black px-2 py-0.5 rounded border text-[10px] ${
-                              isDark ? "text-slate-300 bg-slate-950 border-slate-800" : "text-slate-700 bg-slate-100 border-slate-200"
+                          <td className="py-3 px-3 text-center">
+                            <span className={`font-black px-2.5 py-1 rounded-md border text-xs ${
+                              isDark ? "text-slate-200 bg-slate-950 border-slate-800" : "text-slate-800 bg-slate-100 border-slate-200"
                             }`}>{sm.total}</span>
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-emerald-600">
+                          <td className="py-3 px-3 text-center font-black text-emerald-600 text-xs">
                             {sm.resolved}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-amber-600">
+                          <td className="py-3 px-3 text-center font-black text-amber-600 text-xs">
                             {sm.pending}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-rose-600">
+                          <td className="py-3 px-3 text-center font-black text-rose-600 text-xs">
                             {sm.escalated}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-emerald-600 text-[10px]">
+                          <td className="py-3 px-3 text-center font-bold text-emerald-600 text-xs">
                             {sm.days0_3 || "-"}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-amber-600 text-[10px]">
+                          <td className="py-3 px-3 text-center font-bold text-amber-600 text-xs">
                             {sm.days3_5 || "-"}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-orange-600 text-[10px]">
+                          <td className="py-3 px-3 text-center font-bold text-orange-600 text-xs">
                             {sm.days6_10 || "-"}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-bold text-rose-600 text-[10px]">
+                          <td className="py-3 px-3 text-center font-bold text-rose-600 text-xs">
                             {sm.days10Plus || "-"}
                           </td>
-                          <td className="py-2.5 px-2 text-center">
-                            <p className={`font-black text-[10px] ${isDark ? "text-red-400" : "text-blue-600"}`}>{sm.resolutionRate}</p>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`font-black text-xs px-2 py-0.5 rounded ${isDark ? "bg-blue-950/60 text-blue-300" : "bg-blue-50 text-blue-700"}`}>
+                              {sm.resolutionRate}
+                            </span>
                           </td>
-                          <td className="py-2.5 px-2 text-center font-extrabold text-blue-600">
+                          <td className="py-3 px-3 text-center font-black text-blue-600 text-xs">
                             {sm.avgDaysStationContact} {sm.avgDaysStationContact === 1 ? "day" : "days"}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-extrabold text-amber-600">
+                          <td className="py-3 px-3 text-center font-black text-amber-600 text-xs">
                             {sm.avgDaysCallCenterContact} {sm.avgDaysCallCenterContact === 1 ? "day" : "days"}
                           </td>
-                          <td className="py-2.5 px-2 text-center font-extrabold text-emerald-600">
+                          <td className="py-3 px-3 text-center font-black text-emerald-600 text-xs">
                             {sm.avgDaysToSolveCase} {sm.avgDaysToSolveCase === 1 ? "day" : "days"}
                           </td>
                         </tr>
@@ -1509,39 +1627,45 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                       }`}
                       title="Click to view overall stats across all stations"
                     >
-                      <td className="py-3 px-3 uppercase tracking-wider flex items-center gap-1">
-                        <span>Overall Summary / Total</span>
-                        {selectedStationCode === "all" && <span className="text-[9px] text-blue-400 font-bold">(Selected)</span>}
+                      <td className="py-3.5 px-4 uppercase tracking-wider flex items-center gap-2">
+                        <span>Overall Summary / All Stations</span>
+                        {selectedStationCode === "all" && <span className="text-[10px] bg-blue-500 text-white font-black px-2 py-0.5 rounded">(Selected)</span>}
                       </td>
-                      <td className="py-3 px-2 text-center">{filteredComplaints.length}</td>
-                      <td className="py-3 px-2 text-center text-emerald-400">{filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length}</td>
-                      <td className="py-3 px-2 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.pending, 0)}</td>
-                      <td className="py-3 px-2 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.escalated, 0)}</td>
-                      <td className="py-3 px-2 text-center text-emerald-400">{stationMetrics.reduce((a, b) => a + b.days0_3, 0)}</td>
-                      <td className="py-3 px-2 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.days3_5, 0)}</td>
-                      <td className="py-3 px-2 text-center text-orange-400">{stationMetrics.reduce((a, b) => a + b.days6_10, 0)}</td>
-                      <td className="py-3 px-2 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.days10Plus, 0)}</td>
-                      <td className="py-3 px-2 text-center text-purple-300">
+                      <td className="py-3.5 px-3 text-center">{filteredComplaints.length}</td>
+                      <td className="py-3.5 px-3 text-center text-emerald-400">{filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length}</td>
+                      <td className="py-3.5 px-3 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.pending, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.escalated, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-emerald-400">{stationMetrics.reduce((a, b) => a + b.days0_3, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-amber-400">{stationMetrics.reduce((a, b) => a + b.days3_5, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-orange-400">{stationMetrics.reduce((a, b) => a + b.days6_10, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-rose-400">{stationMetrics.reduce((a, b) => a + b.days10Plus, 0)}</td>
+                      <td className="py-3.5 px-3 text-center text-purple-300">
                         {filteredComplaints.length > 0 ? Math.round((filteredComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length / filteredComplaints.length) * 100) : 0}%
                       </td>
-                      <td className="py-3 px-2 text-center text-blue-300">{overallReportAging.avgDaysStationContact} days</td>
-                      <td className="py-3 px-2 text-center text-amber-300">{overallReportAging.avgDaysCallCenterContact} days</td>
-                      <td className="py-3 px-2 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase} days</td>
+                      <td className="py-3.5 px-3 text-center text-blue-300">{overallReportAging.avgDaysStationContact} days</td>
+                      <td className="py-3.5 px-3 text-center text-amber-300">{overallReportAging.avgDaysCallCenterContact} days</td>
+                      <td className="py-3.5 px-3 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase} days</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
+              <p className="text-[10px] text-slate-400 font-bold mt-3 pt-2 border-t border-slate-100">
+                Click any table row above or use the station buttons below to inspect graphical SLA breakdown.
+              </p>
             </div>
-            <p className="text-[9px] text-slate-400 font-bold mt-2.5 pt-2 border-t border-slate-100">
-              Select other filters above to slice data across all service stations dynamically.
-            </p>
           </div>
 
-          {/* Right Column: Detailed Graphic Breakdown Panel */}
-          <div className={`lg:col-span-5 rounded-xl border p-4 shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
+          {/* Bottom Block: Detailed Graphic Breakdown Panel (Full Page Width) */}
+          <div className={`w-full rounded-2xl border p-5 shadow-xs transition-all duration-500 ${cardBg}`}>
             {(() => {
-              const selectedStation = STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
-              const activeStationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, selectedStation.code));
+              const selectedStation = selectedStationCode === "all" 
+                ? { code: "ALL", name: "Overall Summary (All Service Stations)" }
+                : STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
+              
+              const activeStationComplaints = selectedStationCode === "all"
+                ? filteredComplaints
+                : filteredComplaints.filter(c => matchesStationCodeOrName(c.station, selectedStation.code));
+              
               const activeStationTotal = activeStationComplaints.length;
 
               // Aging breakdown
@@ -1571,166 +1695,239 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               const stationVeryDissatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Dissatisfied").length;
 
               const stationSatisfiedTotal = stationVerySatisfied + stationSatisfied;
-              const stationDissatisfiedTotal = stationVeryDissatisfied + stationDissatisfied;
+              const stationDissatisfiedTotal = stationVeryDissatisfied + stationVeryDissatisfied;
 
               const stationSatisfactionRate = activeStationTotal > 0 ? Math.round((stationSatisfiedTotal / activeStationTotal) * 100) : 0;
               const stationDissatisfiedRate = activeStationTotal > 0 ? Math.round((stationDissatisfiedTotal / activeStationTotal) * 100) : 0;
               const stationNeutralRate = activeStationTotal > 0 ? Math.round((stationNeutral / activeStationTotal) * 100) : 0;
 
+              // Active station SLA contact averages
+              const activeStationMetrics = selectedStationCode === "all"
+                ? null
+                : stationMetrics.find(sm => sm.code === selectedStationCode);
+
+              const stationAvgContact = activeStationMetrics ? activeStationMetrics.avgDaysStationContact : overallReportAging.avgDaysStationContact;
+              const ccAvgContact = activeStationMetrics ? activeStationMetrics.avgDaysCallCenterContact : overallReportAging.avgDaysCallCenterContact;
+              const solveAvgDays = activeStationMetrics ? activeStationMetrics.avgDaysToSolveCase : overallReportAging.avgDaysToSolveCase;
+
               return (
-                <div className="space-y-4 h-full flex flex-col justify-between">
-                  <div>
-                    <div className={`flex items-center justify-between border-b pb-2 mb-2 ${isDark ? "border-slate-800" : "border-slate-200"}`}>
-                      <div>
-                        <h4 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1 ${textTitle}`}>
-                          <Activity className="h-3.5 w-3.5 text-blue-600" />
-                          {selectedStation.code} Graphics Breakdown
-                        </h4>
-                        <p className={`text-[9px] font-bold ${textSub}`}>{selectedStation.name}</p>
-                      </div>
-                      <span className={`text-[10px] font-black uppercase rounded px-2 py-0.5 border ${
-                        isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-600 bg-blue-50 border-blue-200"
-                      }`}>
-                        {activeStationTotal} Case{activeStationTotal === 1 ? "" : "s"}
-                      </span>
+                <div className="space-y-4">
+                  {/* Header & Quick Selector Pills */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-3 border-slate-200 dark:border-slate-800">
+                    <div>
+                      <h4 className={`text-sm font-black uppercase tracking-wider flex items-center gap-2 ${textTitle}`}>
+                        <Activity className="h-4 w-4 text-blue-600" />
+                        {selectedStation.code} Graphical SLA & Performance Analysis
+                      </h4>
+                      <p className={`text-xs font-bold mt-0.5 ${textSub}`}>{selectedStation.name}</p>
                     </div>
 
-                    {activeStationTotal === 0 ? (
-                      <div className={`py-12 text-center rounded-lg border border-dashed my-4 ${
-                        isDark ? "bg-slate-950/40 border-slate-800" : "bg-slate-50/50 border-slate-200"
-                      }`}>
-                        <p className="text-xs font-bold text-slate-400">No matching cases for this station.</p>
-                        <p className="text-[9px] text-slate-400 mt-1">Adjust filters or select another station.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        
-                        {/* Aging SLA Graphic Bar Chart */}
-                        <div>
-                          <p className={`text-[10px] font-black uppercase tracking-wider mb-1.5 ${isDark ? "text-slate-400" : "text-slate-400"}`}>
-                            Aging SLA breakdown
-                          </p>
-                          <div className={`space-y-2 p-2.5 rounded-lg border transition-all duration-500 ${bgSub}`}>
-                            {/* New */}
-                            <div>
-                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                <span>0-3 Days (New)</span>
-                                <span className="font-black text-emerald-600">{stationNewCount} ({stationNewPct}%)</span>
-                              </div>
-                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
-                                <div 
-                                  className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationNewPct}%` }}
-                                />
-                              </div>
-                            </div>
+                    {/* Quick Station Switcher Pills */}
+                    <div className="flex flex-wrap items-center gap-1.5 pdf-hide">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStationCode("all")}
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all cursor-pointer ${
+                          selectedStationCode === "all"
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300"
+                        }`}
+                      >
+                        Overall Total
+                      </button>
+                      {STATIONS.map((st) => (
+                        <button
+                          key={st.code}
+                          type="button"
+                          onClick={() => setSelectedStationCode(st.code)}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all cursor-pointer ${
+                            selectedStationCode === st.code
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          {st.code}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                            {/* Pending */}
-                            <div>
-                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                <span>3-5 Days (Pending)</span>
-                                <span className="font-black text-amber-600">{stationPendingCount} ({stationPendingPct}%)</span>
-                              </div>
-                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
-                                <div 
-                                  className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationPendingPct}%` }}
-                                />
-                              </div>
-                            </div>
+                  {activeStationTotal === 0 ? (
+                    <div className={`py-12 text-center rounded-xl border border-dashed my-4 ${
+                      isDark ? "bg-slate-950/40 border-slate-800" : "bg-slate-50/50 border-slate-200"
+                    }`}>
+                      <p className="text-sm font-bold text-slate-400">No matching cases for {selectedStation.name}.</p>
+                      <p className="text-xs text-slate-400 mt-1">Try resetting search filters or selecting another station above.</p>
+                    </div>
+                  ) : (
+                    /* 3-Column Responsive Graphical Grid */
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+                      
+                      {/* Column 1: Aging SLA Breakdown */}
+                      <div className={`p-4 rounded-xl border space-y-3 ${bgSub}`}>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-black uppercase tracking-wider ${isDark ? "text-slate-200" : "text-slate-700"}`}>
+                            Aging SLA Proportions
+                          </span>
+                          <span className="text-[10px] font-extrabold text-blue-600 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-900/40">
+                            {activeStationTotal} Cases
+                          </span>
+                        </div>
 
-                            {/* Escalated */}
-                            <div>
-                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                <span>6-10 Days (Escalated)</span>
-                                <span className="font-black text-orange-600">{stationEscalatedCount} ({stationEscalatedPct}%)</span>
-                              </div>
-                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
-                                <div 
-                                  className="bg-orange-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationEscalatedPct}%` }}
-                                />
-                              </div>
+                        <div className="space-y-3">
+                          {/* 0-3 Days */}
+                          <div>
+                            <div className={`flex justify-between text-xs font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                              <span>0-3 Days (New / On Track)</span>
+                              <span className="font-black text-emerald-600">{stationNewCount} ({stationNewPct}%)</span>
                             </div>
+                            <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2.5 mt-1`}>
+                              <div 
+                                className="bg-emerald-500 h-2.5 rounded-full transition-all duration-500"
+                                style={{ width: `${stationNewPct}%` }}
+                              />
+                            </div>
+                          </div>
 
-                            {/* Critical */}
-                            <div>
-                              <div className={`flex justify-between text-[10px] font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                <span>&gt;10 Days (Critical)</span>
-                                <span className="font-black text-rose-600">{stationCriticalCount} ({stationCriticalPct}%)</span>
-                              </div>
-                              <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2 mt-0.5`}>
-                                <div 
-                                  className="bg-rose-500 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${stationCriticalPct}%` }}
-                                />
-                              </div>
+                          {/* 3-5 Days */}
+                          <div>
+                            <div className={`flex justify-between text-xs font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                              <span>3-5 Days (Pending Contact)</span>
+                              <span className="font-black text-amber-600">{stationPendingCount} ({stationPendingPct}%)</span>
+                            </div>
+                            <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2.5 mt-1`}>
+                              <div 
+                                className="bg-amber-500 h-2.5 rounded-full transition-all duration-500"
+                                style={{ width: `${stationPendingPct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 6-10 Days */}
+                          <div>
+                            <div className={`flex justify-between text-xs font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                              <span>6-10 Days (Escalated SLA)</span>
+                              <span className="font-black text-orange-600">{stationEscalatedCount} ({stationEscalatedPct}%)</span>
+                            </div>
+                            <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2.5 mt-1`}>
+                              <div 
+                                className="bg-orange-500 h-2.5 rounded-full transition-all duration-500"
+                                style={{ width: `${stationEscalatedPct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* >10 Days */}
+                          <div>
+                            <div className={`flex justify-between text-xs font-bold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                              <span>&gt;10 Days (Critical Overdue)</span>
+                              <span className="font-black text-rose-600">{stationCriticalCount} ({stationCriticalPct}%)</span>
+                            </div>
+                            <div className={`w-full ${isDark ? "bg-slate-950" : "bg-slate-200"} rounded-full h-2.5 mt-1`}>
+                              <div 
+                                className="bg-rose-500 h-2.5 rounded-full transition-all duration-500"
+                                style={{ width: `${stationCriticalPct}%` }}
+                              />
                             </div>
                           </div>
                         </div>
+                      </div>
 
-                        {/* Satisfaction & Dissatisfied Rates */}
-                        <div className="pt-2 border-t border-slate-100">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">
-                            CSAT & Dissatisfaction Metrics
-                          </p>
-                          <div className="grid grid-cols-2 gap-2 mb-2">
-                            <div className="bg-emerald-50/50 border border-emerald-100 rounded-lg p-2 text-center">
-                              <p className="text-[9px] font-black text-emerald-800 uppercase">Satisfaction Rate</p>
-                              <p className="text-base font-black text-emerald-600 mt-0.5">{stationSatisfactionRate}%</p>
-                              <p className="text-[8px] font-bold text-emerald-500">{stationSatisfiedTotal} cases</p>
-                            </div>
+                      {/* Column 2: CSAT & Dissatisfaction Rates */}
+                      <div className={`p-4 rounded-xl border space-y-3 ${bgSub}`}>
+                        <span className={`text-xs font-black uppercase tracking-wider block ${isDark ? "text-slate-200" : "text-slate-700"}`}>
+                          CSAT & Dissatisfaction Rates
+                        </span>
 
-                            <div className="bg-rose-50/50 border border-rose-100 rounded-lg p-2 text-center">
-                              <p className="text-[9px] font-black text-rose-800 uppercase">Dissatisfied Rate</p>
-                              <p className="text-base font-black text-rose-600 mt-0.5">{stationDissatisfiedRate}%</p>
-                              <p className="text-[8px] font-bold text-rose-500">{stationDissatisfiedTotal} cases</p>
-                            </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 rounded-xl p-3 text-center">
+                            <p className="text-[10px] font-black text-emerald-800 dark:text-emerald-300 uppercase">Satisfaction Rate</p>
+                            <p className="text-xl font-black text-emerald-600 mt-0.5">{stationSatisfactionRate}%</p>
+                            <p className="text-[9px] font-bold text-emerald-600/80">{stationSatisfiedTotal} cases</p>
                           </div>
 
-                          {/* Satisfaction/Dissatisfied Graphical Progress Meter */}
-                          <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                            {/* Satisfaction rate bar */}
-                            <div>
-                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
-                                <span>Satisfied (CSAT)</span>
-                                <span className="font-black text-emerald-600">{stationSatisfactionRate}%</span>
-                              </div>
-                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
-                                <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: `${stationSatisfactionRate}%` }} />
-                              </div>
-                            </div>
-
-                            {/* Dissatisfied rate bar */}
-                            <div>
-                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
-                                <span>Dissatisfied</span>
-                                <span className="font-black text-rose-600">{stationDissatisfiedRate}%</span>
-                              </div>
-                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
-                                <div className="bg-rose-500 h-1.5 rounded-full" style={{ width: `${stationDissatisfiedRate}%` }} />
-                              </div>
-                            </div>
-
-                            {/* Neutral rate bar */}
-                            <div>
-                              <div className="flex justify-between text-[9px] font-bold text-slate-600">
-                                <span>Neutral</span>
-                                <span className="font-black text-slate-500">{stationNeutralRate}%</span>
-                              </div>
-                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-0.5">
-                                <div className="bg-slate-400 h-1.5 rounded-full" style={{ width: `${stationNeutralRate}%` }} />
-                              </div>
-                            </div>
+                          <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 rounded-xl p-3 text-center">
+                            <p className="text-[10px] font-black text-rose-800 dark:text-rose-300 uppercase">Dissatisfied Rate</p>
+                            <p className="text-xl font-black text-rose-600 mt-0.5">{stationDissatisfiedRate}%</p>
+                            <p className="text-[9px] font-bold text-rose-600/80">{stationDissatisfiedTotal} cases</p>
                           </div>
                         </div>
 
+                        {/* CSAT Progress Bars */}
+                        <div className="space-y-2 bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                          <div>
+                            <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
+                              <span>Satisfied (CSAT)</span>
+                              <span className="font-black text-emerald-600">{stationSatisfactionRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 mt-1">
+                              <div className="bg-emerald-500 h-2 rounded-full" style={{ width: `${stationSatisfactionRate}%` }} />
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
+                              <span>Dissatisfied</span>
+                              <span className="font-black text-rose-600">{stationDissatisfiedRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 mt-1">
+                              <div className="bg-rose-500 h-2 rounded-full" style={{ width: `${stationDissatisfiedRate}%` }} />
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
+                              <span>Neutral</span>
+                              <span className="font-black text-slate-500">{stationNeutralRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 mt-1">
+                              <div className="bg-slate-400 h-2 rounded-full" style={{ width: `${stationNeutralRate}%` }} />
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="text-[8px] text-slate-400 font-bold border-t border-slate-100 pt-1.5 mt-2">
-                    Data updates reactively with filters. Click any station in the table to swap metrics.
-                  </div>
+
+                      {/* Column 3: Operational SLA Speed Indicators */}
+                      <div className={`p-4 rounded-xl border space-y-3 ${bgSub}`}>
+                        <span className={`text-xs font-black uppercase tracking-wider block ${isDark ? "text-slate-200" : "text-slate-700"}`}>
+                          Operational Turnaround Speed
+                        </span>
+
+                        <div className="space-y-2.5">
+                          <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black uppercase text-blue-600">Station Avg Contact</p>
+                              <p className="text-xs font-bold text-slate-500">Target ≤ 2 Days</p>
+                            </div>
+                            <span className="text-lg font-black text-blue-600">
+                              {stationAvgContact} {stationAvgContact === 1 ? "day" : "days"}
+                            </span>
+                          </div>
+
+                          <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black uppercase text-amber-600">Call Center Avg Contact</p>
+                              <p className="text-xs font-bold text-slate-500">Target ≤ 1 Day</p>
+                            </div>
+                            <span className="text-lg font-black text-amber-600">
+                              {ccAvgContact} {ccAvgContact === 1 ? "day" : "days"}
+                            </span>
+                          </div>
+
+                          <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black uppercase text-emerald-600">Avg Speed to Solve Case</p>
+                              <p className="text-xs font-bold text-slate-500">Full Resolution Velocity</p>
+                            </div>
+                            <span className="text-lg font-black text-emerald-600">
+                              {solveAvgDays} {solveAvgDays === 1 ? "day" : "days"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+                  )}
                 </div>
               );
             })()}

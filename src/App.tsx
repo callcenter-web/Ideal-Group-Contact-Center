@@ -37,7 +37,7 @@ import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, 
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
-import { sanitizeComplaintDates } from "./utils/agingUtils";
+import { sanitizeComplaintDates, parseComplaintDate } from "./utils/agingUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
 import StationOverview from "./components/StationOverview";
@@ -381,6 +381,9 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [stationFilter, setStationFilter] = useState<string>("All");
+  const [dateFilter, setDateFilter] = useState<string>("All");
+  const [startDateFilter, setStartDateFilter] = useState<string>("");
+  const [endDateFilter, setEndDateFilter] = useState<string>("");
 
   // Call Center Quick Filter: 1st Attempt, 2nd Attempt, Rejected List, Completed, All Station Contacted
   const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"1st_attempt" | "2nd_attempt" | "rejected" | "completed" | "all">("1st_attempt");
@@ -1464,7 +1467,46 @@ export default function App() {
       }
     }
 
-    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick;
+    // Added Date Filter
+    let matchesAddedDate = true;
+    if (dateFilter !== "All") {
+      const complaintDate = parseComplaintDate(c.date, c.createdAt);
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      if (dateFilter === "Today") {
+        matchesAddedDate = complaintDate >= todayStart;
+      } else if (dateFilter === "Yesterday") {
+        const yesterdayStart = new Date(todayStart);
+        yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+        const yesterdayEnd = new Date(todayStart);
+        matchesAddedDate = complaintDate >= yesterdayStart && complaintDate < yesterdayEnd;
+      } else if (dateFilter === "This Week") {
+        const weekStart = new Date(todayStart);
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+        matchesAddedDate = complaintDate >= weekStart;
+      } else if (dateFilter === "This Month") {
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        matchesAddedDate = complaintDate >= monthStart;
+      } else if (dateFilter === "Last 30 Days") {
+        const thirtyDaysAgo = new Date(todayStart);
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        matchesAddedDate = complaintDate >= thirtyDaysAgo;
+      } else if (dateFilter === "Custom") {
+        if (startDateFilter) {
+          const start = new Date(startDateFilter);
+          start.setHours(0, 0, 0, 0);
+          if (complaintDate < start) matchesAddedDate = false;
+        }
+        if (endDateFilter) {
+          const end = new Date(endDateFilter);
+          end.setHours(23, 59, 59, 999);
+          if (complaintDate > end) matchesAddedDate = false;
+        }
+      }
+    }
+
+    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick && matchesAddedDate;
   });
 
   // Calculate high-level KPIs for filtered view
@@ -2258,64 +2300,126 @@ NOTIFY pgrst, 'reload schema';
                       <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
                     </div>
 
-                    {/* Filters Row (Call Center / Admin only; Service station shows lock station badge) */}
-                    {(currentUser.role === "admin" || currentUser.role === "callcenter") ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div className="flex flex-col">
-                          <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Service Station</label>
-                          <select
-                            id="filter-station"
-                            value={stationFilter}
-                            onChange={(e) => setStationFilter(e.target.value)}
-                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
-                          >
-                            <option value="All">All Stations</option>
-                            {STATIONS.map((st) => (
-                              <option key={st.code} value={st.code}>{st.name}</option>
-                            ))}
-                          </select>
-                        </div>
+                    {/* Filters Row */}
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                        {(currentUser.role === "admin" || currentUser.role === "callcenter") ? (
+                          <>
+                            <div className="flex flex-col">
+                              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Service Station</label>
+                              <select
+                                id="filter-station"
+                                value={stationFilter}
+                                onChange={(e) => setStationFilter(e.target.value)}
+                                className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="All">All Stations</option>
+                                {STATIONS.map((st) => (
+                                  <option key={st.code} value={st.code}>{st.name}</option>
+                                ))}
+                              </select>
+                            </div>
 
-                        <div className="flex flex-col">
-                          <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Follow-up Status</label>
-                          <select
-                            id="filter-status"
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
-                          >
-                            <option value="All">All Statuses</option>
-                            <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
-                            <option value="Rejected">❌ Response Rejected by Call Center</option>
-                            <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
-                            <option value="Pending">Pending</option>
-                            <option value="In Progress">In Progress</option>
-                            <option value="Contacted">Contacted</option>
-                            <option value="Resolved">Resolved</option>
-                          </select>
-                        </div>
+                            <div className="flex flex-col">
+                              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Follow-up Status</label>
+                              <select
+                                id="filter-status"
+                                value={statusFilter}
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                                className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
+                              >
+                                <option value="All">All Statuses</option>
+                                <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
+                                <option value="Rejected">❌ Response Rejected by Call Center</option>
+                                <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
+                                <option value="Pending">Pending</option>
+                                <option value="In Progress">In Progress</option>
+                                <option value="Contacted">Contacted</option>
+                                <option value="Resolved">Resolved</option>
+                              </select>
+                            </div>
 
+                            <div className="flex flex-col">
+                              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Complaint Category</label>
+                              <select
+                                id="filter-category"
+                                value={categoryFilter}
+                                onChange={(e) => setCategoryFilter(e.target.value)}
+                                className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="All">All Categories</option>
+                                {categories.map((cat) => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="sm:col-span-2 flex items-center justify-between text-xs text-slate-600 bg-blue-50/60 border border-blue-100 px-3 py-1.5 rounded-md font-medium">
+                            <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Lock Station: <strong className="text-blue-700">{currentUser.station} HQ</strong></span>
+                            <span className="text-[11px] text-blue-700 font-semibold">Showing Pending Action Queue Only</span>
+                          </div>
+                        )}
+
+                        {/* Added Date Filter */}
                         <div className="flex flex-col">
-                          <label className="text-[10px] text-slate-500 font-bold uppercase mb-1">Complaint Category</label>
+                          <label className="text-[10px] text-blue-600 font-bold uppercase mb-1 flex items-center justify-between">
+                            <span>📅 Added Date</span>
+                            {dateFilter !== "All" && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateFilter("All");
+                                  setStartDateFilter("");
+                                  setEndDateFilter("");
+                                }}
+                                className="text-[9px] text-rose-600 hover:underline cursor-pointer lowercase"
+                              >
+                                reset
+                              </button>
+                            )}
+                          </label>
                           <select
-                            id="filter-category"
-                            value={categoryFilter}
-                            onChange={(e) => setCategoryFilter(e.target.value)}
-                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500"
+                            id="filter-added-date"
+                            value={dateFilter}
+                            onChange={(e) => setDateFilter(e.target.value)}
+                            className="bg-white border border-blue-200 rounded-md px-2 py-1 text-xs text-slate-800 font-semibold cursor-pointer focus:outline-none focus:border-blue-500"
                           >
-                            <option value="All">All Categories</option>
-                            {categories.map((cat) => (
-                              <option key={cat} value={cat}>{cat}</option>
-                            ))}
+                            <option value="All">All Dates</option>
+                            <option value="Today">Today</option>
+                            <option value="Yesterday">Yesterday</option>
+                            <option value="This Week">This Week</option>
+                            <option value="This Month">This Month</option>
+                            <option value="Last 30 Days">Last 30 Days</option>
+                            <option value="Custom">Custom Date Range...</option>
                           </select>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex items-center justify-between text-xs text-slate-600 bg-blue-50/60 border border-blue-100 px-3 py-1.5 rounded-md font-medium">
-                        <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Lock Station: <strong className="text-blue-700">{currentUser.station} HQ</strong></span>
-                        <span className="text-[11px] text-blue-700 font-semibold">Showing Pending Action Queue Only</span>
-                      </div>
-                    )}
+
+                      {/* Custom Date Range Picker */}
+                      {dateFilter === "Custom" && (
+                        <div className="flex items-center gap-2 bg-blue-50/70 border border-blue-200 p-2 rounded-md">
+                          <div className="flex items-center gap-1.5 flex-1">
+                            <label className="text-[10px] text-slate-600 font-bold whitespace-nowrap">From:</label>
+                            <input
+                              type="date"
+                              value={startDateFilter}
+                              onChange={(e) => setStartDateFilter(e.target.value)}
+                              className="w-full bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-1">
+                            <label className="text-[10px] text-slate-600 font-bold whitespace-nowrap">To:</label>
+                            <input
+                              type="date"
+                              value={endDateFilter}
+                              onChange={(e) => setEndDateFilter(e.target.value)}
+                              className="w-full bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 

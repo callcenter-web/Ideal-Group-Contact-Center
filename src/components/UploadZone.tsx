@@ -305,7 +305,6 @@ export default function UploadZone({
 
             stationContactedDate: "",
             stationResolutionNotes: "",
-            callCenterContactedDate: cleanCallCenterDate || "",
             callCenterFinalRemarks: "",
             callCenterFinalSatisfaction: undefined
           };

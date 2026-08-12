@@ -22,7 +22,7 @@ import {
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
-import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "../utils/agingUtils";
+import { getComplaintAgeInfo, getAgeFormulaBreakdown, parseComplaintDate } from "../utils/agingUtils";
 
 interface AllComplaintsListProps {
   complaints: Complaint[];
@@ -54,6 +54,9 @@ export default function AllComplaintsList({
   const [statusFilter, setStatusFilter] = useState("all");
   const [satisfactionFilter, setSatisfactionFilter] = useState("all");
   const [attemptFilter, setAttemptFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -135,9 +138,48 @@ export default function AllComplaintsList({
           c.finalStatus?.includes("Unreachable");
       }
 
-      return matchesSearch && matchesStation && matchesStatus && matchesSatisfaction && matchesAttempt;
+      // Added Date Filter
+      let matchesDate = true;
+      if (dateFilter !== "all") {
+        const complaintDate = parseComplaintDate(c.date);
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        if (dateFilter === "today") {
+          matchesDate = complaintDate >= todayStart;
+        } else if (dateFilter === "yesterday") {
+          const yesterdayStart = new Date(todayStart);
+          yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+          const yesterdayEnd = new Date(todayStart);
+          matchesDate = complaintDate >= yesterdayStart && complaintDate < yesterdayEnd;
+        } else if (dateFilter === "this_week") {
+          const weekStart = new Date(todayStart);
+          weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+          matchesDate = complaintDate >= weekStart;
+        } else if (dateFilter === "this_month") {
+          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          matchesDate = complaintDate >= monthStart;
+        } else if (dateFilter === "last_30_days") {
+          const thirtyDaysAgo = new Date(todayStart);
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          matchesDate = complaintDate >= thirtyDaysAgo;
+        } else if (dateFilter === "custom") {
+          if (startDateFilter) {
+            const start = new Date(startDateFilter);
+            start.setHours(0, 0, 0, 0);
+            if (complaintDate < start) matchesDate = false;
+          }
+          if (endDateFilter) {
+            const end = new Date(endDateFilter);
+            end.setHours(23, 59, 59, 999);
+            if (complaintDate > end) matchesDate = false;
+          }
+        }
+      }
+
+      return matchesSearch && matchesStation && matchesStatus && matchesSatisfaction && matchesAttempt && matchesDate;
     });
-  }, [complaints, searchQuery, stationFilter, statusFilter, satisfactionFilter, attemptFilter]);
+  }, [complaints, searchQuery, stationFilter, statusFilter, satisfactionFilter, attemptFilter, dateFilter, startDateFilter, endDateFilter]);
 
   // Reset filters
   const handleResetFilters = () => {
@@ -146,6 +188,9 @@ export default function AllComplaintsList({
     setStatusFilter("all");
     setSatisfactionFilter("all");
     setAttemptFilter("all");
+    setDateFilter("all");
+    setStartDateFilter("");
+    setEndDateFilter("");
     setCurrentPage(1);
   };
 
@@ -360,11 +405,11 @@ export default function AllComplaintsList({
       <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
           {/* Search Box */}
-          <div className="md:col-span-4 relative">
+          <div className="md:col-span-3 relative">
             <Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by Customer, Phone, WO No, Reg No, Description..."
+              placeholder="Search by Customer, Phone, WO No, Reg No..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
@@ -382,7 +427,7 @@ export default function AllComplaintsList({
                 setStationFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">All Stations ({STATIONS.length})</option>
               {STATIONS.map((st) => (
@@ -401,7 +446,7 @@ export default function AllComplaintsList({
                 setStatusFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">All Recovery Statuses</option>
               <option value="to_contact">⚡ Who Has To Contact (Pending Action)</option>
@@ -413,6 +458,26 @@ export default function AllComplaintsList({
             </select>
           </div>
 
+          {/* Added Date Filter */}
+          <div className="md:col-span-2">
+            <select
+              value={dateFilter}
+              onChange={(e) => {
+                setDateFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full text-xs bg-blue-50/80 border border-blue-200 text-blue-900 rounded-lg py-1.5 px-2 font-bold focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="all">📅 All Added Dates</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="this_week">This Week</option>
+              <option value="this_month">This Month</option>
+              <option value="last_30_days">Last 30 Days</option>
+              <option value="custom">Custom Date Range...</option>
+            </select>
+          </div>
+
           {/* Attempt Filter */}
           <div className="md:col-span-2">
             <select
@@ -421,7 +486,7 @@ export default function AllComplaintsList({
                 setAttemptFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">All Call Attempts</option>
               <option value="1st">1st Attempt Recorded</option>
@@ -431,17 +496,51 @@ export default function AllComplaintsList({
           </div>
 
           {/* Reset Filters */}
-          <div className="md:col-span-2 flex justify-end">
+          <div className="md:col-span-1 flex justify-end">
             <button
               type="button"
               onClick={handleResetFilters}
-              className="w-full flex items-center justify-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-1.5 px-3 rounded-lg transition-all cursor-pointer"
+              className="w-full flex items-center justify-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-1.5 px-2 rounded-lg transition-all cursor-pointer"
+              title="Reset all filters"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              Reset Filters
+              <span>Reset</span>
             </button>
           </div>
         </div>
+
+        {/* Custom Date Range Picker inputs if custom selected */}
+        {dateFilter === "custom" && (
+          <div className="flex items-center gap-3 bg-blue-50/70 border border-blue-200 p-2.5 rounded-lg text-xs">
+            <span className="font-extrabold text-blue-800 flex items-center gap-1">
+              📅 Added Date Range:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-600 font-bold">From:</label>
+              <input
+                type="date"
+                value={startDateFilter}
+                onChange={(e) => {
+                  setStartDateFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-600 font-bold">To:</label>
+              <input
+                type="date"
+                value={endDateFilter}
+                onChange={(e) => {
+                  setEndDateFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Table Container */}
