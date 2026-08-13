@@ -3211,8 +3211,8 @@ NOTIFY pgrst, 'reload schema';
                               )}
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 font-medium">
-                              <span>Station Contacted: <strong>{selectedComplaint.stationContactedDate || "N/A"}</strong></span>
-                              <span>Adviser: <strong>{selectedComplaint.agentName || "N/A"}</strong></span>
+                              <span>Station Action Logged: <strong>{selectedComplaint.stationContactedDate || selectedComplaint.date || "N/A"}</strong></span>
+                              <span>Adviser: <strong>{selectedComplaint.agentName || "Service Station Adviser"}</strong></span>
                             </div>
 
                             {/* Attempt history summary if logged */}
@@ -3236,12 +3236,24 @@ NOTIFY pgrst, 'reload schema';
                             )}
                             {/* Reject Station Response Section */}
                             <div className="mt-2.5 pt-2.5 border-t border-blue-200/60">
-                              {selectedComplaint.stationResponseStatus === "Rejected" ? (
-                                <div className="bg-rose-50 border border-rose-300 p-2.5 rounded-lg text-xs space-y-1">
-                                  <span className="font-black text-rose-800 text-[10px] uppercase flex items-center gap-1">
-                                    <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
-                                    Current Status: Response Already Rejected & Sent to Station
-                                  </span>
+                              {selectedComplaint.stationResponseStatus === "Rejected" && !showRejectionForm && (
+                                <div className="bg-rose-50 border border-rose-300 p-2.5 rounded-lg text-xs space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-black text-rose-800 text-[10px] uppercase flex items-center gap-1">
+                                      <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
+                                      Current Status: Response Rejected & Sent to Station
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setRejectionReasonInput(selectedComplaint.stationResponseRejectionReason || "");
+                                        setShowRejectionForm(true);
+                                      }}
+                                      className="text-[10px] font-bold text-rose-700 underline hover:text-rose-900 cursor-pointer"
+                                    >
+                                      Edit Rejection Note
+                                    </button>
+                                  </div>
                                   <p className="text-slate-800 text-[11px] font-semibold italic bg-white p-2 rounded border border-rose-200">
                                     "{selectedComplaint.stationResponseRejectionReason}"
                                   </p>
@@ -3249,53 +3261,80 @@ NOTIFY pgrst, 'reload schema';
                                     Rejected on {selectedComplaint.stationResponseRejectedDate} by {selectedComplaint.stationResponseRejectedBy || "Call Center"}
                                   </span>
                                 </div>
-                              ) : (
-                                <div>
-                                  {!showRejectionForm ? (
+                              )}
+
+                              {selectedComplaint.stationResponseStatus === "Returned to Call Center" && !showRejectionForm && (
+                                <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-lg text-xs space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-black text-amber-900 text-[10px] uppercase flex items-center gap-1">
+                                      <CornerDownLeft className="h-3.5 w-3.5 text-amber-600" />
+                                      Current Status: Returned to Call Center by Service Station
+                                    </span>
                                     <button
                                       type="button"
-                                      onClick={() => setShowRejectionForm(true)}
-                                      className="text-xs font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors w-full justify-center"
+                                      onClick={() => {
+                                        setRejectionReasonInput(selectedComplaint.stationResponseRejectionReason || "");
+                                        setShowRejectionForm(true);
+                                      }}
+                                      className="text-[10px] font-bold text-amber-800 underline hover:text-amber-950 cursor-pointer"
                                     >
-                                      <XCircle className="h-4 w-4 text-rose-600" />
-                                      <span>Reject Station Response & Send Rejection Message to Workshop</span>
+                                      Pass Back to Station
                                     </button>
-                                  ) : (
-                                    <div className="bg-rose-50 border border-rose-300 p-3 rounded-lg space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1">
-                                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
-                                          Reject Station Response
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => setShowRejectionForm(false)}
-                                          className="text-slate-500 hover:text-slate-700 text-xs font-bold"
-                                        >
-                                          ✕ Cancel
-                                        </button>
-                                      </div>
-                                      <p className="text-[11px] text-slate-600 font-medium">
-                                        Enter reason why station response was rejected or what re-action is required. The workshop will see this message in system.
-                                      </p>
-                                      <textarea
-                                        rows={2}
-                                        value={rejectionReasonInput}
-                                        onChange={(e) => setRejectionReasonInput(e.target.value)}
-                                        placeholder="e.g. Customer stated noise persists during follow-up call. Workshop needs to inspect..."
-                                        className="w-full bg-white border border-rose-300 rounded-md p-2 text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={handleRejectStationResponse}
-                                        disabled={!rejectionReasonInput.trim()}
-                                        className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1.5"
-                                      >
-                                        <Send className="h-3.5 w-3.5" />
-                                        Submit Rejection Message to Station
-                                      </button>
-                                    </div>
-                                  )}
+                                  </div>
+                                  <p className="text-slate-800 text-[11px] font-semibold italic bg-white p-2 rounded border border-amber-200">
+                                    "{selectedComplaint.stationResponseRejectionReason}"
+                                  </p>
+                                  <span className="text-[9px] text-slate-500 block font-bold">
+                                    Returned on {selectedComplaint.stationResponseRejectedDate} by {selectedComplaint.stationResponseRejectedBy || selectedComplaint.station}
+                                  </span>
+                                </div>
+                              )}
+
+                              {selectedComplaint.stationResponseStatus !== "Rejected" && selectedComplaint.stationResponseStatus !== "Returned to Call Center" && !showRejectionForm && (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowRejectionForm(true)}
+                                  className="text-xs font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors w-full justify-center"
+                                >
+                                  <XCircle className="h-4 w-4 text-rose-600" />
+                                  <span>Reject Station Response & Send Rejection Message to Workshop</span>
+                                </button>
+                              )}
+
+                              {showRejectionForm && (
+                                <div className="bg-rose-50 border border-rose-300 p-3 rounded-lg space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1">
+                                      <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
+                                      Reject Station Response / Pass Back to Station
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowRejectionForm(false)}
+                                      className="text-slate-500 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                                    >
+                                      ✕ Cancel
+                                    </button>
+                                  </div>
+                                  <p className="text-[11px] text-slate-600 font-medium">
+                                    Enter reason why station response was rejected or what re-action is required. The workshop will see this message in system.
+                                  </p>
+                                  <textarea
+                                    rows={2}
+                                    value={rejectionReasonInput}
+                                    onChange={(e) => setRejectionReasonInput(e.target.value)}
+                                    placeholder="e.g. Customer stated noise persists during follow-up call. Workshop needs to inspect..."
+                                    className="w-full bg-white border border-rose-300 rounded-md p-2 text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={handleRejectStationResponse}
+                                    disabled={!rejectionReasonInput.trim()}
+                                    className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1.5"
+                                  >
+                                    <Send className="h-3.5 w-3.5" />
+                                    Submit Rejection Message to Station
+                                  </button>
                                 </div>
                               )}
                             </div>

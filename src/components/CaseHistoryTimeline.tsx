@@ -12,7 +12,13 @@ export default function CaseHistoryTimeline({ complaint, compact = false }: Case
   const entries: CaseHistoryEntry[] = [];
 
   // 1. Initial creation entry
-  entries.push({
+  const addEntry = (entry: CaseHistoryEntry) => {
+    if (!entries.some((existing) => existing.id === entry.id || (existing.action === entry.action && existing.timestamp === entry.timestamp))) {
+      entries.push(entry);
+    }
+  };
+
+  addEntry({
     id: `hist-init-${complaint.id}`,
     timestamp: complaint.receivedDateTime || complaint.date || "Initial Date",
     actorName: complaint.agentName || "System / Registration",
@@ -23,78 +29,76 @@ export default function CaseHistoryTimeline({ complaint, compact = false }: Case
     newStatus: "Pending Station Contact"
   });
 
-  // 2. Add real logged history if present
+  // 2. Synthetic history derivation for legacy records & missing array items
+  if (complaint.stationContactedDate || complaint.stationResolutionNotes) {
+    addEntry({
+      id: `hist-station-${complaint.id}`,
+      timestamp: complaint.stationContactedDate || complaint.date || "Station Action Date",
+      actorName: complaint.agentName || `${complaint.station} Adviser`,
+      actorRole: "agent",
+      action: "Service Station Resolution Logged",
+      notes: complaint.stationResolutionNotes || "Station contacted customer and performed resolution.",
+      stationName: complaint.station,
+      newStatus: complaint.stationResponseStatus || "Submitted to Call Center"
+    });
+  }
+
+  if (complaint.stationResponseStatus === "Returned to Call Center" || complaint.stationResponseStatus === "Rejected") {
+    addEntry({
+      id: `hist-reject-${complaint.id}`,
+      timestamp: complaint.stationResponseRejectedDate || complaint.updatedAt || "Rejection Date",
+      actorName: complaint.stationResponseRejectedBy || "Service Station / Call Center",
+      actorRole: complaint.stationResponseStatus === "Returned to Call Center" ? "agent" : "callcenter",
+      action: complaint.stationResponseStatus === "Returned to Call Center"
+        ? "Case Returned to Call Center by Service Station"
+        : "Station Response Rejected by Call Center",
+      rejectionReason: complaint.stationResponseRejectionReason || "No detailed reason specified.",
+      stationName: complaint.station,
+      newStatus: complaint.stationResponseStatus
+    });
+  }
+
+  if (complaint.firstAttemptCallStatus || complaint.firstAttemptDate) {
+    addEntry({
+      id: `hist-att1-${complaint.id}`,
+      timestamp: complaint.firstAttemptDate || "1st Attempt Date",
+      actorName: complaint.callCenterOfficer || "Call Center Officer",
+      actorRole: "callcenter",
+      action: `1st Follow-up Call Attempt: ${complaint.firstAttemptCallStatus || "Logged"}`,
+      notes: complaint.firstAttemptNotes || complaint.callCenterFinalRemarks,
+      newStatus: complaint.firstAttemptCallStatus
+    });
+  }
+
+  if (complaint.secondAttemptFeedbackStatus || complaint.secondAttemptDate) {
+    addEntry({
+      id: `hist-att2-${complaint.id}`,
+      timestamp: complaint.secondAttemptDate || "2nd Attempt Date",
+      actorName: complaint.callCenterOfficer || "Call Center Officer",
+      actorRole: "callcenter",
+      action: `2nd Follow-up Call Attempt: ${complaint.secondAttemptFeedbackStatus || "Logged"}`,
+      notes: complaint.secondAttemptNotes || complaint.callCenterFinalRemarks,
+      newStatus: complaint.secondAttemptFeedbackStatus
+    });
+  }
+
+  if (complaint.status === "Resolved" || complaint.finalStatus === "Closed" || complaint.finalStatus === "Completed") {
+    addEntry({
+      id: `hist-resolved-${complaint.id}`,
+      timestamp: complaint.updatedAt || "Closure Date",
+      actorName: complaint.callCenterOfficer || complaint.agentName || "Call Center / Station",
+      actorRole: "callcenter",
+      action: "Complaint Verified & Case Closed",
+      notes: complaint.callCenterFinalRemarks || "Customer confirmed resolution.",
+      newStatus: "Closed & Resolved"
+    });
+  }
+
+  // 3. Add real logged history if present
   if (Array.isArray(complaint.caseHistory) && complaint.caseHistory.length > 0) {
     complaint.caseHistory.forEach((e) => {
-      if (!entries.some((existing) => existing.id === e.id)) {
-        entries.push(e);
-      }
+      addEntry(e);
     });
-  } else {
-    // Synthetic history derivation for legacy records
-    if (complaint.stationContactedDate || complaint.stationResolutionNotes) {
-      entries.push({
-        id: `hist-station-${complaint.id}`,
-        timestamp: complaint.stationContactedDate || "Station Action Date",
-        actorName: complaint.agentName || `${complaint.station} Adviser`,
-        actorRole: "agent",
-        action: "Service Station Resolution Logged",
-        notes: complaint.stationResolutionNotes || "Station contacted customer and performed resolution.",
-        stationName: complaint.station,
-        newStatus: complaint.stationResponseStatus || "Submitted to Call Center"
-      });
-    }
-
-    if (complaint.stationResponseStatus === "Returned to Call Center" || complaint.stationResponseStatus === "Rejected") {
-      entries.push({
-        id: `hist-reject-${complaint.id}`,
-        timestamp: complaint.stationResponseRejectedDate || complaint.updatedAt || "Rejection Date",
-        actorName: complaint.stationResponseRejectedBy || "Service Station / Call Center",
-        actorRole: complaint.stationResponseStatus === "Returned to Call Center" ? "agent" : "callcenter",
-        action: complaint.stationResponseStatus === "Returned to Call Center"
-          ? "Case Returned to Call Center by Service Station"
-          : "Station Response Rejected by Call Center",
-        rejectionReason: complaint.stationResponseRejectionReason || "No detailed reason specified.",
-        stationName: complaint.station,
-        newStatus: complaint.stationResponseStatus
-      });
-    }
-
-    if (complaint.firstAttemptCallStatus || complaint.firstAttemptDate) {
-      entries.push({
-        id: `hist-att1-${complaint.id}`,
-        timestamp: complaint.firstAttemptDate || "1st Attempt Date",
-        actorName: complaint.callCenterOfficer || "Call Center Officer",
-        actorRole: "callcenter",
-        action: `1st Follow-up Call Attempt: ${complaint.firstAttemptCallStatus || "Logged"}`,
-        notes: complaint.firstAttemptNotes || complaint.callCenterFinalRemarks,
-        newStatus: complaint.firstAttemptCallStatus
-      });
-    }
-
-    if (complaint.secondAttemptFeedbackStatus || complaint.secondAttemptDate) {
-      entries.push({
-        id: `hist-att2-${complaint.id}`,
-        timestamp: complaint.secondAttemptDate || "2nd Attempt Date",
-        actorName: complaint.callCenterOfficer || "Call Center Officer",
-        actorRole: "callcenter",
-        action: `2nd Follow-up Call Attempt: ${complaint.secondAttemptFeedbackStatus || "Logged"}`,
-        notes: complaint.secondAttemptNotes || complaint.callCenterFinalRemarks,
-        newStatus: complaint.secondAttemptFeedbackStatus
-      });
-    }
-
-    if (complaint.status === "Resolved" || complaint.finalStatus === "Closed") {
-      entries.push({
-        id: `hist-resolved-${complaint.id}`,
-        timestamp: complaint.updatedAt || "Closure Date",
-        actorName: complaint.callCenterOfficer || complaint.agentName || "Call Center / Station",
-        actorRole: "callcenter",
-        action: "Complaint Verified & Case Closed",
-        notes: complaint.callCenterFinalRemarks || "Customer confirmed resolution.",
-        newStatus: "Closed & Resolved"
-      });
-    }
   }
 
   // Sort entries chronologically
