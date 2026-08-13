@@ -53,7 +53,8 @@ export const VALID_COMPLAINT_COLUMNS = [
   "stationResponseStatus",
   "stationResponseRejectionReason",
   "stationResponseRejectedDate",
-  "stationResponseRejectedBy"
+  "stationResponseRejectedBy",
+  "caseHistory"
 ];
 
 /**
@@ -159,6 +160,21 @@ export function mergeComplaintObjects(a: any, b: any): any {
     }
   }
 
+  // Combine caseHistory entries without duplicate history items
+  const historyA = Array.isArray(a.caseHistory) ? a.caseHistory : [];
+  const historyB = Array.isArray(b.caseHistory) ? b.caseHistory : [];
+  if (historyA.length > 0 || historyB.length > 0) {
+    const historyMap = new Map<string, any>();
+    [...historyA, ...historyB].forEach((entry) => {
+      if (entry && entry.id) {
+        historyMap.set(entry.id, entry);
+      }
+    });
+    result.caseHistory = Array.from(historyMap.values()).sort((x, y) => 
+      new Date(x.timestamp || 0).getTime() - new Date(y.timestamp || 0).getTime()
+    );
+  }
+
   // CRITICAL: If either record was marked as Resolved / Satisfied / Closed / Completed,
   // do NOT revert back to Pending/Contacted unless explicitly changed to Rejected/Re-assigned
   const isASatisfied = 
@@ -226,9 +242,25 @@ export function deduplicateAndSanitizeComplaints(items: any[]): Record<string, a
     if (!clean.id) {
       clean.id = `ID-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     }
-    const idKey = String(clean.id);
+    const idKey = String(clean.id).trim().toUpperCase();
+    
+    // Check if map already has this idKey or matching woNo/COMP- id
+    let existingKey: string | undefined = undefined;
     if (map.has(idKey)) {
-      map.set(idKey, { ...map.get(idKey), ...clean });
+      existingKey = idKey;
+    } else if (clean.woNo) {
+      const woKey = String(clean.woNo).trim().toUpperCase();
+      const compWoKey = `COMP-${woKey}`;
+      if (map.has(compWoKey)) {
+        existingKey = compWoKey;
+      } else if (map.has(woKey)) {
+        existingKey = woKey;
+      }
+    }
+
+    if (existingKey) {
+      const existing = map.get(existingKey)!;
+      map.set(existingKey, mergeComplaintObjects(existing, clean));
     } else {
       map.set(idKey, clean);
     }

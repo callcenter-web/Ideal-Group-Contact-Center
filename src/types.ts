@@ -8,6 +8,19 @@ export interface AIAnalysis {
   suggestedCompensation: string;
 }
 
+export interface CaseHistoryEntry {
+  id: string;
+  timestamp: string;
+  actorName: string;
+  actorRole: "callcenter" | "agent" | "admin" | "system";
+  action: string;
+  notes?: string;
+  rejectionReason?: string;
+  stationName?: string;
+  previousStatus?: string;
+  newStatus?: string;
+}
+
 export interface Complaint {
   id: string;
   customerName: string;
@@ -25,6 +38,9 @@ export interface Complaint {
   agentName: string;
   aiAnalysis?: AIAnalysis;
   updatedAt?: string;
+
+  // Case history tracking
+  caseHistory?: CaseHistoryEntry[];
 
   // New fields from Excel spreadsheet
   month?: string;

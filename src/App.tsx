@@ -30,10 +30,11 @@ import {
   Send,
   ShieldAlert,
   BarChart2,
-  Edit3
+  Edit3,
+  CornerDownLeft
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
-import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate } from "./types";
+import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate, CaseHistoryEntry } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName } from "./utils/stationUtils";
@@ -48,6 +49,7 @@ import UserProfileModal from "./components/UserProfileModal";
 import AllComplaintsList from "./components/AllComplaintsList";
 import CallCenterSLAReportModal from "./components/CallCenterSLAReportModal";
 import AdminEditComplaintModal from "./components/AdminEditComplaintModal";
+import CaseHistoryTimeline from "./components/CaseHistoryTimeline";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
 import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
 import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
@@ -420,6 +422,10 @@ export default function App() {
   // Rejection Workflow states
   const [rejectionReasonInput, setRejectionReasonInput] = useState("");
   const [showRejectionForm, setShowRejectionForm] = useState(false);
+
+  // Service Station Return / Reject states
+  const [stationReturnReasonInput, setStationReturnReasonInput] = useState("");
+  const [showStationReturnForm, setShowStationReturnForm] = useState(false);
 
   // Manual Complaint States
   const [showAddModal, setShowAddModal] = useState(false);
@@ -1047,6 +1053,17 @@ export default function App() {
             ["Closed", "Completed", "Resolved"].includes(formFinalStatus) ||
             formStatus === "Resolved";
 
+          const statHistoryEntry: CaseHistoryEntry = {
+            id: "HIST-STAT-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+            timestamp: submitDateTime,
+            actorName: formAgentName || `${currentUser.station} Adviser`,
+            actorRole: "agent",
+            action: "Station Action Logged & Submitted to Call Center",
+            notes: formStationResolutionNotes,
+            stationName: currentUser.station,
+            newStatus: "Submitted to Call Center"
+          };
+
           return {
             ...c,
             stationContactedDate: submitDateTime,
@@ -1061,7 +1078,8 @@ export default function App() {
             solutionProvidedByAftermarket: formStationResolutionNotes, // Sync with action taken
             solutionDate: submitDateTime, // Sync with contacted date and time
             followUpDate: formFollowUpDate,
-            updatedAt: new Date().toISOString()
+            updatedAt: new Date().toISOString(),
+            caseHistory: [...(c.caseHistory || []), statHistoryEntry]
           };
         }
 
@@ -1143,6 +1161,18 @@ export default function App() {
           const isNoSol = calcFinalStatus.includes("Re-assigned to Station");
           const finalRemarks = formCallCenterFinalRemarks.trim() || (isSatisfiedSelected ? "Customer confirmed satisfied during call center verification" : "");
 
+          const ccHistoryEntry: CaseHistoryEntry = {
+            id: "HIST-CC-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+            timestamp: submitDate,
+            actorName: currentUser?.name || "Call Center Officer",
+            actorRole: "callcenter",
+            action: isSatisfiedSelected
+              ? "Verified & Case Closed by Call Center"
+              : `Call Center Follow-up (${formAttemptStage}): ${calcFeedbackStatus}`,
+            notes: finalRemarks,
+            newStatus: calcFinalStatus
+          };
+
           return {
             ...c,
             callCenterContactedDate: submitDate,
@@ -1167,7 +1197,8 @@ export default function App() {
             solutionProvidedByAftermarket: formSolutionProvided,
             solutionDate: formSolutionDate,
             followUpDate: formFollowUpDate || submitDate,
-            updatedAt: submitDate
+            updatedAt: submitDate,
+            caseHistory: [...(c.caseHistory || []), ccHistoryEntry]
           };
         }
       }
@@ -1208,11 +1239,86 @@ export default function App() {
     }
   };
 
+  // Service Station Rejects / Returns Complaint to Call Center
+  const handleStationRejectAndReturn = () => {
+    if (!selectedComplaintId || !stationReturnReasonInput.trim()) return;
+    const nowStr = getFormattedDateTime();
+    const today = new Date().toISOString().split("T")[0];
+    const targetC = complaints.find((c) => c.id === selectedComplaintId);
+    if (!targetC) return;
+
+    const historyEntry: CaseHistoryEntry = {
+      id: "HIST-STAT-REJ-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+      timestamp: nowStr,
+      actorName: formAgentName || `${currentUser?.station || "Service Station"} Adviser`,
+      actorRole: "agent",
+      action: "Returned to Call Center by Service Station",
+      rejectionReason: stationReturnReasonInput.trim(),
+      stationName: currentUser?.station || targetC.station,
+      previousStatus: targetC.status,
+      newStatus: "Returned to Call Center"
+    };
+
+    const updated = complaints.map((c) => {
+      if (c.id === selectedComplaintId) {
+        return {
+          ...c,
+          stationResponseStatus: "Returned to Call Center",
+          stationResponseRejectionReason: stationReturnReasonInput.trim(),
+          stationResponseRejectedDate: nowStr,
+          stationResponseRejectedBy: formAgentName || `${currentUser?.station || "Service Station"} Adviser`,
+          status: "Pending" as FollowUpStatus,
+          finalStatus: "Returned to Call Center",
+          feedbackStatus: "Returned to Call Center",
+          stationContactedDate: "", // clear so station queue knows it's returned
+          updatedAt: today,
+          caseHistory: [...(c.caseHistory || []), historyEntry]
+        };
+      }
+      return c;
+    });
+
+    saveComplaints(updated);
+    setSaveSuccess(true);
+    setShowStationReturnForm(false);
+    setStationReturnReasonInput("");
+    setTimeout(() => setSaveSuccess(false), 3000);
+
+    // Notify Call Center
+    if (soundEnabled) {
+      playCallCenterNotificationSound();
+    }
+    setCallCenterNotifications((prev) => [
+      {
+        id: "NOTIF-STAT-REJ-" + Date.now(),
+        timestamp: new Date().toISOString(),
+        stationName: currentUser?.station || targetC.station || "Service Station",
+        complaintId: selectedComplaintId,
+        customerName: targetC.customerName || "Customer",
+        actionSummary: `↩️ Case Returned to Call Center by Station: "${stationReturnReasonInput.trim()}"`,
+        updatedBy: formAgentName || `${currentUser?.station || "Service Station"} Adviser`,
+      },
+      ...prev,
+    ]);
+  };
+
   // Reject Station Response Action Handler (Call Center / Admin)
   const handleRejectStationResponse = () => {
     if (!selectedComplaintId || !rejectionReasonInput.trim()) return;
     const today = new Date().toISOString().split("T")[0];
     const targetC = complaints.find((c) => c.id === selectedComplaintId);
+
+    const historyEntry: CaseHistoryEntry = {
+      id: "HIST-CC-REJ-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+      timestamp: getFormattedDateTime(),
+      actorName: currentUser?.name || currentUser?.title || "Call Center Officer",
+      actorRole: "callcenter",
+      action: "Station Response Rejected by Call Center",
+      rejectionReason: rejectionReasonInput.trim(),
+      stationName: targetC?.station,
+      previousStatus: targetC?.status,
+      newStatus: "Rejected (Passed back to Station)"
+    };
 
     const updated = complaints.map((c) => {
       if (c.id === selectedComplaintId) {
@@ -1235,6 +1341,7 @@ export default function App() {
           secondAttemptNotes: "",
           attemptCount: 0,
           updatedAt: today,
+          caseHistory: [...(c.caseHistory || []), historyEntry]
         };
       }
       return c;
@@ -2226,13 +2333,13 @@ NOTIFY pgrst, 'reload schema';
                         <button
                           type="button"
                           onClick={() => setCallCenterQuickFilter("rejected")}
-                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "rejected"
                               ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          ❌ Rejected List ({complaints.filter(c => c.stationResponseStatus === "Rejected").length})
+                          ↩️ Returned / Rejected ({complaints.filter(c => c.stationResponseStatus === "Rejected" || c.stationResponseStatus === "Returned to Call Center" || c.finalStatus === "Returned to Call Center").length})
                         </button>
                         <button
                           type="button"
@@ -3034,6 +3141,56 @@ NOTIFY pgrst, 'reload schema';
                           >
                             Save Station Action & Sync
                           </button>
+
+                          {/* Reject / Return to Call Center Section for Service Station */}
+                          <div className="mt-3 pt-3 border-t border-slate-200">
+                            {!showStationReturnForm ? (
+                              <button
+                                type="button"
+                                onClick={() => setShowStationReturnForm(true)}
+                                className="text-xs font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors w-full justify-center"
+                              >
+                                <CornerDownLeft className="h-4 w-4 text-rose-600" />
+                                <span>Reject / Return Complaint to Call Center</span>
+                              </button>
+                            ) : (
+                              <div className="bg-rose-50 border border-rose-300 p-3 rounded-lg space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1">
+                                    <CornerDownLeft className="h-3.5 w-3.5 text-rose-600" />
+                                    Return Case to Call Center
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowStationReturnForm(false)}
+                                    className="text-slate-500 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                                  >
+                                    ✕ Cancel
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-slate-600 font-medium">
+                                  Enter reason why this complaint is being returned/rejected to the Call Center (e.g. wrong station assigned, customer refused station visit, out of scope).
+                                </p>
+                                <textarea
+                                  rows={2}
+                                  required
+                                  value={stationReturnReasonInput}
+                                  onChange={(e) => setStationReturnReasonInput(e.target.value)}
+                                  placeholder="e.g. Customer brought vehicle to Rathmalana branch, not Tissamaharama. Return to Call Center for re-assignment."
+                                  className="w-full bg-white border border-rose-300 rounded-md p-2 text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleStationRejectAndReturn}
+                                  disabled={!stationReturnReasonInput.trim()}
+                                  className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1.5"
+                                >
+                                  <Send className="h-3.5 w-3.5" />
+                                  Submit Rejection & Return Case to Call Center
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </form>
                       )}
 
@@ -3547,6 +3704,9 @@ NOTIFY pgrst, 'reload schema';
                           </button>
                         </form>
                       )}
+
+                      {/* Case History Lifecycle Timeline */}
+                      <CaseHistoryTimeline complaint={selectedComplaint} />
 
                     </div>
 
