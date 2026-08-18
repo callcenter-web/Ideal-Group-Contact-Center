@@ -54,7 +54,28 @@ export const VALID_COMPLAINT_COLUMNS = [
   "stationResponseRejectionReason",
   "stationResponseRejectedDate",
   "stationResponseRejectedBy",
-  "caseHistory"
+  "caseHistory",
+  // Primary Service Station Contact Tracking columns
+  "serviceStationContactStatus",
+  "service_station_contact_status",
+  "serviceStationContactedAt",
+  "service_station_contacted_at",
+  "serviceStationContactedBy",
+  "service_station_contacted_by",
+  "serviceStationContactMethod",
+  "service_station_contact_method",
+  "serviceStationContactRemark",
+  "service_station_contact_remark",
+  "serviceStationCustomerResponse",
+  "service_station_customer_response",
+  "nextFollowUpDate",
+  "next_follow_up_date",
+  "lastContactAttemptAt",
+  "last_contact_attempt_at",
+  "contactAttemptCount",
+  "contact_attempt_count",
+  "contactAttempts",
+  "contact_attempts"
 ];
 
 /**
@@ -155,12 +176,30 @@ export function mergeComplaintObjects(a: any, b: any): any {
     "stationResponseRejectedDate",
     "stationResponseRejectedBy",
     "agentName",
-    "advisorName"
+    "advisorName",
+    "serviceStationContactStatus",
+    "service_station_contact_status",
+    "serviceStationContactedAt",
+    "service_station_contacted_at",
+    "serviceStationContactedBy",
+    "service_station_contacted_by",
+    "serviceStationContactMethod",
+    "service_station_contact_method",
+    "serviceStationContactRemark",
+    "service_station_contact_remark",
+    "serviceStationCustomerResponse",
+    "service_station_customer_response",
+    "nextFollowUpDate",
+    "next_follow_up_date",
+    "lastContactAttemptAt",
+    "last_contact_attempt_at",
+    "contactAttemptCount",
+    "contact_attempt_count"
   ];
 
   for (const key of keysToPreserveNonEmpty) {
     // If the primary state is an intentional rejection/return, do not resurrect cleared contact dates or call center remarks
-    if (isPrimaryRejected && (key === "stationContactedDate" || key === "callCenterFinalRemarks" || key === "callCenterFinalSatisfaction")) {
+    if (isPrimaryRejected && (key === "stationContactedDate" || key === "callCenterFinalRemarks" || key === "callCenterFinalSatisfaction" || key === "serviceStationContactedAt" || key === "service_station_contacted_at")) {
       result[key] = primary[key] !== undefined ? primary[key] : "";
       continue;
     }
@@ -172,6 +211,22 @@ export function mergeComplaintObjects(a: any, b: any): any {
     if (isPEmpty && isFPopulated) {
       result[key] = valF;
     }
+  }
+
+  // Combine contactAttempts entries without duplicates
+  const attemptsA = Array.isArray(a.contactAttempts) ? a.contactAttempts : [];
+  const attemptsB = Array.isArray(b.contactAttempts) ? b.contactAttempts : [];
+  if (attemptsA.length > 0 || attemptsB.length > 0) {
+    const attemptsMap = new Map<string, any>();
+    [...attemptsA, ...attemptsB].forEach((att) => {
+      if (att && (att.id || att.timestamp)) {
+        const key = att.id || `${att.timestamp}-${att.actorName}`;
+        attemptsMap.set(key, att);
+      }
+    });
+    result.contactAttempts = Array.from(attemptsMap.values()).sort((x, y) => 
+      new Date(x.timestamp || 0).getTime() - new Date(y.timestamp || 0).getTime()
+    );
   }
 
   // Combine caseHistory entries without duplicate history items and sort chronologically
@@ -233,10 +288,74 @@ export function mergeComplaintObjects(a: any, b: any): any {
 }
 
 /**
+ * Determines the true operational Service Station contact status.
+ * Evaluates explicit database field `serviceStationContactStatus` / `service_station_contact_status`
+ * and falls back cleanly for historical records without losing or misrepresenting data.
+ */
+export function getEffectiveStationContactStatus(item: any): "PENDING_CONTACT" | "CONTACT_ATTEMPTED" | "CONTACTED" | "CUSTOMER_UNREACHABLE" | "NOT_CONTACTED" {
+  if (!item || typeof item !== "object") return "NOT_CONTACTED";
+
+  // If rejected by call center or returned to service station, always requires fresh contact action
+  const isRejectedOrReturned = 
+    item.stationResponseStatus === "Rejected" ||
+    item.stationResponseStatus === "Returned to Service Station" ||
+    item.stationResponseStatus === "Rejected by Call Center" ||
+    item.feedbackStatus === "Returned to Service Station" ||
+    item.finalStatus === "Returned to Service Station" ||
+    item.finalStatus === "Pending with Aftermarket (Re-contact Required)";
+
+  if (isRejectedOrReturned) {
+    // If a brand new contact was already performed after rejection
+    const explicitStatus = item.serviceStationContactStatus || item.service_station_contact_status;
+    if (explicitStatus === "CONTACTED" && item.serviceStationContactedAt && item.stationResponseRejectedDate && new Date(item.serviceStationContactedAt).getTime() > new Date(item.stationResponseRejectedDate).getTime()) {
+      return "CONTACTED";
+    }
+    if (explicitStatus === "CONTACT_ATTEMPTED" || explicitStatus === "CUSTOMER_UNREACHABLE") {
+      return explicitStatus;
+    }
+    return "NOT_CONTACTED";
+  }
+
+  // Explicit database field
+  const explicit = item.serviceStationContactStatus || item.service_station_contact_status;
+  if (explicit) {
+    const norm = String(explicit).toUpperCase().trim();
+    if (norm === "CONTACTED") return "CONTACTED";
+    if (norm === "CONTACT_ATTEMPTED" || norm === "ATTEMPTED") return "CONTACT_ATTEMPTED";
+    if (norm === "CUSTOMER_UNREACHABLE" || norm === "UNREACHABLE") return "CUSTOMER_UNREACHABLE";
+    if (norm === "PENDING_CONTACT" || norm === "PENDING") return "PENDING_CONTACT";
+    if (norm === "NOT_CONTACTED") return "NOT_CONTACTED";
+  }
+
+  // Backward-compatible fallback deduction for legacy records
+  if (item.feedbackStatus === "Customer Unreachable" || item.firstAttemptCallStatus === "Customer Unreachable") {
+    return "CUSTOMER_UNREACHABLE";
+  }
+
+  const hasStationContactRecorded = !!(
+    (item.serviceStationContactedAt && String(item.serviceStationContactedAt).trim().length > 0) ||
+    (item.stationContactedDate && String(item.stationContactedDate).trim().length > 0) ||
+    (item.stationResolutionNotes && String(item.stationResolutionNotes).trim().length > 0) ||
+    item.stationResponseStatus === "Submitted to Call Center"
+  );
+
+  if (hasStationContactRecorded) {
+    return "CONTACTED";
+  }
+
+  if (item.contactAttemptCount && item.contactAttemptCount > 0) {
+    return "CONTACT_ATTEMPTED";
+  }
+
+  return "NOT_CONTACTED";
+}
+
+/**
  * Normalizes complaint objects fetched from Supabase, ensuring woNo and assignedOfficerId are available.
  */
 export function normalizeComplaintFromSupabase(item: any): Record<string, any> {
   if (!item || typeof item !== "object") return item;
+  const effectiveContactStatus = getEffectiveStationContactStatus(item);
   return {
     ...item,
     woNo: item.woNo || item.wo_no || "",
@@ -244,7 +363,17 @@ export function normalizeComplaintFromSupabase(item: any): Record<string, any> {
     stationResponseStatus: item.stationResponseStatus || "",
     stationResponseRejectionReason: item.stationResponseRejectionReason || "",
     stationResponseRejectedDate: item.stationResponseRejectedDate || "",
-    stationResponseRejectedBy: item.stationResponseRejectedBy || ""
+    stationResponseRejectedBy: item.stationResponseRejectedBy || "",
+    serviceStationContactStatus: item.serviceStationContactStatus || item.service_station_contact_status || effectiveContactStatus,
+    serviceStationContactedAt: item.serviceStationContactedAt || item.service_station_contacted_at || item.stationContactedDate || "",
+    serviceStationContactedBy: item.serviceStationContactedBy || item.service_station_contacted_by || item.advisorName || "",
+    serviceStationContactMethod: item.serviceStationContactMethod || item.service_station_contact_method || "Phone Call",
+    serviceStationContactRemark: item.serviceStationContactRemark || item.service_station_contact_remark || item.stationResolutionNotes || "",
+    serviceStationCustomerResponse: item.serviceStationCustomerResponse || item.service_station_customer_response || "",
+    nextFollowUpDate: item.nextFollowUpDate || item.next_follow_up_date || item.followUpDate || "",
+    lastContactAttemptAt: item.lastContactAttemptAt || item.last_contact_attempt_at || item.serviceStationContactedAt || "",
+    contactAttemptCount: item.contactAttemptCount !== undefined ? item.contactAttemptCount : (item.contact_attempt_count !== undefined ? item.contact_attempt_count : (effectiveContactStatus === "CONTACTED" ? 1 : 0)),
+    contactAttempts: Array.isArray(item.contactAttempts) ? item.contactAttempts : (Array.isArray(item.contact_attempts) ? item.contact_attempts : [])
   };
 }
 

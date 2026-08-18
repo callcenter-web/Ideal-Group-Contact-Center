@@ -17,12 +17,21 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
-  Edit3
+  Edit3,
+  PhoneCall,
+  PhoneOff,
+  PhoneMissed,
+  History,
+  CheckCircle2,
+  UserCheck,
+  ShieldAlert,
+  CalendarClock
 } from "lucide-react";
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown, parseComplaintDate } from "../utils/agingUtils";
+import { getEffectiveStationContactStatus } from "../utils/supabaseSanitizer";
 
 interface AllComplaintsListProps {
   complaints: Complaint[];
@@ -32,7 +41,10 @@ interface AllComplaintsListProps {
   onEditComplaint?: (complaint: Complaint) => void;
   onDeleteComplaint?: (complaintId: string) => void;
   onDeleteAllComplaints?: () => void;
+  onQuickContact?: (complaint: Complaint) => void;
+  onViewContactHistory?: (complaint: Complaint) => void;
   calendarDates?: WorkstationCalendarDate[];
+  initialContactStatusFilter?: string;
 }
 
 export default function AllComplaintsList({
@@ -43,13 +55,17 @@ export default function AllComplaintsList({
   onEditComplaint,
   onDeleteComplaint,
   onDeleteAllComplaints,
+  onQuickContact,
+  onViewContactHistory,
   calendarDates = [],
+  initialContactStatusFilter = "ALL",
 }: AllComplaintsListProps) {
 
   const isDark = theme === "dark";
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState("");
+  const [contactStatusFilter, setContactStatusFilter] = useState(initialContactStatusFilter);
   const [stationFilter, setStationFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [satisfactionFilter, setSatisfactionFilter] = useState("all");
@@ -108,14 +124,43 @@ export default function AllComplaintsList({
       // Station
       const matchesStation = matchesStationCodeOrName(c.station, stationFilter);
 
+      // Primary Service Station Contact Status Filter
+      if (contactStatusFilter !== "ALL" && contactStatusFilter !== "all") {
+        const contactStatus = getEffectiveStationContactStatus(c);
+        const isRej = c.stationResponseStatus === "Rejected" ||
+                      c.stationResponseStatus === "Returned to Service Station" ||
+                      c.stationResponseStatus === "Rejected by Call Center" ||
+                      c.feedbackStatus === "Returned to Service Station";
+        
+        if (contactStatusFilter === "NOT_CONTACTED") {
+          if (contactStatus !== "NOT_CONTACTED") return false;
+        } else if (contactStatusFilter === "CONTACTED") {
+          if (contactStatus !== "CONTACTED") return false;
+        } else if (contactStatusFilter === "CONTACT_ATTEMPTED") {
+          if (contactStatus !== "CONTACT_ATTEMPTED") return false;
+        } else if (contactStatusFilter === "CUSTOMER_UNREACHABLE") {
+          if (contactStatus !== "CUSTOMER_UNREACHABLE") return false;
+        } else if (contactStatusFilter === "PENDING_CONTACT") {
+          if (contactStatus !== "PENDING_CONTACT") return false;
+        } else if (contactStatusFilter === "SLA_BREACHED") {
+          const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+          if (!(ageInfo.workingDaysPassed >= 1 && contactStatus !== "CONTACTED" && c.status !== "Resolved")) return false;
+        } else if (contactStatusFilter === "RETURNED_TO_STATION") {
+          if (!isRej) return false;
+        }
+      }
+
       // Status
       let matchesStatus = true;
       if (statusFilter === "rejected") {
-        matchesStatus = c.stationResponseStatus === "Rejected";
+        matchesStatus = c.stationResponseStatus === "Rejected" || 
+                        c.stationResponseStatus === "Returned to Service Station" ||
+                        c.stationResponseStatus === "Rejected by Call Center" ||
+                        c.feedbackStatus === "Returned to Service Station";
       } else if (statusFilter === "to_contact" || statusFilter === "pending") {
-        matchesStatus = !isStationContacted(c);
+        matchesStatus = getEffectiveStationContactStatus(c) === "NOT_CONTACTED";
       } else if (statusFilter === "station_contacted") {
-        matchesStatus = isStationContacted(c) && c.status !== "Resolved";
+        matchesStatus = getEffectiveStationContactStatus(c) === "CONTACTED" && c.status !== "Resolved";
       } else {
         matchesStatus = statusFilter === "all" || c.status === statusFilter;
       }
@@ -127,11 +172,12 @@ export default function AllComplaintsList({
       // Attempt Filter
       let matchesAttempt = true;
       if (attemptFilter === "1st") {
-        matchesAttempt = c.attemptCount === 1 || !!c.firstAttemptCallStatus;
+        matchesAttempt = c.attemptCount === 1 || (c.contactAttempts && c.contactAttempts.length === 1) || !!c.firstAttemptCallStatus;
       } else if (attemptFilter === "2nd") {
-        matchesAttempt = c.attemptCount === 2 || !!c.secondAttemptFeedbackStatus;
+        matchesAttempt = c.attemptCount === 2 || (c.contactAttempts && c.contactAttempts.length >= 2) || !!c.secondAttemptFeedbackStatus;
       } else if (attemptFilter === "unreachable") {
         matchesAttempt =
+          c.serviceStationContactStatus === "CUSTOMER_UNREACHABLE" ||
           c.firstAttemptCallStatus === "Customer Unreachable" ||
           c.secondAttemptFeedbackStatus === "Customer Unreachable" ||
           c.feedbackStatus === "Customer Unreachable" ||
@@ -179,11 +225,12 @@ export default function AllComplaintsList({
 
       return matchesSearch && matchesStation && matchesStatus && matchesSatisfaction && matchesAttempt && matchesDate;
     });
-  }, [complaints, searchQuery, stationFilter, statusFilter, satisfactionFilter, attemptFilter, dateFilter, startDateFilter, endDateFilter]);
+  }, [complaints, searchQuery, contactStatusFilter, stationFilter, statusFilter, satisfactionFilter, attemptFilter, dateFilter, startDateFilter, endDateFilter, tickerDate, calendarDates]);
 
   // Reset filters
   const handleResetFilters = () => {
     setSearchQuery("");
+    setContactStatusFilter("ALL");
     setStationFilter("all");
     setStatusFilter("all");
     setSatisfactionFilter("all");
@@ -206,6 +253,48 @@ export default function AllComplaintsList({
   const pendingCount = complaints.filter((c) => c.status === "Pending").length;
   const progressCount = complaints.filter((c) => c.status === "In Progress").length;
   const resolvedCount = complaints.filter((c) => c.status === "Resolved").length;
+
+  // Contact status stats
+  const contactStats = useMemo(() => {
+    let notContacted = 0;
+    let contacted = 0;
+    let attempted = 0;
+    let unreachable = 0;
+    let pendingContact = 0;
+    let slaBreached = 0;
+    let returned = 0;
+
+    complaints.forEach((c) => {
+      const st = getEffectiveStationContactStatus(c);
+      const isRej = c.stationResponseStatus === "Rejected" ||
+                    c.stationResponseStatus === "Returned to Service Station" ||
+                    c.stationResponseStatus === "Rejected by Call Center" ||
+                    c.feedbackStatus === "Returned to Service Station";
+
+      if (isRej) returned++;
+
+      if (st === "NOT_CONTACTED") notContacted++;
+      else if (st === "CONTACTED") contacted++;
+      else if (st === "CONTACT_ATTEMPTED") attempted++;
+      else if (st === "CUSTOMER_UNREACHABLE") unreachable++;
+      else if (st === "PENDING_CONTACT") pendingContact++;
+
+      const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      if (ageInfo.workingDaysPassed >= 1 && st !== "CONTACTED" && c.status !== "Resolved") {
+        slaBreached++;
+      }
+    });
+
+    return {
+      notContacted,
+      contacted,
+      attempted,
+      unreachable,
+      pendingContact,
+      slaBreached,
+      returned,
+    };
+  }, [complaints, tickerDate, calendarDates]);
 
   // CSV Export
   const handleExportCSV = () => {
@@ -401,6 +490,187 @@ export default function AllComplaintsList({
         </div>
       </div>
 
+      {/* PRIMARY FILTER: SERVICE STATION CUSTOMER CONTACT STATUS */}
+      <div className="bg-slate-900 text-white rounded-xl border border-slate-800 p-3.5 shadow-md">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 bg-red-600/30 text-red-400 rounded-lg border border-red-500/40">
+              <PhoneCall className="h-4 w-4" />
+            </span>
+            <div>
+              <span className="text-[11px] font-black tracking-wider uppercase text-slate-100 flex items-center gap-1.5">
+                PRIMARY OPERATIONAL FILTER: SERVICE STATION CONTACT STATUS
+              </span>
+              <span className="text-[10px] text-slate-400 block font-medium">
+                Live status calculated from verified Service Station contact logs &amp; call center feedback
+              </span>
+            </div>
+          </div>
+          {contactStatusFilter !== "ALL" && (
+            <button
+              type="button"
+              onClick={() => {
+                setContactStatusFilter("ALL");
+                setCurrentPage(1);
+              }}
+              className="text-[10px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer underline"
+            >
+              Reset Contact Filter (Show All)
+            </button>
+          )}
+        </div>
+
+        {/* Status Pill Tabs */}
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("ALL");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "ALL" || contactStatusFilter === "all"
+                ? "bg-blue-600 text-white shadow-xs"
+                : "bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60"
+            }`}
+          >
+            <span>ALL COMPLAINTS</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 text-white font-mono">
+              {complaints.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("NOT_CONTACTED");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "NOT_CONTACTED"
+                ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-400"
+                : "bg-rose-950/40 text-rose-300 hover:bg-rose-950/70 border border-rose-900/60"
+            }`}
+          >
+            <span className="h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>
+            <span>🔴 NOT CONTACTED</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-900/80 text-rose-100 font-mono font-bold">
+              {contactStats.notContacted}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("CONTACTED");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "CONTACTED"
+                ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400"
+                : "bg-emerald-950/40 text-emerald-300 hover:bg-emerald-950/70 border border-emerald-900/60"
+            }`}
+          >
+            <span>🟢 CONTACTED</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-900/80 text-emerald-100 font-mono font-bold">
+              {contactStats.contacted}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("CONTACT_ATTEMPTED");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "CONTACT_ATTEMPTED"
+                ? "bg-amber-600 text-white shadow-xs ring-2 ring-amber-400"
+                : "bg-amber-950/40 text-amber-300 hover:bg-amber-950/70 border border-amber-900/60"
+            }`}
+          >
+            <span>🟡 CONTACT ATTEMPTED</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-900/80 text-amber-100 font-mono font-bold">
+              {contactStats.attempted}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("CUSTOMER_UNREACHABLE");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "CUSTOMER_UNREACHABLE"
+                ? "bg-orange-600 text-white shadow-xs ring-2 ring-orange-400"
+                : "bg-orange-950/40 text-orange-300 hover:bg-orange-950/70 border border-orange-900/60"
+            }`}
+          >
+            <span>🟠 CUSTOMER UNREACHABLE</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-orange-900/80 text-orange-100 font-mono font-bold">
+              {contactStats.unreachable}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("PENDING_CONTACT");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "PENDING_CONTACT"
+                ? "bg-slate-600 text-white shadow-xs ring-2 ring-slate-400"
+                : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+            }`}
+          >
+            <span>⚪ PENDING CONTACT</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-900 text-slate-200 font-mono font-bold">
+              {contactStats.pendingContact}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("SLA_BREACHED");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "SLA_BREACHED"
+                ? "bg-red-700 text-white shadow-xs ring-2 ring-red-400"
+                : "bg-red-950/40 text-red-300 hover:bg-red-950/70 border border-red-900/60"
+            }`}
+          >
+            <ShieldAlert className="h-3.5 w-3.5 text-red-400 shrink-0" />
+            <span>⚠️ SLA BREACHED (&gt;24H)</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-red-900/80 text-red-100 font-mono font-bold">
+              {contactStats.slaBreached}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContactStatusFilter("RETURNED_TO_STATION");
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              contactStatusFilter === "RETURNED_TO_STATION"
+                ? "bg-purple-700 text-white shadow-xs ring-2 ring-purple-400"
+                : "bg-purple-950/40 text-purple-300 hover:bg-purple-950/70 border border-purple-900/60"
+            }`}
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+            <span>❌ RETURNED TO STATION</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-900/80 text-purple-100 font-mono font-bold">
+              {contactStats.returned}
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Controls & Filter Toolbar */}
       <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
@@ -553,10 +823,15 @@ export default function AllComplaintsList({
                 <th className="py-3 px-3">Date</th>
                 <th className="py-3 px-3">Customer Details</th>
                 <th className="py-3 px-3">Station</th>
-                <th className="py-3 px-3 min-w-[180px]">Reason (Tell us more...)</th>
+                <th className="py-3 px-3 min-w-[160px]">Reason (Tell us more...)</th>
+                <th className="py-3 px-3 min-w-[170px] bg-slate-200/60 text-slate-800 font-black">
+                  <div className="flex items-center gap-1">
+                    <PhoneCall className="h-3 w-3 text-red-600 shrink-0" />
+                    <span>Station Contact Status</span>
+                  </div>
+                </th>
+                <th className="py-3 px-3">Attempts &amp; Log</th>
                 <th className="py-3 px-3">Time Passing</th>
-                <th className="py-3 px-3">1st Call Attempt</th>
-                <th className="py-3 px-3">2nd Call Attempt</th>
                 <th className="py-3 px-3">Satisfaction</th>
                 <th className="py-3 px-3">Recovery Status</th>
                 <th className="py-3 px-3 text-right">Actions</th>
@@ -581,11 +856,16 @@ export default function AllComplaintsList({
                 paginatedComplaints.map((c, idx) => {
                   const isResolved = c.status === "Resolved";
                   const isPending = c.status === "Pending";
-                  const isUnreachable =
-                    c.firstAttemptCallStatus === "Customer Unreachable" ||
-                    c.secondAttemptFeedbackStatus === "Customer Unreachable";
+                  const contactStatus = getEffectiveStationContactStatus(c);
+                  const isRejectedByCallCenter = 
+                    c.stationResponseStatus === "Rejected" ||
+                    c.stationResponseStatus === "Returned to Service Station" ||
+                    c.stationResponseStatus === "Rejected by Call Center" ||
+                    c.feedbackStatus === "Returned to Service Station";
+                  
                   const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
                   const isUpdatedRecently = recentlyUpdatedStatusIds?.has(c.id);
+                  const attemptsCount = c.contactAttempts ? c.contactAttempts.length : (c.attemptCount || 0);
 
                   return (
                     <tr 
@@ -638,7 +918,7 @@ export default function AllComplaintsList({
                       </td>
 
                       {/* Excel Complaint Reason */}
-                      <td className="py-2.5 px-3 max-w-[280px]">
+                      <td className="py-2.5 px-3 max-w-[240px]">
                         <p className="line-clamp-2 text-[11px] text-slate-700 leading-snug font-normal" title={c.description}>
                           {c.description && c.description !== "No feedback details provided." ? (
                             c.description
@@ -646,6 +926,103 @@ export default function AllComplaintsList({
                             <span className="italic text-slate-400 font-normal">No comment provided</span>
                           )}
                         </p>
+                      </td>
+
+                      {/* SERVICE STATION CONTACT STATUS (PRIMARY COLUMN) */}
+                      <td className="py-2.5 px-3 bg-slate-50/70">
+                        {isRejectedByCallCenter ? (
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
+                              <RotateCcw className="h-2.5 w-2.5 text-rose-600 shrink-0" />
+                              RE-CONTACT REQUIRED
+                            </span>
+                            <span className="text-[9px] text-rose-700 font-extrabold block">
+                              Rejected by Call Center
+                            </span>
+                          </div>
+                        ) : contactStatus === "CONTACTED" ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600 shrink-0" />
+                              CONTACTED
+                            </span>
+                            {c.stationContactedDate && (
+                              <div className="text-[9px] text-slate-500 font-medium">
+                                {c.stationContactedDate} {c.contactMethod ? `• ${c.contactMethod}` : ""}
+                              </div>
+                            )}
+                            {c.contactOfficerName && (
+                              <div className="text-[9px] text-slate-600 font-bold flex items-center gap-0.5">
+                                <UserCheck className="h-2.5 w-2.5 text-slate-400" />
+                                {c.contactOfficerName}
+                              </div>
+                            )}
+                          </div>
+                        ) : contactStatus === "NOT_CONTACTED" ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300">
+                              <PhoneOff className="h-2.5 w-2.5 text-rose-600 shrink-0" />
+                              NOT CONTACTED
+                            </span>
+                            <span className="text-[9px] text-rose-600 font-bold block">
+                              Action Required
+                            </span>
+                          </div>
+                        ) : contactStatus === "CONTACT_ATTEMPTED" ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                              <PhoneCall className="h-2.5 w-2.5 text-amber-600 shrink-0" />
+                              ATTEMPTED
+                            </span>
+                            {c.lastContactAttemptDate && (
+                              <div className="text-[9px] text-slate-500">
+                                {c.lastContactAttemptDate}
+                              </div>
+                            )}
+                          </div>
+                        ) : contactStatus === "CUSTOMER_UNREACHABLE" ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 border border-orange-300">
+                              <PhoneMissed className="h-2.5 w-2.5 text-orange-600 shrink-0" />
+                              UNREACHABLE
+                            </span>
+                            <span className="text-[9px] text-orange-700 font-medium block">
+                              Follow-up Needed
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300">
+                            PENDING CONTACT
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Attempts & History */}
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                            attemptsCount > 0 
+                              ? "bg-blue-50 text-blue-700 border-blue-200" 
+                              : "bg-slate-50 text-slate-400 border-slate-200"
+                          }`}>
+                            {attemptsCount} {attemptsCount === 1 ? "Attempt" : "Attempts"}
+                          </span>
+                          {onViewContactHistory && (
+                            <button
+                              type="button"
+                              onClick={() => onViewContactHistory(c)}
+                              className="p-1 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded border border-slate-200 transition-colors cursor-pointer"
+                              title="View full contact history & timestamps"
+                            >
+                              <History className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                        {c.lastContactOutcome && (
+                          <div className="text-[9px] text-slate-500 truncate max-w-[120px] mt-0.5" title={c.lastContactOutcome}>
+                            {c.lastContactOutcome}
+                          </div>
+                        )}
                       </td>
 
                       {/* Time Passing / Aging */}
@@ -656,7 +1033,7 @@ export default function AllComplaintsList({
                         </span>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="text-[9px] font-mono text-slate-600 font-bold">
-                            {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m {String(ageInfo.seconds).padStart(2, "0")}s
+                            {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m
                           </span>
                           {(c.status === "Resolved" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied") ? (
                             <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-1.5 py-0.2 rounded uppercase">
@@ -668,38 +1045,6 @@ export default function AllComplaintsList({
                             </span>
                           )}
                         </div>
-                      </td>
-
-                      {/* 1st Attempt */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        {c.firstAttemptCallStatus ? (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                            c.firstAttemptCallStatus === "Connected"
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-amber-50 text-amber-700 border-amber-200"
-                          }`}>
-                            1st: {c.firstAttemptCallStatus}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 italic">Not logged</span>
-                        )}
-                      </td>
-
-                      {/* 2nd Attempt */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        {c.secondAttemptFeedbackStatus ? (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                            c.secondAttemptFeedbackStatus === "Satisfied"
-                              ? "bg-green-50 text-green-700 border-green-200"
-                              : c.secondAttemptFeedbackStatus === "Customer Unreachable"
-                              ? "bg-rose-50 text-rose-700 border-rose-200"
-                              : "bg-blue-50 text-blue-700 border-blue-200"
-                          }`}>
-                            2nd: {c.secondAttemptFeedbackStatus}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 italic">Not logged</span>
-                        )}
                       </td>
 
                       {/* Satisfaction */}
@@ -735,17 +1080,30 @@ export default function AllComplaintsList({
                           )}
                           {c.status}
                         </span>
-                        {c.stationResponseStatus === "Rejected" && (
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded border bg-rose-100 text-rose-800 border-rose-300 flex items-center gap-1 w-fit animate-pulse">
-                            <AlertTriangle className="h-2.5 w-2.5 text-rose-600" />
-                            REJECTED BY CALL CENTER
-                          </span>
-                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Quick Contact / Re-contact action */}
+                          {onQuickContact && (
+                            <button
+                              type="button"
+                              onClick={() => onQuickContact(c)}
+                              className={`flex items-center gap-1 text-[10px] font-black py-1 px-2.5 rounded-lg border transition-all cursor-pointer shadow-2xs ${
+                                isRejectedByCallCenter
+                                  ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-700 ring-2 ring-purple-400"
+                                  : contactStatus === "NOT_CONTACTED"
+                                  ? "bg-rose-600 hover:bg-rose-700 text-white border-rose-700"
+                                  : "bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                              }`}
+                              title="Open standard contact logging form"
+                            >
+                              <PhoneCall className="h-3 w-3 shrink-0" />
+                              <span>{isRejectedByCallCenter ? "Re-Contact" : contactStatus === "NOT_CONTACTED" ? "Contact" : "Log Contact"}</span>
+                            </button>
+                          )}
+
                           {onEditComplaint && (
                             <button
                               type="button"
@@ -769,7 +1127,7 @@ export default function AllComplaintsList({
                           <button
                             type="button"
                             onClick={() => onSelectComplaintInWorkspace(c.id)}
-                            className="flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] py-1 px-2.5 rounded-md border border-blue-200 transition-colors cursor-pointer"
+                            className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-1 px-2.5 rounded-md border border-slate-300 transition-colors cursor-pointer"
                             title="Open in Recovery Workspace"
                           >
                             <span>Open</span>
@@ -802,10 +1160,10 @@ export default function AllComplaintsList({
                               <button
                                 type="button"
                                 onClick={() => setDeletingId(c.id)}
-                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
-                                title="Delete complaint permanently from database"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                                title="Delete Complaint"
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             )
                           )}

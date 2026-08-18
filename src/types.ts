@@ -1,6 +1,25 @@
 export type SatisfactionLevel = "Very Dissatisfied" | "Dissatisfied" | "Neutral" | "Satisfied" | "Very Satisfied";
 export type FollowUpStatus = "Pending" | "In Progress" | "Contacted" | "Resolved";
 
+export type ServiceStationContactStatus = 
+  | "PENDING_CONTACT" 
+  | "CONTACT_ATTEMPTED" 
+  | "CONTACTED" 
+  | "CUSTOMER_UNREACHABLE" 
+  | "NOT_CONTACTED";
+
+export interface ContactAttemptEvent {
+  id: string;
+  timestamp: string;
+  actorName: string;
+  actorRole: "agent" | "callcenter" | "admin" | "system";
+  contactMethod: "Phone Call" | "Workshop In-Person" | "WhatsApp / SMS" | "Email" | "Field Visit" | string;
+  outcome: ServiceStationContactStatus | string;
+  customerResponse?: string;
+  remarks?: string;
+  nextFollowUpDate?: string;
+}
+
 export interface AIAnalysis {
   sentimentAnalysis: string;
   callScript: string;
@@ -41,6 +60,18 @@ export interface Complaint {
 
   // Case history tracking
   caseHistory?: CaseHistoryEntry[];
+
+  // Primary Service Station Contact Tracking Fields (Database Synchronized)
+  serviceStationContactStatus?: ServiceStationContactStatus | string;
+  serviceStationContactedAt?: string;
+  serviceStationContactedBy?: string;
+  serviceStationContactMethod?: string;
+  serviceStationContactRemark?: string;
+  serviceStationCustomerResponse?: string;
+  nextFollowUpDate?: string;
+  lastContactAttemptAt?: string;
+  contactAttemptCount?: number;
+  contactAttempts?: ContactAttemptEvent[];
 
   // New fields from Excel spreadsheet
   month?: string;

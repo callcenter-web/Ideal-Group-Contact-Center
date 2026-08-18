@@ -6,6 +6,7 @@ export interface AgingInfo {
   hours: number;
   minutes: number;
   seconds: number;
+  workingDaysPassed: number;
   formattedTimeString: string;
   category: "0-3 Days (New)" | "3-5 Days (Pending)" | "6-10 Days (Escalated)" | ">10 Days (Critical)";
   deadlineStatus: string;
@@ -14,6 +15,15 @@ export interface AgingInfo {
   textColorClass: string;
   bgColorClass: string;
 }
+
+export const getFormattedDateTime = (date: Date = new Date()): string => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+};
 
 export const parseComplaintDate = (dateStr?: string, dateTimeStr?: string): Date => {
   const str = dateTimeStr || dateStr;
@@ -195,6 +205,7 @@ export const getComplaintAgeInfo = (
       hours: 0,
       minutes: 0,
       seconds: 0,
+      workingDaysPassed: 0,
       formattedTimeString: "00d 00h 00m 00s",
       category: "0-3 Days (New)",
       deadlineStatus: "On Track - 3-Day SLA Target (Workstation Calendar)",
@@ -243,7 +254,7 @@ export const getComplaintAgeInfo = (
     bgColorClass = "bg-emerald-600";
     deadlineStatus = "COMPLETED & RESOLVED (Floating Time Frozen)";
     nextMilestoneText = `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`;
-    return { days, hours, minutes, seconds, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
+    return { days, hours, minutes, seconds, workingDaysPassed: days, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
   }
 
   if (days <= 3) {
@@ -297,7 +308,7 @@ export const getComplaintAgeInfo = (
     nextMilestoneText = `Critical SLA Deadline Breached by ${days - 10} working days! Urgent Executive Action Required.`;
   }
 
-  return { days, hours, minutes, seconds, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
+  return { days, hours, minutes, seconds, workingDaysPassed: days, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
 };
 
 export interface AgeBreakdownItem {

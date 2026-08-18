@@ -4,7 +4,7 @@
 -- ====================================================================
 
 -- 1. MIGRATION FOR EXISTING TABLES (Safe column additions if tables exist)
-DO $$
+DO $
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'complaints') THEN
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "woNo" text;
@@ -19,8 +19,29 @@ BEGIN
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "caseHistory" jsonb;
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterOfficer" text;
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterContactedBy" text;
+        -- Service Station Contact Status & Attempt Tracking
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationContactStatus" text DEFAULT 'NOT_CONTACTED';
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_contact_status" text DEFAULT 'NOT_CONTACTED';
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationContactedAt" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_contacted_at" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationContactedBy" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_contacted_by" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationContactMethod" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_contact_method" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationContactRemark" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_contact_remark" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "serviceStationCustomerResponse" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "service_station_customer_response" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "nextFollowUpDate" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "next_follow_up_date" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "lastContactAttemptAt" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "last_contact_attempt_at" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "contactAttemptCount" integer DEFAULT 0;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "contact_attempt_count" integer DEFAULT 0;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "contactAttempts" jsonb DEFAULT '[]'::jsonb;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "contact_attempts" jsonb DEFAULT '[]'::jsonb;
     END IF;
-END $$;
+END $;
 
 
 -- 2. STATIONS TABLE

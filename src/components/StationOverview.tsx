@@ -1,9 +1,10 @@
 import React from "react";
 import { Complaint, StationProfile, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
-import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar, AlertTriangle } from "lucide-react";
+import { MapPin, ArrowRight, ShieldCheck, AlertCircle, Clock, Calendar, AlertTriangle, PhoneCall, PhoneOff, CheckCircle2 } from "lucide-react";
 import { getAgeFormulaBreakdown } from "../utils/agingUtils";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { getEffectiveStationContactStatus } from "../utils/supabaseSanitizer";
 
 interface StationOverviewProps {
   complaints: Complaint[];
@@ -23,14 +24,34 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
     const pending = stationComplaints.filter((c) => c.status === "Pending").length;
     const inProgress = stationComplaints.filter((c) => c.status === "In Progress").length;
     const resolved = stationComplaints.filter((c) => c.status === "Resolved").length;
-    const rejected = stationComplaints.filter((c) => c.stationResponseStatus === "Rejected").length;
+    const rejected = stationComplaints.filter((c) => 
+      c.stationResponseStatus === "Rejected" ||
+      c.stationResponseStatus === "Returned to Service Station" ||
+      c.stationResponseStatus === "Rejected by Call Center" ||
+      c.feedbackStatus === "Returned to Service Station"
+    ).length;
     
+    // Contact status metrics
+    let notContacted = 0;
+    let contacted = 0;
+    let attempted = 0;
+    let unreachable = 0;
+
+    stationComplaints.forEach((c) => {
+      const cStatus = getEffectiveStationContactStatus(c);
+      if (cStatus === "NOT_CONTACTED") notContacted++;
+      else if (cStatus === "CONTACTED") contacted++;
+      else if (cStatus === "CONTACT_ATTEMPTED") attempted++;
+      else if (cStatus === "CUSTOMER_UNREACHABLE") unreachable++;
+    });
+
     // Converted: Initial was Dissatisfied, now Neutral/Satisfied/Very Satisfied
     const converted = stationComplaints.filter(
       (c) => c.status === "Resolved" || c.currentSatisfaction === "Satisfied" || c.currentSatisfaction === "Very Satisfied"
     ).length;
 
     const conversionRate = total > 0 ? Math.round((converted / total) * 100) : 0;
+    const contactRate = total > 0 ? Math.round((contacted / total) * 100) : 0;
     const ageBreakdown = getAgeFormulaBreakdown(stationComplaints, new Date(), calendarDates);
 
     // Filter station custom off dates
@@ -45,7 +66,12 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
       inProgress,
       resolved,
       rejected,
+      notContacted,
+      contacted,
+      attempted,
+      unreachable,
       conversionRate,
+      contactRate,
       ageBreakdown,
       stationComplaints,
       stationOffDates,
@@ -120,6 +146,28 @@ export default function StationOverview({ complaints, onSelectStation, calendarD
                 }`}>
                   <span className="text-[9px] font-black text-green-500 uppercase tracking-widest block">Resolved</span>
                   <span className={`text-base font-black block mt-0.5 ${stat.resolved > 0 ? "text-green-500" : isDark ? "text-slate-600" : "text-slate-400"}`}>{stat.resolved}</span>
+                </div>
+              </div>
+
+              {/* Contact Status Summary Strip */}
+              <div className="grid grid-cols-3 gap-1.5 mt-2 text-center text-[10px]">
+                <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 p-1.5 rounded-md">
+                  <span className="text-[8px] font-black uppercase text-rose-700 dark:text-rose-400 block">Not Contacted</span>
+                  <span className={`font-black ${stat.notContacted > 0 ? "text-rose-700 dark:text-rose-400 font-black text-xs" : "text-slate-400"}`}>
+                    {stat.notContacted}
+                  </span>
+                </div>
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 p-1.5 rounded-md">
+                  <span className="text-[8px] font-black uppercase text-emerald-700 dark:text-emerald-400 block">Contacted</span>
+                  <span className={`font-black ${stat.contacted > 0 ? "text-emerald-700 dark:text-emerald-400 font-black text-xs" : "text-slate-400"}`}>
+                    {stat.contacted}
+                  </span>
+                </div>
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-1.5 rounded-md">
+                  <span className="text-[8px] font-black uppercase text-amber-700 dark:text-amber-400 block">Attempted</span>
+                  <span className={`font-black ${stat.attempted > 0 ? "text-amber-700 dark:text-amber-400 font-black text-xs" : "text-slate-400"}`}>
+                    {stat.attempted}
+                  </span>
                 </div>
               </div>
 
