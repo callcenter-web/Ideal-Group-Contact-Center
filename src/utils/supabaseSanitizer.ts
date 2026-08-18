@@ -124,6 +124,14 @@ export function mergeComplaintObjects(a: any, b: any): any {
 
   const result: any = { ...fallback, ...primary };
 
+  const isPrimaryRejected = 
+    primary.stationResponseStatus === "Rejected" ||
+    primary.stationResponseStatus === "Returned to Service Station" ||
+    primary.stationResponseStatus === "Returned to Call Center" ||
+    primary.feedbackStatus === "Returned to Service Station" ||
+    primary.finalStatus === "Returned to Service Station" ||
+    primary.finalStatus?.includes("Re-assigned to Station");
+
   const keysToPreserveNonEmpty = [
     "stationContactedDate",
     "stationResolutionNotes",
@@ -151,6 +159,12 @@ export function mergeComplaintObjects(a: any, b: any): any {
   ];
 
   for (const key of keysToPreserveNonEmpty) {
+    // If the primary state is an intentional rejection/return, do not resurrect cleared contact dates or call center remarks
+    if (isPrimaryRejected && (key === "stationContactedDate" || key === "callCenterFinalRemarks" || key === "callCenterFinalSatisfaction")) {
+      result[key] = primary[key] !== undefined ? primary[key] : "";
+      continue;
+    }
+
     const valP = primary[key];
     const valF = fallback[key];
     const isPEmpty = valP === undefined || valP === null || valP === "";
@@ -160,14 +174,15 @@ export function mergeComplaintObjects(a: any, b: any): any {
     }
   }
 
-  // Combine caseHistory entries without duplicate history items
+  // Combine caseHistory entries without duplicate history items and sort chronologically
   const historyA = Array.isArray(a.caseHistory) ? a.caseHistory : [];
   const historyB = Array.isArray(b.caseHistory) ? b.caseHistory : [];
   if (historyA.length > 0 || historyB.length > 0) {
     const historyMap = new Map<string, any>();
     [...historyA, ...historyB].forEach((entry) => {
-      if (entry && entry.id) {
-        historyMap.set(entry.id, entry);
+      if (entry && (entry.id || entry.action)) {
+        const key = entry.id || `${entry.action}-${entry.timestamp}`;
+        historyMap.set(key, entry);
       }
     });
     result.caseHistory = Array.from(historyMap.values()).sort((x, y) => 
@@ -175,35 +190,42 @@ export function mergeComplaintObjects(a: any, b: any): any {
     );
   }
 
-  // CRITICAL: If either record was marked as Resolved / Satisfied / Closed / Completed,
-  // do NOT revert back to Pending/Contacted unless explicitly changed to Rejected/Re-assigned
-  const isASatisfied = 
-    a.status === "Resolved" || 
-    a.feedbackStatus === "Satisfied" || 
-    a.currentSatisfaction === "Satisfied" || 
-    a.callCenterFinalSatisfaction === "Satisfied" ||
-    a.finalStatus === "Closed" ||
-    a.finalStatus === "Completed";
+  // If the latest action is rejected or returned to station, respect Pending status
+  if (isPrimaryRejected) {
+    result.status = "Pending";
+    result.stationResponseStatus = primary.stationResponseStatus || "Returned to Service Station";
+    result.stationResponseRejectionReason = primary.stationResponseRejectionReason || fallback.stationResponseRejectionReason || "";
+  } else {
+    // CRITICAL: If either record was marked as Resolved / Satisfied / Closed / Completed,
+    // and neither record is actively in a Rejected/Returned state, preserve satisfied status
+    const isASatisfied = 
+      a.status === "Resolved" || 
+      a.feedbackStatus === "Satisfied" || 
+      a.currentSatisfaction === "Satisfied" || 
+      a.callCenterFinalSatisfaction === "Satisfied" ||
+      a.finalStatus === "Closed" ||
+      a.finalStatus === "Completed";
 
-  const isBSatisfied = 
-    b.status === "Resolved" || 
-    b.feedbackStatus === "Satisfied" || 
-    b.currentSatisfaction === "Satisfied" || 
-    b.callCenterFinalSatisfaction === "Satisfied" ||
-    b.finalStatus === "Closed" ||
-    b.finalStatus === "Completed";
+    const isBSatisfied = 
+      b.status === "Resolved" || 
+      b.feedbackStatus === "Satisfied" || 
+      b.currentSatisfaction === "Satisfied" || 
+      b.callCenterFinalSatisfaction === "Satisfied" ||
+      b.finalStatus === "Closed" ||
+      b.finalStatus === "Completed";
 
-  if ((isASatisfied || isBSatisfied) && result.stationResponseStatus !== "Rejected" && !result.finalStatus?.includes("Re-assigned")) {
-    result.status = "Resolved";
-    result.feedbackStatus = "Satisfied";
-    if (!result.currentSatisfaction || result.currentSatisfaction === "Dissatisfied" || result.currentSatisfaction === "Neutral") {
-      result.currentSatisfaction = "Satisfied";
-    }
-    if (!result.callCenterFinalSatisfaction) {
-      result.callCenterFinalSatisfaction = "Satisfied";
-    }
-    if (result.finalStatus === "Open" || result.finalStatus === "In Progress" || !result.finalStatus) {
-      result.finalStatus = "Closed";
+    if ((isASatisfied || isBSatisfied) && !result.stationResponseStatus?.includes("Reject") && !result.stationResponseStatus?.includes("Returned")) {
+      result.status = "Resolved";
+      result.feedbackStatus = "Satisfied";
+      if (!result.currentSatisfaction || result.currentSatisfaction === "Dissatisfied" || result.currentSatisfaction === "Neutral") {
+        result.currentSatisfaction = "Satisfied";
+      }
+      if (!result.callCenterFinalSatisfaction) {
+        result.callCenterFinalSatisfaction = "Satisfied";
+      }
+      if (result.finalStatus === "Open" || result.finalStatus === "In Progress" || !result.finalStatus) {
+        result.finalStatus = "Closed";
+      }
     }
   }
 

@@ -12,6 +12,13 @@ BEGIN
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "firstAttemptNotes" text;
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "secondAttemptNotes" text;
         ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "attemptCount" integer DEFAULT 0;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseStatus" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectionReason" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectedDate" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "stationResponseRejectedBy" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "caseHistory" jsonb;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterOfficer" text;
+        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS "callCenterContactedBy" text;
     END IF;
 END $$;
 
@@ -164,7 +171,28 @@ CREATE TABLE IF NOT EXISTS call_center_logs (
 );
 
 
--- 8. HIGH-PERFORMANCE INDEXES
+-- 8. COMPLAINT WORKFLOW AUDIT TRAIL & HISTORY (NON-DESTRUCTIVE WORKFLOW TRANSITIONS)
+CREATE TABLE IF NOT EXISTS complaint_workflow_history (
+  id text PRIMARY KEY,
+  complaint_id text NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+  customer_id text,
+  customer_name text,
+  customer_phone text,
+  previous_status text,
+  new_status text,
+  previous_assigned_to text,
+  new_assigned_to text,
+  assigned_service_station text,
+  action_type text NOT NULL,
+  action_reason text,
+  remarks text,
+  performed_by text NOT NULL,
+  performed_by_role text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+
+-- 9. HIGH-PERFORMANCE INDEXES
 CREATE INDEX IF NOT EXISTS idx_complaints_wono ON complaints("woNo");
 CREATE INDEX IF NOT EXISTS idx_complaints_wo_no ON complaints(wo_no);
 CREATE INDEX IF NOT EXISTS idx_complaints_station ON complaints(station);
@@ -172,9 +200,13 @@ CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
 CREATE INDEX IF NOT EXISTS idx_call_logs_complaint_id ON call_center_logs(complaint_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_date ON workstation_calendar(date);
 CREATE INDEX IF NOT EXISTS idx_calendar_station ON workstation_calendar(station);
+CREATE INDEX IF NOT EXISTS idx_workflow_complaint_id ON complaint_workflow_history(complaint_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_created_at ON complaint_workflow_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_station ON complaint_workflow_history(assigned_service_station);
+CREATE INDEX IF NOT EXISTS idx_workflow_action_type ON complaint_workflow_history(action_type);
 
 
--- 9. CONNECTED RELATIONAL VIEW
+-- 10. CONNECTED RELATIONAL VIEW
 CREATE OR REPLACE VIEW view_complaints_with_station_and_officer AS
 SELECT 
   c.id,
@@ -197,13 +229,14 @@ LEFT JOIN stations s ON c.station = s.code OR c.station = s.name
 LEFT JOIN call_center_officers o ON c.assigned_officer_id = o.id;
 
 
--- 10. SECURITY & ROW LEVEL SECURITY (RLS) POLICIES
+-- 11. SECURITY & ROW LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE stations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_center_officers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workstation_calendar ENABLE ROW LEVEL SECURITY;
 ALTER TABLE systemic_email_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE complaints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_center_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE complaint_workflow_history ENABLE ROW LEVEL SECURITY;
 
 -- Allow public access for multi-PC & multi-station collaboration
 DO $$
@@ -267,7 +300,20 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public insert logs') THEN
     CREATE POLICY "Allow public insert logs" ON call_center_logs FOR INSERT WITH CHECK (true);
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public read workflow_history') THEN
+    CREATE POLICY "Allow public read workflow_history" ON complaint_workflow_history FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public insert workflow_history') THEN
+    CREATE POLICY "Allow public insert workflow_history" ON complaint_workflow_history FOR INSERT WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public update workflow_history') THEN
+    CREATE POLICY "Allow public update workflow_history" ON complaint_workflow_history FOR UPDATE USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public delete workflow_history') THEN
+    CREATE POLICY "Allow public delete workflow_history" ON complaint_workflow_history FOR DELETE USING (true);
+  END IF;
 END $$;
 
--- 11. RELOAD POSTGREST SCHEMA CACHE INSTANTLY
+-- 12. RELOAD POSTGREST SCHEMA CACHE INSTANTLY
 NOTIFY pgrst, 'reload schema';

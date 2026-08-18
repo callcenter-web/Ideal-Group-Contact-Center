@@ -1303,35 +1303,42 @@ export default function App() {
   };
 
   // Reject Station Response Action Handler (Call Center / Admin)
-  const handleRejectStationResponse = () => {
+  const handleRejectStationResponse = async () => {
     if (!selectedComplaintId || !rejectionReasonInput.trim()) return;
+    const nowStr = getFormattedDateTime();
     const today = new Date().toISOString().split("T")[0];
     const targetC = complaints.find((c) => c.id === selectedComplaintId);
+    if (!targetC) return;
+
+    const officerName = currentUser?.name || currentUser?.title || "Call Center Officer";
+    const rejectionReason = rejectionReasonInput.trim();
 
     const historyEntry: CaseHistoryEntry = {
       id: "HIST-CC-REJ-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
-      timestamp: getFormattedDateTime(),
-      actorName: currentUser?.name || currentUser?.title || "Call Center Officer",
+      timestamp: nowStr,
+      actorName: officerName,
       actorRole: "callcenter",
-      action: "Station Response Rejected by Call Center",
-      rejectionReason: rejectionReasonInput.trim(),
+      action: "Station Response Rejected by Call Center & Returned to Service Station",
+      rejectionReason: rejectionReason,
       stationName: targetC?.station,
       previousStatus: targetC?.status,
-      newStatus: "Rejected (Passed back to Station)"
+      newStatus: "Returned to Service Station"
     };
 
     const updated = complaints.map((c) => {
       if (c.id === selectedComplaintId) {
         return {
           ...c,
-          stationResponseStatus: "Rejected",
-          stationResponseRejectionReason: rejectionReasonInput.trim(),
-          stationResponseRejectedDate: today,
-          stationResponseRejectedBy: currentUser?.name || currentUser?.title || "Call Center Officer",
+          stationResponseStatus: "Returned to Service Station",
+          stationResponseRejectionReason: rejectionReason,
+          stationResponseRejectedDate: nowStr,
+          stationResponseRejectedBy: officerName,
           status: "Pending" as FollowUpStatus,
-          stationContactedDate: "", // Cleared so it is removed from Call Center queue and passed back to Service Station
-          callCenterContactedDate: "",
-          callCenterFinalRemarks: "",
+          feedbackStatus: "Returned to Service Station",
+          finalStatus: "Pending with Aftermarket (Re-contact Required)",
+          stationContactedDate: "", // Cleared so it returns to Service Station pending action queue
+          callCenterContactedDate: nowStr,
+          callCenterFinalRemarks: `Rejected by Call Center: ${rejectionReason}`,
           callCenterFinalSatisfaction: "" as SatisfactionLevel,
           firstAttemptCallStatus: "",
           firstAttemptDate: "",
@@ -1340,14 +1347,42 @@ export default function App() {
           secondAttemptDate: "",
           secondAttemptNotes: "",
           attemptCount: 0,
-          updatedAt: today,
+          updatedAt: new Date().toISOString(),
           caseHistory: [...(c.caseHistory || []), historyEntry]
         };
       }
       return c;
     });
 
-    saveComplaints(updated);
+    await saveComplaints(updated);
+
+    // Save workflow audit event
+    try {
+      await fetch("/api/workflow-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: {
+            complaint_id: targetC.id,
+            customer_name: targetC.customerName,
+            customer_phone: targetC.customerPhone,
+            previous_status: targetC.status,
+            new_status: "Returned to Service Station",
+            previous_assigned_to: officerName,
+            new_assigned_to: targetC.station,
+            assigned_service_station: targetC.station,
+            action_type: "REJECTED_BY_CALL_CENTER",
+            action_reason: rejectionReason,
+            remarks: rejectionReason,
+            performed_by: officerName,
+            performed_by_role: "callcenter"
+          }
+        })
+      });
+    } catch (e) {
+      console.warn("Could not save workflow history event:", e);
+    }
+
     setSaveSuccess(true);
     setShowRejectionForm(false);
     setRejectionReasonInput("");
@@ -1364,8 +1399,8 @@ export default function App() {
         stationName: targetC?.station || "Service Station",
         complaintId: selectedComplaintId,
         customerName: targetC?.customerName || "Customer",
-        actionSummary: `❌ Response Rejected & Passed Back to Station (Pending): "${rejectionReasonInput.trim()}"`,
-        updatedBy: currentUser?.name || "Call Center Officer",
+        actionSummary: `❌ Response Rejected & Returned to Station: "${rejectionReason}"`,
+        updatedBy: officerName,
       },
       ...prev,
     ]);
@@ -1489,10 +1524,17 @@ export default function App() {
 
   // Helper to determine if service station has contacted/actioned the customer
   const isStationContacted = (c: Complaint) => {
-    if (c.stationResponseStatus === "Rejected") return false;
+    if (
+      c.stationResponseStatus === "Rejected" ||
+      c.stationResponseStatus === "Returned to Service Station" ||
+      c.stationResponseStatus === "Rejected by Call Center" ||
+      c.feedbackStatus === "Returned to Service Station" ||
+      c.finalStatus === "Returned to Service Station"
+    ) {
+      return false;
+    }
     return !!(
       (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
-      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
       c.status === "Contacted" ||
       c.stationResponseStatus === "Submitted to Call Center"
     );
@@ -3064,21 +3106,24 @@ NOTIFY pgrst, 'reload schema';
                       {/* ROLE: STATION AGENT ACTION FORM */}
                       {currentUser.role === "agent" && (
                         <form id="agent-action-form" onSubmit={handleUpdateFollowUp} className="space-y-3">
-                          {selectedComplaint.stationResponseStatus === "Rejected" && (
-                            <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3.5 space-y-2 animate-pulse">
+                          {(selectedComplaint.stationResponseStatus === "Rejected" || 
+                            selectedComplaint.stationResponseStatus === "Returned to Service Station" || 
+                            selectedComplaint.stationResponseStatus === "Rejected by Call Center" || 
+                            selectedComplaint.feedbackStatus === "Returned to Service Station") && (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3.5 space-y-2 animate-pulse shadow-2xs">
                               <div className="flex items-center gap-2 text-rose-800 font-black text-xs uppercase tracking-wider">
                                 <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                                <span>⚠️ Message: Station Response Rejected by Call Center</span>
+                                <span>⚠️ Complaint Returned by Call Center (Customer Re-Contact Required)</span>
                               </div>
                               <p className="text-xs font-bold text-slate-800 bg-white p-2.5 rounded-lg border border-rose-200 shadow-2xs">
-                                "{selectedComplaint.stationResponseRejectionReason || "Response was rejected. Please perform required service station action."}"
+                                "{selectedComplaint.stationResponseRejectionReason || "Response was rejected by Call Center. Please contact customer again and perform required service station follow-up."}"
                               </p>
                               <div className="flex items-center justify-between text-[10px] text-rose-700 font-bold pt-0.5">
                                 <span>Rejected Date: {selectedComplaint.stationResponseRejectedDate || "Recently"}</span>
                                 <span>By Call Center Officer: {selectedComplaint.stationResponseRejectedBy || "Call Center"}</span>
                               </div>
-                              <p className="text-[11px] text-rose-900 font-bold italic bg-rose-100/70 p-1.5 rounded text-center">
-                                👉 Action Required: Please contact customer, re-verify resolution action taken, and log updated notes below to re-submit.
+                              <p className="text-[11px] text-rose-900 font-bold italic bg-rose-100/80 p-1.5 rounded text-center">
+                                👉 Action Required: Please contact the customer again, perform required service action, and submit updated resolution notes below.
                               </p>
                             </div>
                           )}
@@ -3122,7 +3167,7 @@ NOTIFY pgrst, 'reload schema';
                             <textarea
                               rows={3}
                               required
-                              placeholder="Detail how your station contacted and resolved this customer's complaint (e.g. called client, replaced rattle bracket free-of-charge, client is happy to be verified by Call Center)..."
+                              placeholder="Detail how your station contacted and resolved this customer's complaint (e.g. called client again, replaced rattle bracket free-of-charge, client is happy to be verified by Call Center)..."
                               value={formStationResolutionNotes}
                               onChange={(e) => setFormStationResolutionNotes(e.target.value)}
                               className="w-full bg-white border border-slate-200 rounded-md py-2 px-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 leading-relaxed resize-none font-medium"
@@ -3131,15 +3176,16 @@ NOTIFY pgrst, 'reload schema';
 
                           {saveSuccess && (
                             <div className="text-green-700 text-xs font-semibold bg-green-50 p-2 rounded border border-green-200 text-center">
-                              Station action logged and synced successfully!
+                              Station action logged and submitted to Call Center successfully!
                             </div>
                           )}
 
                           <button
                             type="submit"
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2 px-4 rounded-md transition-all shadow-sm cursor-pointer"
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2 px-4 rounded-md transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5"
                           >
-                            Save Station Action & Sync
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Save Station Action & Submit to Call Center</span>
                           </button>
 
                           {/* Reject / Return to Call Center Section for Service Station */}
@@ -3236,12 +3282,14 @@ NOTIFY pgrst, 'reload schema';
                             )}
                             {/* Reject Station Response Section */}
                             <div className="mt-2.5 pt-2.5 border-t border-blue-200/60">
-                              {selectedComplaint.stationResponseStatus === "Rejected" && !showRejectionForm && (
-                                <div className="bg-rose-50 border border-rose-300 p-2.5 rounded-lg text-xs space-y-1.5">
+                              {(selectedComplaint.stationResponseStatus === "Rejected" || 
+                                selectedComplaint.stationResponseStatus === "Returned to Service Station" || 
+                                selectedComplaint.stationResponseStatus === "Rejected by Call Center") && !showRejectionForm && (
+                                <div className="bg-rose-50 border border-rose-300 p-2.5 rounded-lg text-xs space-y-1.5 shadow-2xs">
                                   <div className="flex items-center justify-between">
                                     <span className="font-black text-rose-800 text-[10px] uppercase flex items-center gap-1">
                                       <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
-                                      Current Status: Response Rejected & Sent to Station
+                                      Current Status: Response Rejected & Returned to Service Station
                                     </span>
                                     <button
                                       type="button"
@@ -3264,7 +3312,7 @@ NOTIFY pgrst, 'reload schema';
                               )}
 
                               {selectedComplaint.stationResponseStatus === "Returned to Call Center" && !showRejectionForm && (
-                                <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-lg text-xs space-y-1.5">
+                                <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-lg text-xs space-y-1.5 shadow-2xs">
                                   <div className="flex items-center justify-between">
                                     <span className="font-black text-amber-900 text-[10px] uppercase flex items-center gap-1">
                                       <CornerDownLeft className="h-3.5 w-3.5 text-amber-600" />
@@ -3290,14 +3338,18 @@ NOTIFY pgrst, 'reload schema';
                                 </div>
                               )}
 
-                              {selectedComplaint.stationResponseStatus !== "Rejected" && selectedComplaint.stationResponseStatus !== "Returned to Call Center" && !showRejectionForm && (
+                              {selectedComplaint.stationResponseStatus !== "Rejected" && 
+                               selectedComplaint.stationResponseStatus !== "Returned to Service Station" && 
+                               selectedComplaint.stationResponseStatus !== "Rejected by Call Center" && 
+                               selectedComplaint.stationResponseStatus !== "Returned to Call Center" && 
+                               !showRejectionForm && (
                                 <button
                                   type="button"
                                   onClick={() => setShowRejectionForm(true)}
                                   className="text-xs font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors w-full justify-center"
                                 >
                                   <XCircle className="h-4 w-4 text-rose-600" />
-                                  <span>Reject Station Response & Send Rejection Message to Workshop</span>
+                                  <span>Reject Station Response & Return Case to Service Station</span>
                                 </button>
                               )}
 
@@ -3306,7 +3358,7 @@ NOTIFY pgrst, 'reload schema';
                                   <div className="flex items-center justify-between">
                                     <span className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1">
                                       <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
-                                      Reject Station Response / Pass Back to Station
+                                      Reject Station Response / Return to Service Station
                                     </span>
                                     <button
                                       type="button"
@@ -3317,13 +3369,13 @@ NOTIFY pgrst, 'reload schema';
                                     </button>
                                   </div>
                                   <p className="text-[11px] text-slate-600 font-medium">
-                                    Enter reason why station response was rejected or what re-action is required. The workshop will see this message in system.
+                                    Enter reason why station response was rejected or what re-action is required. The service station will see this message and contact the customer again.
                                   </p>
                                   <textarea
                                     rows={2}
                                     value={rejectionReasonInput}
                                     onChange={(e) => setRejectionReasonInput(e.target.value)}
-                                    placeholder="e.g. Customer stated noise persists during follow-up call. Workshop needs to inspect..."
+                                    placeholder="e.g. Customer stated noise persists during follow-up call. Station needs to inspect vehicle again..."
                                     className="w-full bg-white border border-rose-300 rounded-md p-2 text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
                                   />
                                   <button
@@ -3333,7 +3385,7 @@ NOTIFY pgrst, 'reload schema';
                                     className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1.5"
                                   >
                                     <Send className="h-3.5 w-3.5" />
-                                    Submit Rejection Message to Station
+                                    Submit Rejection & Return Case to Service Station
                                   </button>
                                 </div>
                               )}

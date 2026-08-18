@@ -382,6 +382,65 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
+  // API Route to fetch workflow history for a complaint or all complaints
+  app.get("/api/workflow-history", async (req, res) => {
+    try {
+      const complaintId = req.query.complaintId ? String(req.query.complaintId) : null;
+      let query = supabase.from("complaint_workflow_history").select("*").order("created_at", { ascending: true });
+      if (complaintId) {
+        query = query.eq("complaint_id", complaintId);
+      }
+      const { data, error } = await query;
+      if (error) {
+        return res.json({ history: [], isSupabaseActive: false, error: error.message });
+      }
+      res.json({ history: data || [], isSupabaseActive: true });
+    } catch (err: any) {
+      res.json({ history: [], isSupabaseActive: false, error: err.message });
+    }
+  });
+
+  // API Route to record a workflow event in complaint_workflow_history
+  app.post("/api/workflow-history", async (req, res) => {
+    try {
+      const { event } = req.body;
+      if (!event || !event.complaint_id) {
+        return res.status(400).json({ error: "Workflow event with complaint_id is required." });
+      }
+      const newEvent = {
+        id: event.id || `WF-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        complaint_id: event.complaint_id,
+        customer_id: event.customer_id || null,
+        customer_name: event.customer_name || null,
+        customer_phone: event.customer_phone || null,
+        previous_status: event.previous_status || null,
+        new_status: event.new_status || null,
+        previous_assigned_to: event.previous_assigned_to || null,
+        new_assigned_to: event.new_assigned_to || null,
+        assigned_service_station: event.assigned_service_station || null,
+        action_type: event.action_type || "WORKFLOW_UPDATE",
+        action_reason: event.action_reason || null,
+        remarks: event.remarks || null,
+        performed_by: event.performed_by || "User",
+        performed_by_role: event.performed_by_role || "system",
+        created_at: event.created_at || new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from("complaint_workflow_history")
+        .upsert([newEvent], { onConflict: "id" });
+
+      if (error) {
+        console.warn("Supabase workflow_history upsert warning:", error.message);
+        return res.json({ success: true, isSupabaseActive: false, event: newEvent, error: error.message });
+      }
+
+      res.json({ success: true, isSupabaseActive: true, event: newEvent });
+    } catch (err: any) {
+      res.json({ success: false, error: err.message });
+    }
+  });
+
   // API Route to fetch call center officers from Supabase
   app.get("/api/officers", async (req, res) => {
     try {
