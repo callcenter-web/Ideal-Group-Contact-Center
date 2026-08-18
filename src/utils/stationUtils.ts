@@ -31,12 +31,31 @@ export function matchesStationCodeOrName(complaintStation: string | undefined | 
 }
 
 /**
+ * Robustly checks if a complaint has been returned/rejected to the Service Station or Call Center.
+ */
+export function isComplaintRejected(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  return !!(
+    c.stationResponseStatus === "Rejected" ||
+    c.stationResponseStatus === "Returned to Service Station" ||
+    c.stationResponseStatus === "Rejected by Call Center" ||
+    c.stationResponseStatus === "Returned to Call Center" ||
+    c.feedbackStatus === "Returned to Service Station" ||
+    c.finalStatus === "Returned to Service Station" ||
+    c.finalStatus?.includes("Re-assigned") ||
+    c.finalStatus?.includes("Rejected") ||
+    (typeof c.stationResponseStatus === "string" && c.stationResponseStatus.toLowerCase().includes("reject")) ||
+    (typeof c.stationResponseStatus === "string" && c.stationResponseStatus.toLowerCase().includes("returned"))
+  );
+}
+
+/**
  * Helper to check if a complaint has been contacted/actioned by the Service Station/Center.
  * Returns true ONLY IF Contacted by Service Center = YES.
  */
 export function isStationContacted(c: Complaint | null | undefined): boolean {
   if (!c) return false;
-  if (c.stationResponseStatus === "Rejected") return false;
+  if (isComplaintRejected(c)) return false;
   return !!(
     (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
     (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||

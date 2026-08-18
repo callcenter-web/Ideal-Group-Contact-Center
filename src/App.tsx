@@ -37,7 +37,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate, CaseHistoryEntry } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
-import { matchesStationCodeOrName } from "./utils/stationUtils";
+import { matchesStationCodeOrName, isComplaintRejected, isStationContacted } from "./utils/stationUtils";
 import { sanitizeComplaintDates, parseComplaintDate } from "./utils/agingUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -1563,16 +1563,16 @@ export default function App() {
     let matchesStatus = true;
     if (currentUser.role === "agent") {
       if (statusFilter === "Rejected") {
-        matchesStatus = c.stationResponseStatus === "Rejected";
+        matchesStatus = isComplaintRejected(c);
       } else {
         matchesStatus = !isStationContacted(c);
       }
     } else if (statusFilter === "1st Attempt Required") {
-      matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
+      matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
     } else if (statusFilter === "2nd Attempt Required") {
-      matchesStatus = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
+      matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
     } else if (statusFilter === "Rejected") {
-      matchesStatus = c.stationResponseStatus === "Rejected";
+      matchesStatus = isComplaintRejected(c);
     } else if (statusFilter === "Station Contacted (Pending/In-Progress)") {
       matchesStatus = isStationContacted(c) && !isComplaintCompleted(c);
     } else if (statusFilter === "Pending" || statusFilter === "To Contact") {
@@ -1589,19 +1589,19 @@ export default function App() {
     if (currentUser.role === "callcenter") {
       if (callCenterQuickFilter === "1st_attempt") {
         // 1st Attempt: Service station HAS contacted, Call Center 1st attempt pending, not rejected, not completed
-        matchesCallCenterQuick = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
+        matchesCallCenterQuick = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
       } else if (callCenterQuickFilter === "2nd_attempt") {
         // 2nd Attempt: Service station HAS contacted, 1st attempt logged, needs 2nd attempt, not rejected, not completed
-        matchesCallCenterQuick = isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
+        matchesCallCenterQuick = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
       } else if (callCenterQuickFilter === "rejected") {
-        // Rejected List: Station response rejected by Call Center
-        matchesCallCenterQuick = c.stationResponseStatus === "Rejected";
+        // Rejected List: Station response rejected by Call Center or returned
+        matchesCallCenterQuick = isComplaintRejected(c);
       } else if (callCenterQuickFilter === "completed") {
         // Completed: Call Center final remarks logged or Resolved or Satisfied
         matchesCallCenterQuick = isComplaintCompleted(c) || !!c.callCenterFinalRemarks;
       } else if (callCenterQuickFilter === "all") {
         // All Station Contacted: ONLY complaints contacted by service station or rejected or completed by Call Center
-        matchesCallCenterQuick = isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks || isComplaintCompleted(c);
+        matchesCallCenterQuick = isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c);
       }
     }
 
@@ -2348,7 +2348,7 @@ NOTIFY pgrst, 'reload schema';
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          📞 1st Attempt ({complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length})
+                          📞 1st Attempt ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length})
                         </button>
                         <button
                           type="button"
@@ -2359,7 +2359,7 @@ NOTIFY pgrst, 'reload schema';
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          🔁 2nd Attempt ({complaints.filter(c => isStationContacted(c) && c.stationResponseStatus !== "Rejected" && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1))).length})
+                          🔁 2nd Attempt ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1))).length})
                         </button>
                         <button
                           type="button"
@@ -2370,7 +2370,7 @@ NOTIFY pgrst, 'reload schema';
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          ↩️ Returned / Rejected ({complaints.filter(c => c.stationResponseStatus === "Rejected" || c.stationResponseStatus === "Returned to Call Center" || c.finalStatus === "Returned to Call Center").length})
+                          ↩️ Returned / Rejected ({complaints.filter(c => isComplaintRejected(c)).length})
                         </button>
                         <button
                           type="button"
@@ -2392,7 +2392,7 @@ NOTIFY pgrst, 'reload schema';
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          All Station Contacted ({complaints.filter(c => isStationContacted(c) || c.stationResponseStatus === "Rejected" || !!c.callCenterFinalRemarks || isComplaintCompleted(c)).length})
+                          All Station Contacted ({complaints.filter(c => isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c)).length})
                         </button>
                       </div>
                     )}
@@ -2420,7 +2420,7 @@ NOTIFY pgrst, 'reload schema';
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && c.stationResponseStatus === "Rejected").length})
+                          ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isComplaintRejected(c)).length})
                         </button>
                       </div>
                     )}
@@ -3095,25 +3095,33 @@ NOTIFY pgrst, 'reload schema';
                       {/* ROLE: STATION AGENT ACTION FORM */}
                       {currentUser.role === "agent" && (
                         <form id="agent-action-form" onSubmit={handleUpdateFollowUp} className="space-y-3">
-                          {(selectedComplaint.stationResponseStatus === "Rejected" || 
-                            selectedComplaint.stationResponseStatus === "Returned to Service Station" || 
-                            selectedComplaint.stationResponseStatus === "Rejected by Call Center" || 
-                            selectedComplaint.feedbackStatus === "Returned to Service Station") && (
-                            <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3.5 space-y-2 animate-pulse shadow-2xs">
-                              <div className="flex items-center gap-2 text-rose-800 font-black text-xs uppercase tracking-wider">
-                                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                                <span>⚠️ Complaint Returned by Call Center (Customer Re-Contact Required)</span>
+                          {isComplaintRejected(selectedComplaint) && (
+                            <div className="bg-gradient-to-r from-rose-50 via-rose-100/60 to-rose-50 border-2 border-rose-400 rounded-xl p-4 space-y-2.5 shadow-sm">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-rose-900 font-black text-xs uppercase tracking-wider">
+                                  <AlertTriangle className="h-4.5 w-4.5 text-rose-600 shrink-0 animate-bounce" />
+                                  <span>⚠️ Complaint Returned by Call Center to {selectedComplaint.station || "Service Station"}</span>
+                                </div>
+                                <span className="text-[10px] bg-rose-700 text-white font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                                  Re-Contact Required
+                                </span>
                               </div>
-                              <p className="text-xs font-bold text-slate-800 bg-white p-2.5 rounded-lg border border-rose-200 shadow-2xs">
-                                "{selectedComplaint.stationResponseRejectionReason || "Response was rejected by Call Center. Please contact customer again and perform required service station follow-up."}"
-                              </p>
-                              <div className="flex items-center justify-between text-[10px] text-rose-700 font-bold pt-0.5">
-                                <span>Rejected Date: {selectedComplaint.stationResponseRejectedDate || "Recently"}</span>
-                                <span>By Call Center Officer: {selectedComplaint.stationResponseRejectedBy || "Call Center"}</span>
+                              <div className="bg-white p-3 rounded-lg border border-rose-300 shadow-2xs space-y-1.5">
+                                <span className="text-[10px] font-black text-rose-800 uppercase tracking-wider block">
+                                  Call Center Rejection Reason:
+                                </span>
+                                <p className="text-xs font-bold text-slate-800 leading-relaxed italic">
+                                  "{selectedComplaint.stationResponseRejectionReason || "Response was rejected by Call Center. Please contact customer again and perform required service station follow-up."}"
+                                </p>
                               </div>
-                              <p className="text-[11px] text-rose-900 font-bold italic bg-rose-100/80 p-1.5 rounded text-center">
-                                👉 Action Required: Please contact the customer again, perform required service action, and submit updated resolution notes below.
-                              </p>
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-rose-800 font-bold pt-0.5">
+                                <span>📅 Rejected Date: {selectedComplaint.stationResponseRejectedDate || "Recently"}</span>
+                                <span>👤 Officer: {selectedComplaint.stationResponseRejectedBy || "Call Center"}</span>
+                                <span>🏢 Assigned Station: {selectedComplaint.station || currentUser.station}</span>
+                              </div>
+                              <div className="text-[11px] text-rose-950 font-bold bg-rose-200/80 p-2 rounded-lg text-center border border-rose-300">
+                                👉 <span className="underline">Action Required</span>: Please re-contact the customer for {selectedComplaint.station || "this station"}, resolve their issue, and submit updated resolution notes below.
+                              </div>
                             </div>
                           )}
 

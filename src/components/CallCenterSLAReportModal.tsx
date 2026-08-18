@@ -636,6 +636,17 @@ export default function CallCenterSLAReportModal({
               </button>
             </div>
 
+            <a
+              id="btn-download-sla-dashboard-300dpi"
+              href="/api/download-sla-pdf"
+              download="SLA_Performance_Dashboard.pdf"
+              className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 px-3.5 rounded-xl shadow-sm flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+              title="Download 300 DPI High-Resolution Print-Ready Landscape A4 PDF Dashboard"
+            >
+              <Download className="h-4 w-4 text-emerald-400" />
+              <span>SLA Dashboard (300 DPI PDF)</span>
+            </a>
+
             <button
               type="button"
               onClick={handleExportGraphicalPDF}

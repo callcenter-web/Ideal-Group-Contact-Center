@@ -619,6 +619,34 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
+  // API Route to Generate and Download SLA Performance Dashboard PDF
+  app.get("/api/download-sla-pdf", (req, res) => {
+    const pdfPath = path.join(process.cwd(), "SLA_Performance_Dashboard.pdf");
+    const publicPdfPath = path.join(process.cwd(), "public", "SLA_Performance_Dashboard.pdf");
+
+    const targetPath = fs.existsSync(pdfPath) ? pdfPath : (fs.existsSync(publicPdfPath) ? publicPdfPath : null);
+
+    if (targetPath) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
+      return res.sendFile(targetPath);
+    } else {
+      // Try running the python script synchronously if not yet generated
+      try {
+        const { execSync } = require("child_process");
+        execSync("python3 generate_sla_dashboard.py", { stdio: "inherit" });
+        if (fs.existsSync(pdfPath)) {
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
+          return res.sendFile(pdfPath);
+        }
+      } catch (err: any) {
+        console.error("PDF generation execution error:", err);
+      }
+      return res.status(404).json({ error: "SLA_Performance_Dashboard.pdf is being generated. Please retry in a few seconds." });
+    }
+  });
+
   app.post("/api/calendar", async (req, res) => {
     try {
       const { dates } = req.body;

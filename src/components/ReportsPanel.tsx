@@ -25,7 +25,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible } from "../utils/stationUtils";
+import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible, isComplaintRejected } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 
@@ -246,7 +246,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
     const resolved = stationComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
-    const escalated = stationComplaints.filter(c => c.stationResponseStatus === "Rejected" || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated" || c.finalStatus?.includes("Re-assigned")).length;
+    const escalated = stationComplaints.filter(c => isComplaintRejected(c) || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated" || c.finalStatus?.includes("Re-assigned")).length;
     const pending = Math.max(0, total - resolved - escalated);
 
     // Service Center Contact Status
