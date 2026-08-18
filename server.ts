@@ -203,7 +203,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
-  // API Route to fetch all complaints from Supabase with fallback
+  // API Route to fetch all complaints from Supabase (Supabase is Single Source of Truth)
   app.get("/api/complaints", async (req, res) => {
     try {
       const { data, error } = await supabase
@@ -222,18 +222,14 @@ Ensure your response is highly detailed, professional, and directly actionable f
         });
       }
 
-      // Keep cache in sync with active db using intelligent merge to prevent overwriting updated records
-      if (data && data.length > 0) {
-        const merged = data.map((sbRow: any) => {
-          const cachedRow = localComplaintsCache.find((c) => String(c.id) === String(sbRow.id));
-          const normalized = normalizeComplaintFromSupabase(sbRow);
-          if (cachedRow) {
-            return mergeComplaintObjects(cachedRow, normalized);
-          }
-          return normalized;
-        });
-        localComplaintsCache = merged as any;
+      if (data) {
+        const normalized = data.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow)) as any;
+        localComplaintsCache = normalized;
         savePersistentData();
+        return res.json({
+          complaints: normalized,
+          isSupabaseActive: true
+        });
       }
 
       res.json({
@@ -260,40 +256,29 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
 
-      // Merge incoming complaints into local memory cache by ID/woNo instead of overwriting, preventing data loss across IP addresses
-      const mergedMap = new Map<string, any>();
-      localComplaintsCache.forEach((c) => {
-        if (c && c.id) {
-          mergedMap.set(String(c.id).trim().toUpperCase(), c);
-        }
-      });
-
-      complaintsArray.forEach((incoming) => {
-        if (!incoming || !incoming.id) return;
-        const key = String(incoming.id).trim().toUpperCase();
-        const existing = mergedMap.get(key);
-        if (existing) {
-          mergedMap.set(key, mergeComplaintObjects(existing, incoming));
-        } else {
-          mergedMap.set(key, incoming);
-        }
-      });
-
-      localComplaintsCache = Array.from(mergedMap.values());
-      savePersistentData();
-
-      // Perform resilient write to Supabase with automatic column mismatch handling
-      const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, localComplaintsCache);
+      // Perform resilient write to Supabase
+      const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, complaintsArray);
 
       if (error) {
         console.error("Supabase UPSERT error:", error);
         return res.json({
-          success: true, // Saved in local memory cache & disk successfully
+          success: false,
           isSupabaseActive: false,
           error: error.message,
           code: error.code,
           complaints: localComplaintsCache
         });
+      }
+
+      // Re-fetch latest authoritative records from Supabase
+      const { data: freshData } = await supabase
+        .from("complaints")
+        .select("*")
+        .order("date", { ascending: false });
+
+      if (freshData) {
+        localComplaintsCache = freshData.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow)) as any;
+        savePersistentData();
       }
 
       res.json({
@@ -305,7 +290,7 @@ Ensure your response is highly detailed, professional, and directly actionable f
     } catch (err: any) {
       console.error("Save complaints exception:", err);
       res.json({
-        success: true,
+        success: false,
         isSupabaseActive: false,
         error: err.message,
         complaints: localComplaintsCache

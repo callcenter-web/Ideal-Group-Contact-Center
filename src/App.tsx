@@ -211,7 +211,6 @@ export default function App() {
             const data = JSON.parse(text);
             if (data && data.complaints && Array.isArray(data.complaints)) {
               setComplaints(data.complaints);
-              localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
             }
           }
         }
@@ -478,7 +477,7 @@ export default function App() {
 
   const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
     try {
-      console.log("Contacting Supabase directly from the browser...");
+      console.log("Contacting Supabase directly from browser as single source of truth...");
       const { data, error } = await supabaseClient
         .from("complaints")
         .select("*")
@@ -492,21 +491,8 @@ export default function App() {
       }
 
       if (data) {
-        const savedRaw = localStorage.getItem("ideal_group_complaints");
-        let savedList: Complaint[] = [];
-        if (savedRaw) {
-          try { savedList = JSON.parse(savedRaw); } catch (e) {}
-        }
-        const mergedData = data.map((sbRow: any) => {
-          const cached = savedList.find((c) => String(c.id) === String(sbRow.id));
-          const norm = normalizeComplaintFromSupabase(sbRow);
-          if (cached) {
-            return mergeComplaintObjects(cached, norm);
-          }
-          return norm as Complaint;
-        });
-        setComplaints(mergedData);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(mergedData));
+        const normalized = data.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow) as Complaint);
+        setComplaints(normalized);
       }
       setSupabaseActive(true);
       setSupabaseError(null);
@@ -525,48 +511,14 @@ export default function App() {
       const text = await res.text();
       
       if (text.trim().startsWith("<!DOCTYPE")) {
-        console.warn("Backend API not found (HTML response). Falling back to client-side direct Supabase connection...");
+        console.warn("Backend API not found (HTML response). Fetching directly from Supabase...");
         return await fetchComplaintsDirectly();
       }
 
       const data = JSON.parse(text);
       if (data.complaints && Array.isArray(data.complaints)) {
-        setComplaints((prev) => {
-          if (!prev || prev.length === 0) {
-            localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
-            return data.complaints;
-          }
-          const prevMap = new Map<string, Complaint>();
-          prev.forEach((p) => {
-            if (p && p.id) prevMap.set(String(p.id).trim().toUpperCase(), p);
-          });
-
-          const mergedMap = new Map<string, Complaint>();
-          data.complaints.forEach((serverComp: Complaint) => {
-            if (!serverComp || !serverComp.id) return;
-            const key = String(serverComp.id).trim().toUpperCase();
-            const localComp = prevMap.get(key);
-            if (localComp) {
-              mergedMap.set(key, mergeComplaintObjects(localComp, serverComp));
-            } else {
-              mergedMap.set(key, serverComp);
-            }
-          });
-
-          // Also retain any local-only records
-          prev.forEach((p) => {
-            if (p && p.id) {
-              const key = String(p.id).trim().toUpperCase();
-              if (!mergedMap.has(key)) {
-                mergedMap.set(key, p);
-              }
-            }
-          });
-
-          const merged = Array.from(mergedMap.values());
-          localStorage.setItem("ideal_group_complaints", JSON.stringify(merged));
-          return merged;
-        });
+        const normalized = data.complaints.map((c: any) => normalizeComplaintFromSupabase(c) as Complaint);
+        setComplaints(normalized);
       }
       setSupabaseActive(data.isSupabaseActive);
       if (!data.isSupabaseActive && data.error) {
@@ -577,40 +529,74 @@ export default function App() {
         return true;
       }
     } catch (e: any) {
-      console.warn("Backend API call failed, falling back to client-side direct Supabase connection:", e);
+      console.warn("Backend API call failed, falling back to direct Supabase query:", e);
       return await fetchComplaintsDirectly(e.message);
     }
   };
 
-  // Load complaints on mount
+  // Initial load: Fetch directly from Supabase (Single Source of Truth)
   useEffect(() => {
-    const saved = localStorage.getItem("ideal_group_complaints");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setComplaints(parsed.map(sanitizeComplaintDates));
-        } else {
-          setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
-        }
-      } catch (e) {
-        console.error("Failed to parse saved complaints:", e);
-        setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
-      }
-    } else {
-      setComplaints(DEMO_COMPLAINTS.map(sanitizeComplaintDates));
-    }
-
     fetchComplaints();
   }, []);
 
-  // Continuous background synchronization across IP addresses and devices every 5 seconds
+  // Supabase Realtime Subscription: Listen for INSERT, UPDATE, DELETE on 'complaints' table
+  useEffect(() => {
+    const channel = supabaseClient
+      .channel("complaints-realtime-sync")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "complaints"
+        },
+        (payload) => {
+          console.log("⚡ [Supabase Realtime] Event received:", payload.eventType, payload);
+          // Directly refresh state from Supabase single source of truth
+          fetchComplaints();
+        }
+      )
+      .subscribe((status) => {
+        console.log("⚡ [Supabase Realtime] Channel status:", status);
+      });
+
+    return () => {
+      supabaseClient.removeChannel(channel);
+    };
+  }, []);
+
+  // Continuous background fallback synchronization across IP addresses and devices every 4 seconds
   useEffect(() => {
     const syncInterval = setInterval(() => {
       fetchComplaints();
-    }, 5000);
+    }, 4000);
     return () => clearInterval(syncInterval);
   }, []);
+
+  // Diagnostics logging for CX Recovery DB & Query Verification (Requirement #12)
+  useEffect(() => {
+    const tissaRecords = complaints.filter(
+      (c) => matchesStationCodeOrName(c.station, "Tissamaharama") || matchesStationCodeOrName(c.station, "TISSA")
+    );
+    const rejectedRecords = complaints.filter(
+      (c) =>
+        c.stationResponseStatus === "Rejected" ||
+        c.stationResponseStatus === "Returned to Service Station" ||
+        c.stationResponseStatus === "Rejected by Call Center" ||
+        c.feedbackStatus === "Returned to Service Station"
+    );
+
+    console.log("====================================");
+    console.log("🔍 [CX RECOVERY DB & SYNC DIAGNOSTICS]");
+    console.log("👤 Current User:", currentUser?.name || currentUser?.role || "Not Logged In");
+    console.log("🆔 Officer ID / Email:", currentUser?.officerId || currentUser?.email || "N/A");
+    console.log("🏢 Assigned Station:", currentUser?.station || "N/A (All / Call Center / Admin)");
+    console.log("🌐 Supabase Active:", supabaseActive, supabaseError ? `Error: ${supabaseError}` : "Connected (OK)");
+    console.log("📊 Total Records from Supabase:", complaints.length);
+    console.log("📍 Total Tissamaharama Records:", tissaRecords.length, tissaRecords.map((c) => ({ id: c.id, customer: c.customerName, status: c.status, stationResponseStatus: c.stationResponseStatus })));
+    console.log("❌ Total Rejected Records:", rejectedRecords.length, rejectedRecords.map((c) => ({ id: c.id, customer: c.customerName, reason: c.stationResponseRejectionReason })));
+    console.log("====================================");
+  }, [complaints, currentUser, supabaseActive, supabaseError]);
 
   const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
     try {
@@ -635,11 +621,14 @@ export default function App() {
     }
   };
 
-  // Handle saving to localStorage and syncing with Supabase on complaints change
+  // Handle saving and syncing with Supabase on complaints change
   const saveComplaints = async (updatedList: Complaint[]) => {
     setComplaints(updatedList);
-    localStorage.setItem("ideal_group_complaints", JSON.stringify(updatedList));
 
+    // Save directly to Supabase
+    saveComplaintsDirectly(updatedList);
+
+    // Also notify server backend API to ensure background synchronization
     try {
       const res = await fetch("/api/complaints", {
         method: "POST",
@@ -648,26 +637,20 @@ export default function App() {
       });
       const text = await res.text();
 
-      if (text.trim().startsWith("<!DOCTYPE")) {
-        console.warn("Backend API not found (HTML response). Saving directly to Supabase client-side...");
-        await saveComplaintsDirectly(updatedList);
-        return;
-      }
-
-      const data = JSON.parse(text);
-      setSupabaseActive(data.isSupabaseActive);
-      if (!data.isSupabaseActive && data.error) {
-        setSupabaseError(data.error);
-      } else {
-        setSupabaseError(null);
-      }
-      if (data.complaints) {
-        setComplaints(data.complaints);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
+      if (!text.trim().startsWith("<!DOCTYPE")) {
+        const data = JSON.parse(text);
+        setSupabaseActive(data.isSupabaseActive);
+        if (!data.isSupabaseActive && data.error) {
+          setSupabaseError(data.error);
+        } else {
+          setSupabaseError(null);
+        }
+        if (data.complaints && Array.isArray(data.complaints)) {
+          setComplaints(data.complaints.map((c: any) => normalizeComplaintFromSupabase(c) as Complaint));
+        }
       }
     } catch (e: any) {
-      console.warn("Backend API save failed, saving directly to Supabase client-side:", e);
-      await saveComplaintsDirectly(updatedList);
+      console.warn("Backend API save notification failed, direct Supabase save handled the write:", e);
     }
   };
 
@@ -758,7 +741,6 @@ export default function App() {
     });
 
     setComplaints(updatedList);
-    localStorage.setItem("ideal_group_complaints", JSON.stringify(updatedList));
 
     if (selectedComplaintId === complaintId || selectedComplaintId === targetId) {
       setSelectedComplaintId(null);
@@ -802,7 +784,6 @@ export default function App() {
   // Clear All Complaints from Whole Database
   const handleDeleteAllComplaints = async () => {
     setComplaints([]);
-    localStorage.setItem("ideal_group_complaints", JSON.stringify([]));
     setSelectedComplaintId(null);
     setDeletingId(null);
     setShowDeleteAllConfirm(false);
@@ -955,7 +936,6 @@ export default function App() {
   // Reset demo complaints data
   const handleResetDemo = async () => {
     setComplaints(DEMO_COMPLAINTS);
-    localStorage.setItem("ideal_group_complaints", JSON.stringify(DEMO_COMPLAINTS));
     setSelectedComplaintId(null);
     setShowResetConfirm(false);
 
@@ -973,7 +953,6 @@ export default function App() {
       setSupabaseActive(data.isSupabaseActive);
       if (data.complaints) {
         setComplaints(data.complaints);
-        localStorage.setItem("ideal_group_complaints", JSON.stringify(data.complaints));
       }
     } catch (e: any) {
       console.warn("Backend reset failed, resetting directly on Supabase client-side:", e);
@@ -1334,6 +1313,7 @@ export default function App() {
           stationResponseRejectedDate: nowStr,
           stationResponseRejectedBy: officerName,
           status: "Pending" as FollowUpStatus,
+          serviceStationContactStatus: "NOT_CONTACTED",
           feedbackStatus: "Returned to Service Station",
           finalStatus: "Pending with Aftermarket (Re-contact Required)",
           stationContactedDate: "", // Cleared so it returns to Service Station pending action queue
@@ -1356,28 +1336,37 @@ export default function App() {
 
     await saveComplaints(updated);
 
-    // Save workflow audit event
+    const workflowPayload = {
+      id: `WF-CC-REJ-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      complaint_id: targetC.id,
+      customer_id: targetC.customerNo || null,
+      customer_name: targetC.customerName,
+      customer_phone: targetC.customerPhone,
+      previous_status: targetC.status,
+      new_status: "Returned to Service Station",
+      previous_assigned_to: officerName,
+      new_assigned_to: targetC.station,
+      assigned_service_station: targetC.station,
+      action_type: "REJECTED_BY_CALL_CENTER",
+      action_reason: rejectionReason,
+      remarks: rejectionReason,
+      performed_by: officerName,
+      performed_by_role: "callcenter",
+      created_at: new Date().toISOString()
+    };
+
+    // Save workflow audit event directly to Supabase and via API
+    try {
+      await supabaseClient.from("complaint_workflow_history").upsert([workflowPayload]);
+    } catch (err) {
+      console.warn("Direct Supabase workflow insert warning:", err);
+    }
+
     try {
       await fetch("/api/workflow-history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event: {
-            complaint_id: targetC.id,
-            customer_name: targetC.customerName,
-            customer_phone: targetC.customerPhone,
-            previous_status: targetC.status,
-            new_status: "Returned to Service Station",
-            previous_assigned_to: officerName,
-            new_assigned_to: targetC.station,
-            assigned_service_station: targetC.station,
-            action_type: "REJECTED_BY_CALL_CENTER",
-            action_reason: rejectionReason,
-            remarks: rejectionReason,
-            performed_by: officerName,
-            performed_by_role: "callcenter"
-          }
-        })
+        body: JSON.stringify({ event: workflowPayload })
       });
     } catch (e) {
       console.warn("Could not save workflow history event:", e);
