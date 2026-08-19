@@ -71,10 +71,10 @@ AGING_DATA = [
 ]
 
 FEEDBACK_DATA = [
-    {"category": "Satisfied", "count": 42, "pct": 56, "color": SUCCESS_GREEN},
-    {"category": "Follow-up Required", "count": 26, "pct": 35, "color": INFO_BLUE},
-    {"category": "Customer Unreachable", "count": 3, "pct": 4, "color": PENDING_ORANGE},
-    {"category": "No Solution Found", "count": 2, "pct": 3, "color": CRITICAL_RED},
+    {"category": "Satisfied After Resolution", "count": 42, "pct": 81, "color": SUCCESS_GREEN},
+    {"category": "Follow-up Required", "count": 7, "pct": 13, "color": INFO_BLUE},
+    {"category": "Customer Unreachable", "count": 2, "pct": 4, "color": PENDING_ORANGE},
+    {"category": "No Solution Received", "count": 1, "pct": 2, "color": CRITICAL_RED},
     {"category": "Still Dissatisfied", "count": 0, "pct": 0, "color": "#94A3B8"}
 ]
 
@@ -165,8 +165,8 @@ def create_csat_donut_chart_buffer():
         autotext.set_color(WHITE)
 
     # Center circle annotation
-    ax.text(0, 0.08, "56%", ha='center', va='center', fontsize=15, fontweight='black', color=SUCCESS_GREEN)
-    ax.text(0, -0.15, "Overall CSAT", ha='center', va='center', fontsize=6.5, fontweight='bold', color="#64748B")
+    ax.text(0, 0.08, "81%", ha='center', va='center', fontsize=15, fontweight='black', color=SUCCESS_GREEN)
+    ax.text(0, -0.15, "CSAT (SC Contacted)", ha='center', va='center', fontsize=6.0, fontweight='bold', color="#64748B")
 
     # Custom Clean Legend below
     legend_labels = [f"{c} ({p}%)" for c, p in zip(categories, pcts)]
@@ -181,7 +181,7 @@ def create_csat_donut_chart_buffer():
         handleheight=1.0
     )
 
-    plt.title("CSAT & Customer Sentiment Breakdown", fontsize=8.5, fontweight='black', color=PRIMARY_NAVY, pad=8, loc='left')
+    plt.title("Call Center Feedback (SC Contacted = YES)", fontsize=8.5, fontweight='black', color=PRIMARY_NAVY, pad=8, loc='left')
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=300, facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')

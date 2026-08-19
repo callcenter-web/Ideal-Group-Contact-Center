@@ -554,7 +554,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     return acc;
   }, {} as Record<SatisfactionLevel, number>);
 
-  // Feedback Status Breakdown (Call Center Response)
+  // Feedback Status Breakdown (Call Center Response - Evaluated on Service Station Contacted = YES cases only)
   const feedbackStatusLevels = [
     "Satisfied After Resolution",
     "Still Dissatisfied",
@@ -563,8 +563,11 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     "Follow-up Required"
   ];
 
+  const scContactedActiveScopeComplaints = activeScopeComplaints.filter(c => isStationContacted(c));
+  const scContactedActiveScopeCount = scContactedActiveScopeComplaints.length;
+
   const feedbackStatusCounts = feedbackStatusLevels.reduce((acc, level) => {
-    acc[level] = activeScopeComplaints.filter(c => {
+    acc[level] = scContactedActiveScopeComplaints.filter(c => {
       const status = c.feedbackStatus;
       if (level === "Satisfied After Resolution") {
         return status === "Satisfied After Resolution" || status === "Satisfied";
@@ -805,7 +808,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       pdf.text("between data entry and resolution.", 16, chartY + 62);
 
 
-      // CHART B: Call Center Feedback Breakdown (x=12+64=76)
+      // CHART B: Call Center Feedback Breakdown (x=12+64=76) - SC Contacted Cases Only
       pdf.setFillColor(255, 255, 255);
       pdf.setDrawColor(226, 232, 240);
       pdf.rect(12 + chartW + 6, chartY, chartW, chartH, "FD");
@@ -814,12 +817,16 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
       pdf.text("FEEDBACK STATUS", 12 + chartW + 10, chartY + 6);
+      pdf.setFontSize(5.8);
+      pdf.setTextColor(79, 70, 229);
+      pdf.text(`(SC Contacted: ${scContactedActiveScopeCount})`, 12 + chartW + 38, chartY + 6);
+      pdf.setDrawColor(226, 232, 240);
       pdf.line(12 + chartW + 10, chartY + 9, 12 + chartW * 2 + 2, chartY + 9);
 
       pdf.setFontSize(6.2);
       feedbackStatusLevels.forEach((lvl, idx) => {
         const count = feedbackStatusCounts[lvl] || 0;
-        const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
+        const pct = scContactedActiveScopeCount > 0 ? Math.round((count / scContactedActiveScopeCount) * 100) : 0;
         const curY = chartY + 16 + idx * 11;
         
         pdf.setTextColor(71, 85, 105);
@@ -2163,53 +2170,100 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
             </p>
           </div>
 
-          {/* Chart 2: Call Center Feedback Status Breakdown */}
+          {/* Chart 2: Call Center Feedback Status Breakdown (SC Contacted Customers Only) */}
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
-              <div className={`flex items-center justify-between mb-3.5 border-b pb-1.5 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
-                  Call Center Feedback Status
-                </h4>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[120px] ${
+              <div className={`flex items-start justify-between mb-3 border-b pb-2 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                <div>
+                  <h4 className={`text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 ${textTitle}`}>
+                    <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                    Call Center Feedback Status
+                  </h4>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border ${
+                      isDark 
+                        ? "bg-indigo-950/60 text-indigo-300 border-indigo-800/60" 
+                        : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                    }`}>
+                      SC Contacted Only: {scContactedActiveScopeCount} Cases
+                    </span>
+                  </div>
+                </div>
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[110px] ${
                   isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-700 bg-blue-50 border-blue-200"
                 }`} title={activeScopeTitle}>
                   {activeScopeTitle}
                 </span>
               </div>
-              <div className="space-y-2">
-                {feedbackStatusLevels.map((level) => {
-                  const count = feedbackStatusCounts[level] || 0;
-                  const pct = totalInScope > 0 ? Math.round((count / totalInScope) * 100) : 0;
-                  
-                  let barColor = "bg-blue-500";
-                  if (level === "Satisfied After Resolution") barColor = "bg-emerald-500";
-                  else if (level === "Still Dissatisfied") barColor = "bg-rose-500";
-                  else if (level === "No Solution Received") barColor = "bg-amber-500";
-                  else if (level === "Customer Unreachable") barColor = "bg-purple-500";
-                  else if (level === "Follow-up Required") barColor = "bg-blue-500";
 
-                  return (
-                    <div key={level} className="flex items-center text-xs">
-                      <span className={`w-36 font-bold truncate text-[10px] ${isDark ? "text-slate-400" : "text-slate-600"}`} title={level}>
-                        {level}
-                      </span>
-                      <div className={`flex-1 rounded-full h-2 mx-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
-                        <div 
-                          className={`${barColor} h-2 rounded-full transition-all duration-500`}
-                          style={{ width: `${pct}%` }}
-                        />
+              {scContactedActiveScopeCount === 0 ? (
+                <div className={`py-8 text-center rounded-lg border border-dashed my-2 ${
+                  isDark ? "bg-slate-950/40 border-slate-800" : "bg-slate-50/60 border-slate-200"
+                }`}>
+                  <p className="text-xs font-bold text-slate-400">No service station contacted cases</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Feedback activates once station records customer contact.</p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {feedbackStatusLevels.map((level) => {
+                    const count = feedbackStatusCounts[level] || 0;
+                    const pct = scContactedActiveScopeCount > 0 ? Math.round((count / scContactedActiveScopeCount) * 100) : 0;
+                    
+                    let barColor = "bg-blue-500";
+                    let badgeColor = isDark ? "text-blue-400 bg-blue-950/60 border-blue-900/40" : "text-blue-700 bg-blue-50 border-blue-200";
+                    let dotColor = "bg-blue-500";
+
+                    if (level === "Satisfied After Resolution") {
+                      barColor = "bg-emerald-500";
+                      badgeColor = isDark ? "text-emerald-400 bg-emerald-950/60 border-emerald-900/40" : "text-emerald-800 bg-emerald-50 border-emerald-200";
+                      dotColor = "bg-emerald-500";
+                    } else if (level === "Still Dissatisfied") {
+                      barColor = "bg-rose-500";
+                      badgeColor = isDark ? "text-rose-400 bg-rose-950/60 border-rose-900/40" : "text-rose-800 bg-rose-50 border-rose-200";
+                      dotColor = "bg-rose-500";
+                    } else if (level === "No Solution Received") {
+                      barColor = "bg-amber-500";
+                      badgeColor = isDark ? "text-amber-400 bg-amber-950/60 border-amber-900/40" : "text-amber-800 bg-amber-50 border-amber-200";
+                      dotColor = "bg-amber-500";
+                    } else if (level === "Customer Unreachable") {
+                      barColor = "bg-purple-500";
+                      badgeColor = isDark ? "text-purple-400 bg-purple-950/60 border-purple-900/40" : "text-purple-800 bg-purple-50 border-purple-200";
+                      dotColor = "bg-purple-500";
+                    } else if (level === "Follow-up Required") {
+                      barColor = "bg-sky-500";
+                      badgeColor = isDark ? "text-sky-400 bg-sky-950/60 border-sky-900/40" : "text-sky-800 bg-sky-50 border-sky-200";
+                      dotColor = "bg-sky-500";
+                    }
+
+                    return (
+                      <div key={level} className="flex items-center text-xs group">
+                        <span className={`w-36 font-bold truncate text-[10px] flex items-center gap-1.5 transition-colors ${
+                          isDark ? "text-slate-300 group-hover:text-white" : "text-slate-600 group-hover:text-slate-900"
+                        }`} title={level}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${dotColor} shrink-0`} />
+                          <span className="truncate">{level}</span>
+                        </span>
+                        <div className={`flex-1 rounded-full h-2 mx-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
+                          <div 
+                            className={`${barColor} h-2 rounded-full transition-all duration-500`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className={`min-w-[62px] text-right font-black text-[10px] px-1.5 py-0.5 rounded border ${badgeColor}`}>
+                          {count} <span className="font-semibold opacity-85">({pct}%)</span>
+                        </span>
                       </div>
-                      <span className={`w-12 text-right font-black text-[10px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                        {count} ({pct}%)
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <p className={`text-[9px] font-bold mt-3 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
-              Evaluates current call center response status classifications for {activeScopeTitle}.
-            </p>
+            <div className={`mt-3 pt-2 border-t flex items-center justify-between text-[9px] font-bold ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
+              <span>Evaluated on SC Contacted = YES only</span>
+              <span className={`font-black ${isDark ? "text-indigo-400" : "text-indigo-600"}`}>
+                {scContactedActiveScopeCount} / {totalInScope} ({totalInScope > 0 ? Math.round((scContactedActiveScopeCount / totalInScope) * 100) : 0}%)
+              </span>
+            </div>
           </div>
 
           {/* Chart 3: Operational Status Distribution */}
