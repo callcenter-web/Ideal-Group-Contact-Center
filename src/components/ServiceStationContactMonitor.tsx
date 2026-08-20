@@ -15,9 +15,15 @@ import {
 } from "lucide-react";
 import { Complaint, ServiceStationContactStatus, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
-import { getEffectiveStationContactStatus } from "../utils/supabaseSanitizer";
+import { 
+  getComplaintCycleContactStatus, 
+  isComplaintRejected, 
+  isComplaintResolved,
+  getActiveCycleAgeInfo,
+  calculateStationMetrics,
+  calculateNationalSummary
+} from "../utils/workflowTallyUtils";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
-import { getComplaintAgeInfo } from "../utils/agingUtils";
 
 interface ServiceStationContactMonitorProps {
   complaints: Complaint[];
@@ -62,13 +68,11 @@ export default function ServiceStationContactMonitor({
     const todayStr = now.toISOString().split("T")[0];
 
     targetComplaints.forEach((c) => {
-      const status = getEffectiveStationContactStatus(c);
-      const isRejected = c.stationResponseStatus === "Rejected" || 
-                         c.stationResponseStatus === "Returned to Service Station" ||
-                         c.stationResponseStatus === "Rejected by Call Center" ||
-                         c.feedbackStatus === "Returned to Service Station";
+      const status = getComplaintCycleContactStatus(c);
+      const isRej = isComplaintRejected(c);
+      const isRes = isComplaintResolved(c);
 
-      if (isRejected) {
+      if (isRej) {
         rejectedCount++;
       }
 
@@ -80,20 +84,18 @@ export default function ServiceStationContactMonitor({
         contactAttempted++;
       } else if (status === "CUSTOMER_UNREACHABLE") {
         customerUnreachable++;
-      } else if (status === "PENDING_CONTACT") {
-        pendingContact++;
       }
 
-      // SLA Breach check (> 24h / > 1 day without contact or unresolved)
-      const ageInfo = getComplaintAgeInfo(c, now, calendarDates);
-      if (ageInfo.workingDaysPassed >= 1 && status !== "CONTACTED" && c.status !== "Resolved") {
+      // SLA Breach check (> 24h / > 1 working day without contact in active cycle)
+      const ageInfo = getActiveCycleAgeInfo(c, now, calendarDates);
+      if (ageInfo.workingDays >= 1 && status !== "CONTACTED" && !isRes) {
         slaBreached++;
       }
 
       // Follow up due check
-      if (c.nextFollowUpDate && c.nextFollowUpDate <= todayStr && c.status !== "Resolved") {
+      if (c.nextFollowUpDate && c.nextFollowUpDate <= todayStr && !isRes) {
         followUpDue++;
-      } else if (status === "CONTACT_ATTEMPTED" || status === "CUSTOMER_UNREACHABLE") {
+      } else if ((status === "CONTACT_ATTEMPTED" || status === "CUSTOMER_UNREACHABLE") && !isRes) {
         followUpDue++;
       }
     });
@@ -126,11 +128,9 @@ export default function ServiceStationContactMonitor({
       const now = new Date();
 
       stationComplaints.forEach((c) => {
-        const status = getEffectiveStationContactStatus(c);
-        const isRej = c.stationResponseStatus === "Rejected" || 
-                      c.stationResponseStatus === "Returned to Service Station" ||
-                      c.stationResponseStatus === "Rejected by Call Center" ||
-                      c.feedbackStatus === "Returned to Service Station";
+        const status = getComplaintCycleContactStatus(c);
+        const isRej = isComplaintRejected(c);
+        const isRes = isComplaintResolved(c);
 
         if (isRej) rejected++;
 
@@ -139,8 +139,8 @@ export default function ServiceStationContactMonitor({
         else if (status === "CONTACT_ATTEMPTED") attempted++;
         else if (status === "CUSTOMER_UNREACHABLE") unreachable++;
 
-        const ageInfo = getComplaintAgeInfo(c, now, calendarDates);
-        if (ageInfo.workingDaysPassed >= 1 && status !== "CONTACTED" && c.status !== "Resolved") {
+        const ageInfo = getActiveCycleAgeInfo(c, now, calendarDates);
+        if (ageInfo.workingDays >= 1 && status !== "CONTACTED" && !isRes) {
           slaBreached++;
         }
       });

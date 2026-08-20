@@ -42,6 +42,7 @@ import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible, isComplaintRejected } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
+import { getActiveCycleAgeInfo, isComplaintResolved as isComplaintResolvedUtil } from "../utils/workflowTallyUtils";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
@@ -193,45 +194,32 @@ export default function ReportsPanel({
     return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
   };
 
-  // Helper: compute aging details for a single complaint
+  // Helper: compute aging details for a single complaint using active cycle working days
   const getComplaintAging = (c: Complaint) => {
-    const todayStr = "2026-06-24"; // Consistent anchor date representing current system time
-    let days = 0;
+    const ageInfo = getActiveCycleAgeInfo(c, new Date());
+    const days = ageInfo.workingDays;
     
-    if (c.status === "Resolved") {
-      // Solved duration: from registration to final verification/contact
-      const resolveDate = c.callCenterContactedDate || c.stationContactedDate || c.updatedAt || todayStr;
-      days = getDaysDiff(c.date, resolveDate);
-    } else {
-      // Outstanding duration: from registration to today
-      days = getDaysDiff(c.date, todayStr);
-    }
-
     let colorClass = "";
     let textClass = "";
     let bgClass = "";
-    let label = "";
+    let label = ageInfo.bucketLabel;
 
     if (days <= 3) {
       colorClass = "border-emerald-200 text-emerald-700 bg-emerald-50";
       textClass = "text-emerald-600";
       bgClass = "bg-emerald-500";
-      label = "0-3 Days (New)";
     } else if (days <= 5) {
       colorClass = "border-amber-200 text-amber-700 bg-amber-50";
       textClass = "text-amber-600";
       bgClass = "bg-amber-500";
-      label = "3-5 Days (Pending)";
     } else if (days <= 10) {
       colorClass = "border-orange-200 text-orange-700 bg-orange-50";
       textClass = "text-orange-600";
       bgClass = "bg-orange-500";
-      label = "6-10 Days (Escalated)";
     } else {
       colorClass = "border-rose-200 text-rose-700 bg-rose-50";
       textClass = "text-rose-600";
       bgClass = "bg-rose-500";
-      label = ">10 Days (Critical)";
     }
 
     return { days, colorClass, textClass, bgClass, label };
