@@ -72,9 +72,9 @@ AGING_DATA = [
 
 FEEDBACK_DATA = [
     {"category": "Satisfied After Resolution", "count": 42, "pct": 81, "color": SUCCESS_GREEN},
-    {"category": "Follow-up Required", "count": 7, "pct": 13, "color": INFO_BLUE},
-    {"category": "Customer Unreachable", "count": 2, "pct": 4, "color": PENDING_ORANGE},
-    {"category": "No Solution Received", "count": 1, "pct": 2, "color": CRITICAL_RED},
+    {"category": "Customer Unreachable", "count": 5, "pct": 10, "color": PENDING_ORANGE},
+    {"category": "Rejected Again to Service Station", "count": 3, "pct": 6, "color": ESCALATED_ORANGE},
+    {"category": "No Solution Received", "count": 2, "pct": 3, "color": CRITICAL_RED},
     {"category": "Still Dissatisfied", "count": 0, "pct": 0, "color": "#94A3B8"}
 ]
 

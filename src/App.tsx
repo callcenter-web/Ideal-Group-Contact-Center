@@ -2270,6 +2270,14 @@ NOTIFY pgrst, 'reload schema';
             complaints={complaints} 
             theme={theme} 
             onOpenSLAReportModal={() => setShowSLAReportModal(true)} 
+            onSelectComplaintInWorkspace={(complaintId) => {
+              setSelectedComplaintId(complaintId);
+              setCurrentTab("analytics");
+            }}
+            onEditComplaint={currentUser.role === "admin" ? (comp) => {
+              setAdminEditingComplaint(comp);
+              setShowAdminEditModal(true);
+            } : undefined}
           />
         )}
 

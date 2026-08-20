@@ -68,26 +68,69 @@ export function generateSystemicEmailContent(
     : ["callcenter@idealgroup.lk"];
 
   const count = assignedComplaints.length;
-  const subject = `[Ideal Aftermarket] Systemic Dispatch Notice - ${count} Pending Complaint(s) Assigned to ${station.name}`;
+  const subject = `[Ideal Aftermarket] Complaint Summary Notice - ${count} Assigned Case(s) for ${station.name}`;
 
-  const rowsHtml = assignedComplaints
+  // Calculate aggregated counts
+  const pendingActionCount = assignedComplaints.filter(
+    (c) => c.status === "Pending" || !c.status || c.stationResponseStatus === "Pending" || !c.stationContactedDate
+  ).length;
+
+  const inProgressCount = assignedComplaints.filter(
+    (c) => c.status === "In Progress" || c.status === "Contacted" || (c.stationContactedDate && c.status !== "Resolved")
+  ).length;
+
+  const resolvedCount = assignedComplaints.filter((c) => c.status === "Resolved").length;
+
+  const rejectedCount = assignedComplaints.filter(
+    (c) =>
+      c.stationResponseStatus === "Rejected" ||
+      c.stationResponseStatus === "Rejected by Call Center" ||
+      c.stationResponseStatus === "Returned to Service Station" ||
+      c.feedbackStatus === "Rejected Again to Service Station" ||
+      c.feedbackStatus === "Returned to Service Station" ||
+      c.finalStatus?.includes("Rejected") ||
+      c.finalStatus?.includes("Returned")
+  ).length;
+
+  const getAgingDays = (c: Complaint) => {
+    if (!c.date) return 0;
+    const t = new Date(c.date).getTime();
+    if (isNaN(t)) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
+  };
+
+  const highPriorityCount = assignedComplaints.filter(
+    (c) =>
+      c.initialSatisfaction === "Very Dissatisfied" ||
+      getAgingDays(c) > 5 ||
+      c.feedbackStatus === "Still Dissatisfied"
+  ).length;
+
+  // Category counts
+  const categoryMap: Record<string, number> = {};
+  assignedComplaints.forEach((c) => {
+    const cat = c.category || c.mchCodeDescription || "General Service";
+    categoryMap[cat] = (categoryMap[cat] || 0) + 1;
+  });
+
+  const categoryRowsHtml = Object.entries(categoryMap)
+    .sort((a, b) => b[1] - a[1])
     .map(
-      (c, idx) => `
-    <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 0 ? "background-color: #f8fafc;" : ""}">
-      <td style="padding: 10px; font-weight: bold; font-family: monospace; color: #1e293b;">${c.id}</td>
-      <td style="padding: 10px; font-weight: bold; color: #0284c7;">${c.woNo || "N/A"} / ${c.vehicleRegNo || "N/A"}</td>
-      <td style="padding: 10px; font-weight: bold; color: #0f172a;">${c.customerName}<br/><span style="font-size: 11px; color: #64748b;">${c.customerPhone}</span></td>
-      <td style="padding: 10px; color: #334155; max-width: 250px;">${c.description}</td>
-      <td style="padding: 10px; font-size: 11px; color: #64748b;">${c.date}</td>
-      <td style="padding: 10px;">
-        <span style="background-color: #ffe4e6; color: #9f1239; border: 1px solid #f43f5e; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: bold;">
-          ${c.status || "Pending Action"}
-        </span>
-      </td>
-    </tr>
-  `
+      ([cat, catCount], idx) => `
+      <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 0 ? "background-color: #f8fafc;" : ""}">
+        <td style="padding: 9px 12px; font-weight: bold; color: #1e293b; font-size: 12px;">${cat}</td>
+        <td style="padding: 9px 12px; text-align: center; font-weight: 800; color: #0369a1; font-size: 13px;">${catCount}</td>
+        <td style="padding: 9px 12px; text-align: right; color: #64748b; font-size: 11px;">${count > 0 ? Math.round((catCount / count) * 100) : 0}%</td>
+      </tr>
+    `
     )
     .join("");
+
+  // Aging distribution counts
+  const aging03 = assignedComplaints.filter((c) => getAgingDays(c) <= 3).length;
+  const aging35 = assignedComplaints.filter((c) => getAgingDays(c) > 3 && getAgingDays(c) <= 5).length;
+  const aging610 = assignedComplaints.filter((c) => getAgingDays(c) > 5 && getAgingDays(c) <= 10).length;
+  const agingOver10 = assignedComplaints.filter((c) => getAgingDays(c) > 10).length;
 
   const officersListHtml = station.officers
     ? station.officers
@@ -96,68 +139,142 @@ export function generateSystemicEmailContent(
     : `<li>Email: ${station.email} &bull; Tel: ${station.phone}</li>`;
 
   const bodyHtml = `
-    <div style="font-family: Arial, sans-serif; background-color: #f1f5f9; padding: 24px; color: #1e293b;">
-      <div style="max-width: 700px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);">
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; padding: 24px; color: #1e293b;">
+      <div style="max-width: 680px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);">
         
         <!-- Header -->
-        <div style="background-color: #0f172a; padding: 20px 24px; color: #ffffff; text-align: left;">
-          <div style="font-size: 11px; font-weight: bold; letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;">Ideal Group Aftermarket Operations</div>
-          <h2 style="margin: 4px 0 0 0; font-size: 18px; font-weight: 800; color: #ffffff;">Systemic Complaint Dispatch Notification</h2>
-          <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">From: <strong>callcenter@idealgroup.lk</strong></div>
+        <div style="background-color: #0f172a; padding: 22px 24px; color: #ffffff; text-align: left;">
+          <div style="font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;">Ideal Group Aftermarket Operations</div>
+          <h2 style="margin: 6px 0 0 0; font-size: 20px; font-weight: 900; color: #ffffff; letter-spacing: -0.5px;">Workstation Complaint Summary Notice</h2>
+          <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">Sent by: <strong style="color: #e2e8f0;">callcenter@idealgroup.lk</strong> &bull; ${new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</div>
         </div>
 
         <!-- Body Content -->
         <div style="padding: 24px; text-align: left;">
+          
+          <!-- Station Profile Info Box -->
           <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 14px; margin-bottom: 20px;">
-            <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: bold; color: #0369a1;">📍 Destination Workstation: ${station.name}</p>
+            <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: 800; color: #0369a1;">📍 Assigned Workstation: ${station.name}</p>
             <p style="margin: 0; font-size: 12px; color: #334155;"><strong>Address:</strong> ${station.address || "Ideal Motors Station"}</p>
-            <p style="margin: 4px 0 0 0; font-size: 12px; color: #334155;"><strong>Assigned Station Personnel:</strong></p>
-            <ul style="margin: 4px 0 0 0; padding-left: 20px; font-size: 12px; color: #475569;">
+            <p style="margin: 6px 0 2px 0; font-size: 12px; color: #334155;"><strong>Assigned Station Personnel:</strong></p>
+            <ul style="margin: 2px 0 0 0; padding-left: 18px; font-size: 12px; color: #475569; line-height: 1.5;">
               ${officersListHtml}
             </ul>
           </div>
 
-          <p style="font-size: 13px; line-height: 1.5; color: #334155;">
-            Dear Station Team,
-          </p>
-          <p style="font-size: 13px; line-height: 1.5; color: #334155;">
-            The Ideal Group Central Call Center has logged <strong>${count} customer complaint(s)</strong> requiring immediate aftermarket inspection, customer contact, and resolution action at your workstation.
+          <p style="font-size: 13px; line-height: 1.6; color: #334155; margin-bottom: 16px;">
+            Dear Station Management Team,<br/>
+            Please find the consolidated complaint assignment counts for <strong>${station.name}</strong>. Central Call Center has logged a total of <strong>${count} assigned case(s)</strong> requiring inspection, customer contact, and resolution update in the portal.
           </p>
 
-          <h3 style="font-size: 13px; font-weight: bold; text-transform: uppercase; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 24px;">
-            Assigned Complaint Details (${count})
-          </h3>
+          <!-- 4 Executive KPI Metric Count Cards -->
+          <table style="width: 100%; border-collapse: separate; border-spacing: 8px; margin-bottom: 20px;">
+            <tr>
+              <td style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center; width: 25%;">
+                <div style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase;">Total Assigned</div>
+                <div style="font-size: 22px; font-weight: 900; color: #0f172a; margin-top: 2px;">${count}</div>
+                <div style="font-size: 10px; color: #94a3b8; margin-top: 2px;">Total Cases</div>
+              </td>
+              <td style="background-color: #fef3c7; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; text-align: center; width: 25%;">
+                <div style="font-size: 10px; font-weight: 800; color: #92400e; text-transform: uppercase;">To Contact</div>
+                <div style="font-size: 22px; font-weight: 900; color: #b45309; margin-top: 2px;">${pendingActionCount}</div>
+                <div style="font-size: 10px; color: #b45309; margin-top: 2px;">Pending Station</div>
+              </td>
+              <td style="background-color: #fee2e2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px; text-align: center; width: 25%;">
+                <div style="font-size: 10px; font-weight: 800; color: #991b1b; text-transform: uppercase;">High / Urgent</div>
+                <div style="font-size: 22px; font-weight: 900; color: #dc2626; margin-top: 2px;">${highPriorityCount}</div>
+                <div style="font-size: 10px; color: #dc2626; margin-top: 2px;">Critical Priority</div>
+              </td>
+              <td style="background-color: #ffedd5; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px; text-align: center; width: 25%;">
+                <div style="font-size: 10px; font-weight: 800; color: #9a3412; text-transform: uppercase;">Rejected / Re-action</div>
+                <div style="font-size: 22px; font-weight: 900; color: #ea580c; margin-top: 2px;">${rejectedCount}</div>
+                <div style="font-size: 10px; color: #ea580c; margin-top: 2px;">Returned to Station</div>
+              </td>
+            </tr>
+          </table>
 
-          <div style="overflow-x: auto; margin-top: 12px;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
-              <thead>
-                <tr style="background-color: #e2e8f0; color: #1e293b; font-weight: bold; font-size: 11px; text-transform: uppercase;">
-                  <th style="padding: 8px;">Complaint No</th>
-                  <th style="padding: 8px;">WO / Reg No</th>
-                  <th style="padding: 8px;">Customer</th>
-                  <th style="padding: 8px;">Issue Description</th>
-                  <th style="padding: 8px;">Received</th>
-                  <th style="padding: 8px;">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml}
-              </tbody>
-            </table>
-          </div>
+          <!-- 2 Column Breakdown Tables (Category Counts + Aging Counts) -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <tr>
+              <!-- Category Count Table -->
+              <td style="width: 50%; vertical-align: top; padding-right: 8px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 800; text-transform: uppercase; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
+                  Category Summary Counts
+                </h4>
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+                  <thead>
+                    <tr style="background-color: #e2e8f0; color: #1e293b; font-weight: 800; font-size: 10px; text-transform: uppercase;">
+                      <th style="padding: 6px 10px; text-align: left;">Category</th>
+                      <th style="padding: 6px 10px; text-align: center;">Count</th>
+                      <th style="padding: 6px 10px; text-align: right;">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${categoryRowsHtml || '<tr><td colspan="3" style="padding: 12px; text-align: center; color: #94a3b8;">No complaints logged</td></tr>'}
+                  </tbody>
+                </table>
+              </td>
 
-          <div style="margin-top: 24px; padding: 14px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; font-size: 12px; color: #991b1b;">
-            <p style="margin: 0; font-weight: bold;">⚠️ Mandatory Aftermarket Resolution Action Required</p>
-            <p style="margin: 4px 0 0 0; line-height: 1.4;">
-              Please contact the customer immediately and update the <strong>Date Contacted</strong> and <strong>Solution Provided</strong> on the Ideal Group Complaint System portal. For any corrections or schedule issues, contact <strong>callcenter@idealgroup.lk</strong>.
+              <!-- Aging SLA Count Table -->
+              <td style="width: 50%; vertical-align: top; padding-left: 8px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 800; text-transform: uppercase; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
+                  SLA Aging Breakdown Counts
+                </h4>
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+                  <thead>
+                    <tr style="background-color: #e2e8f0; color: #1e293b; font-weight: 800; font-size: 10px; text-transform: uppercase;">
+                      <th style="padding: 6px 10px; text-align: left;">Aging Range</th>
+                      <th style="padding: 6px 10px; text-align: center;">Count</th>
+                      <th style="padding: 6px 10px; text-align: right;">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f0fdf4;">
+                      <td style="padding: 8px 10px; font-weight: bold; color: #166534; font-size: 11px;">0 - 3 Days</td>
+                      <td style="padding: 8px 10px; text-align: center; font-weight: 900; color: #166534; font-size: 12px;">${aging03}</td>
+                      <td style="padding: 8px 10px; text-align: right; font-size: 10px; color: #16a34a; font-weight: bold;">Normal</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e2e8f0; background-color: #fffbeb;">
+                      <td style="padding: 8px 10px; font-weight: bold; color: #92400e; font-size: 11px;">3 - 5 Days</td>
+                      <td style="padding: 8px 10px; text-align: center; font-weight: 900; color: #92400e; font-size: 12px;">${aging35}</td>
+                      <td style="padding: 8px 10px; text-align: right; font-size: 10px; color: #d97706; font-weight: bold;">Pending</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e2e8f0; background-color: #fff7ed;">
+                      <td style="padding: 8px 10px; font-weight: bold; color: #9a3412; font-size: 11px;">6 - 10 Days</td>
+                      <td style="padding: 8px 10px; text-align: center; font-weight: 900; color: #9a3412; font-size: 12px;">${aging610}</td>
+                      <td style="padding: 8px 10px; text-align: right; font-size: 10px; color: #ea580c; font-weight: bold;">Escalated</td>
+                    </tr>
+                    <tr style="background-color: #fef2f2;">
+                      <td style="padding: 8px 10px; font-weight: bold; color: #991b1b; font-size: 11px;">&gt; 10 Days</td>
+                      <td style="padding: 8px 10px; text-align: center; font-weight: 900; color: #991b1b; font-size: 12px;">${agingOver10}</td>
+                      <td style="padding: 8px 10px; text-align: right; font-size: 10px; color: #dc2626; font-weight: bold;">Critical</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Mandatory Action Notice -->
+          <div style="padding: 14px 16px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #0284c7; border-radius: 6px; font-size: 12px; color: #334155; margin-bottom: 20px;">
+            <p style="margin: 0 0 4px 0; font-weight: 800; color: #0369a1; font-size: 13px;">📋 Portal Action Required</p>
+            <p style="margin: 0; line-height: 1.5;">
+              To protect customer data privacy and streamline operations, full vehicle and customer records are securely hosted on the <strong>Ideal Group Complaint System Portal</strong>. Please log into your station dashboard to access customer phone numbers, conduct contact, and record the <strong>Date Contacted</strong> & <strong>Solution Provided</strong>.
             </p>
           </div>
+
+          <!-- Central Support Contact -->
+          <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
+            For urgent re-assignments or inquiries, contact the central CX team at <a href="mailto:callcenter@idealgroup.lk" style="color: #0284c7; font-weight: bold; text-decoration: none;">callcenter@idealgroup.lk</a>.
+          </div>
+
         </div>
 
         <!-- Footer -->
-        <div style="background-color: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-align: center;">
-          This is an automated systemic notification sent by <strong>Ideal Group Central CX Call Center</strong> (callcenter@idealgroup.lk).
+        <div style="background-color: #0f172a; padding: 14px 24px; color: #94a3b8; font-size: 11px; text-align: center;">
+          Sent by <strong>Ideal Group Central CX Call Center</strong> (<a href="mailto:callcenter@idealgroup.lk" style="color: #38bdf8; text-decoration: none;">callcenter@idealgroup.lk</a>). Generated automatically for workstation performance compliance.
         </div>
+
       </div>
     </div>
   `;

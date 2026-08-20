@@ -87,7 +87,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     }
   };
 
-  // Build full structured dispatch message for a station
+  // Build full structured dispatch message for a station (counts only, no individual detail rows)
   const getStationDispatchMessage = (station: StationProfile) => {
     const stationComplaints = complaints.filter(
       (c) => c.station === station.name || c.station === station.code || c.station.toLowerCase().includes(station.code.toLowerCase())
@@ -98,10 +98,43 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
       : station.email || "callcenter@idealgroup.lk";
 
     const count = stationComplaints.length;
-    const subject = `[Ideal Aftermarket] Systemic Dispatch Notice - ${count} Complaint(s) Assigned to ${station.name}`;
+    const toContactCount = stationComplaints.filter(
+      (c) => c.status === "Pending" || !c.status || c.stationResponseStatus === "Pending" || !c.stationContactedDate
+    ).length;
+    const inProgressCount = stationComplaints.filter(
+      (c) => c.status === "In Progress" || c.status === "Contacted"
+    ).length;
+    const resolvedCount = stationComplaints.filter((c) => c.status === "Resolved").length;
+    const rejectedCount = stationComplaints.filter(
+      (c) =>
+        c.stationResponseStatus === "Rejected" ||
+        c.stationResponseStatus === "Rejected by Call Center" ||
+        c.stationResponseStatus === "Returned to Service Station" ||
+        c.feedbackStatus === "Rejected Again to Service Station" ||
+        c.feedbackStatus === "Returned to Service Station"
+    ).length;
+    const getAgingDays = (c: Complaint) => {
+      if (!c.date) return 0;
+      const t = new Date(c.date).getTime();
+      if (isNaN(t)) return 0;
+      return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
+    };
+
+    const highPriorityCount = stationComplaints.filter(
+      (c) => c.initialSatisfaction === "Very Dissatisfied" || getAgingDays(c) > 5 || c.feedbackStatus === "Still Dissatisfied"
+    ).length;
+
+    // Categories breakdown
+    const categoryMap: Record<string, number> = {};
+    stationComplaints.forEach((c) => {
+      const cat = c.category || c.mchCodeDescription || "General Service";
+      categoryMap[cat] = (categoryMap[cat] || 0) + 1;
+    });
+
+    const subject = `[Ideal Aftermarket] Complaint Summary Notice - ${count} Assigned Case(s) for ${station.name}`;
 
     let msg = `====================================================\n`;
-    msg += `IDEAL GROUP CENTRAL CALL CENTER DISPATCH NOTICE\n`;
+    msg += `IDEAL GROUP CENTRAL CALL CENTER - COMPLAINT SUMMARY NOTICE\n`;
     msg += `====================================================\n`;
     msg += `SENDER: callcenter@idealgroup.lk\n`;
     msg += `TO: ${recipients}\n`;
@@ -109,30 +142,42 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     msg += `SUBJECT: ${subject}\n`;
     msg += `DISPATCH DATE: ${new Date().toLocaleString()}\n`;
     msg += `====================================================\n\n`;
-    msg += `Dear ${station.name} Service & Workshop Management Team,\n\n`;
-    msg += `The Central Call Center (callcenter@idealgroup.lk) has assigned ${count} active customer complaint(s) requiring immediate attention and resolution:\n\n`;
+    msg += `Dear ${station.name} Workshop & Service Management Team,\n\n`;
+    msg += `Central Call Center has registered ${count} total assigned customer complaint case(s) for your workstation.\n\n`;
+    
+    msg += `1. EXECUTIVE COUNTS SUMMARY:\n`;
+    msg += `   - Total Assigned Complaints: ${count}\n`;
+    msg += `   - Pending Station Contact (To Contact): ${toContactCount}\n`;
+    msg += `   - In Progress / Contacted: ${inProgressCount}\n`;
+    msg += `   - Resolved Cases: ${resolvedCount}\n`;
+    msg += `   - Returned / Rejected for Re-action: ${rejectedCount}\n`;
+    msg += `   - High / Critical Priority: ${highPriorityCount}\n\n`;
 
-    if (stationComplaints.length > 0) {
-      stationComplaints.forEach((c, idx) => {
-        msg += `[${idx + 1}] COMPLAINT REF ID: ${c.id}\n`;
-        msg += `    Customer Name: ${c.customerName}\n`;
-        msg += `    Customer Phone: ${c.customerPhone}\n`;
-        msg += `    Work Order (WO) No: ${c.woNo || "N/A"}\n`;
-        msg += `    Vehicle Reg No: ${c.vehicleRegNo || "N/A"}\n`;
-        msg += `    Vehicle Model: ${c.vehicleModel || "N/A"}\n`;
-        msg += `    Category / Nature: ${c.category || "General"} / ${c.natureOfComplaint || "Service"}\n`;
-        msg += `    Status / Severity: ${c.status || "Pending"} / ${c.severity || "Normal"}\n`;
-        msg += `    Logged Date: ${c.loggedDate || "N/A"}\n`;
-        msg += `    Complaint Description:\n    "${c.description || "No description provided."}"\n\n`;
+    msg += `2. CATEGORY BREAKDOWN COUNTS:\n`;
+    if (Object.keys(categoryMap).length > 0) {
+      Object.entries(categoryMap).forEach(([cat, cCount]) => {
+        const pct = count > 0 ? Math.round((cCount / count) * 100) : 0;
+        msg += `   * ${cat}: ${cCount} case(s) (${pct}%)\n`;
       });
     } else {
-      msg += `No pending active customer complaints currently logged for ${station.name}.\n\n`;
+      msg += `   * No active category records.\n`;
     }
+    msg += `\n`;
 
-    msg += `REQUIRED ACTION:\n`;
-    msg += `1. Contact customer(s) immediately to arrange inspection/repair.\n`;
-    msg += `2. Log station feedback & resolution notes on the central Call Center portal.\n`;
-    msg += `3. For escalation, reach out to Central Call Center at callcenter@idealgroup.lk.\n\n`;
+    const aging03 = stationComplaints.filter((c) => getAgingDays(c) <= 3).length;
+    const aging35 = stationComplaints.filter((c) => getAgingDays(c) > 3 && getAgingDays(c) <= 5).length;
+    const aging610 = stationComplaints.filter((c) => getAgingDays(c) > 5 && getAgingDays(c) <= 10).length;
+    const agingOver10 = stationComplaints.filter((c) => getAgingDays(c) > 10).length;
+
+    msg += `3. AGING / SLA COMPLIANCE COUNTS:\n`;
+    msg += `   * 0 - 3 Days (Normal SLA): ${aging03}\n`;
+    msg += `   * 3 - 5 Days (Pending SLA): ${aging35}\n`;
+    msg += `   * 6 - 10 Days (Escalated SLA): ${aging610}\n`;
+    msg += `   * > 10 Days (Critical Overdue): ${agingOver10}\n\n`;
+
+    msg += `MANDATORY ACTION REQUIRED:\n`;
+    msg += `Please log in to the Ideal Group Complaint System portal to inspect customer contact details, contact the customers, and update 'Date Contacted' and 'Solution Provided'.\n\n`;
+    msg += `For support or re-assignments, contact: callcenter@idealgroup.lk\n\n`;
     msg += `Best Regards,\n`;
     msg += `Central Call Center Operations Team\n`;
     msg += `Ideal Group Sri Lanka\n`;
@@ -184,7 +229,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     const targetList = stationComplaints.length > 0 ? stationComplaints : complaints.slice(0, 2);
     const newLogs = dispatchSystemicEmailsForComplaints(targetList);
 
-    setDispatchStatusMsg(`✅ Systemic Email successfully dispatched to ${station.name} from callcenter@idealgroup.lk`);
+    setDispatchStatusMsg(`✅ Summary Email successfully dispatched to ${station.name} from callcenter@idealgroup.lk`);
     if (onRefreshEmailLogs) onRefreshEmailLogs();
 
     setTimeout(() => {
@@ -202,19 +247,31 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
       : station.email || "callcenter@idealgroup.lk";
 
     const count = stationComplaints.length;
-    const subject = encodeURIComponent(`[Ideal Aftermarket] Systemic Dispatch Notice - ${count} Complaint(s) Assigned to ${station.name}`);
+    const toContactCount = stationComplaints.filter(
+      (c) => c.status === "Pending" || !c.status || c.stationResponseStatus === "Pending" || !c.stationContactedDate
+    ).length;
+    const getAgingDays = (c: Complaint) => {
+      if (!c.date) return 0;
+      const t = new Date(c.date).getTime();
+      if (isNaN(t)) return 0;
+      return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
+    };
 
-    let bodyText = `From: callcenter@idealgroup.lk\nTo: ${recipients}\nStation: ${station.name}\n\nDear Station Team,\n\nThe Ideal Group Call Center has assigned ${count} complaint(s) to ${station.name}:\n\n`;
+    const highPriorityCount = stationComplaints.filter(
+      (c) => c.initialSatisfaction === "Very Dissatisfied" || getAgingDays(c) > 5 || c.feedbackStatus === "Still Dissatisfied"
+    ).length;
+    const rejectedCount = stationComplaints.filter(
+      (c) =>
+        c.stationResponseStatus === "Rejected" ||
+        c.stationResponseStatus === "Rejected by Call Center" ||
+        c.stationResponseStatus === "Returned to Service Station" ||
+        c.feedbackStatus === "Rejected Again to Service Station" ||
+        c.feedbackStatus === "Returned to Service Station"
+    ).length;
 
-    if (stationComplaints.length > 0) {
-      stationComplaints.forEach((c, i) => {
-        bodyText += `${i + 1}. Complaint ID: ${c.id}\n   Customer: ${c.customerName} (${c.customerPhone})\n   WO / Vehicle Reg: ${c.woNo || "N/A"} / ${c.vehicleRegNo || "N/A"}\n   Issue: ${c.description}\n   Status: ${c.status || "Pending"}\n\n`;
-      });
-    } else {
-      bodyText += `No pending active complaints logged currently for ${station.name}.\n\n`;
-    }
+    const subject = encodeURIComponent(`[Ideal Aftermarket] Complaint Summary Notice - ${count} Assigned Case(s) for ${station.name}`);
 
-    bodyText += `Please contact the customer immediately and update resolution notes in the portal.\n\nRegards,\nCentral Call Center\nIdeal Group Sri Lanka\ncallcenter@idealgroup.lk`;
+    let bodyText = `From: callcenter@idealgroup.lk\nTo: ${recipients}\nStation: ${station.name}\n\nDear Station Team,\n\nPlease find the summary counts of assigned complaints for ${station.name}:\n\n- Total Assigned Cases: ${count}\n- Pending Customer Contact: ${toContactCount}\n- High / Urgent Priority: ${highPriorityCount}\n- Returned / Rejected for Re-action: ${rejectedCount}\n\nPlease log in to the Central Call Center portal to access full customer details and record date contacted and solutions.\n\nRegards,\nCentral Call Center\nIdeal Group Sri Lanka\ncallcenter@idealgroup.lk`;
 
     return `mailto:${recipients}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
   };

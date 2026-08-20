@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { 
   Download, 
   FileText, 
@@ -19,7 +19,21 @@ import {
   Headphones,
   Calculator,
   Printer,
-  Loader2
+  Loader2,
+  X,
+  Eye,
+  ExternalLink,
+  Copy,
+  Check,
+  Phone,
+  Car,
+  AlertCircle,
+  User,
+  Hash,
+  ArrowRight,
+  ChevronRight,
+  Info,
+  Sparkles
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
@@ -33,9 +47,17 @@ interface ReportsPanelProps {
   complaints: Complaint[];
   theme?: "light" | "dark";
   onOpenSLAReportModal?: () => void;
+  onSelectComplaintInWorkspace?: (id: string) => void;
+  onEditComplaint?: (complaint: Complaint) => void;
 }
 
-export default function ReportsPanel({ complaints, theme = "light", onOpenSLAReportModal }: ReportsPanelProps) {
+export default function ReportsPanel({ 
+  complaints, 
+  theme = "light", 
+  onOpenSLAReportModal,
+  onSelectComplaintInWorkspace,
+  onEditComplaint
+}: ReportsPanelProps) {
   const isDark = theme === "dark";
   const cardBg = isDark ? "bg-slate-900/90 border-slate-800 text-slate-100 shadow-inner" : "bg-white border-slate-200 text-slate-800 shadow-sm";
   const textTitle = isDark ? "text-slate-100" : "text-slate-800";
@@ -54,6 +76,101 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
   const [isGeneratingStationPDF, setIsGeneratingStationPDF] = useState<boolean>(false);
   const [selectedStationCode, setSelectedStationCode] = useState<string>("Rathmalana");
+
+  // Drill-down Modal State
+  const [drilldown, setDrilldown] = useState<{
+    isOpen: boolean;
+    stationName: string;
+    stationCode: string;
+    metricLabel: string;
+    badgeColor: "slate" | "emerald" | "amber" | "orange" | "rose" | "blue" | "indigo" | "sky" | "purple";
+    complaints: Complaint[];
+  } | null>(null);
+
+  const [drilldownSearch, setDrilldownSearch] = useState<string>("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [activeDetailComplaint, setActiveDetailComplaint] = useState<Complaint | null>(null);
+
+  // Filter complaints inside the drill-down modal by search term
+  const filteredDrilldownComplaints = useMemo(() => {
+    if (!drilldown) return [];
+    if (!drilldownSearch.trim()) return drilldown.complaints;
+    const q = drilldownSearch.toLowerCase().trim();
+    return drilldown.complaints.filter(c => 
+      c.id.toLowerCase().includes(q) ||
+      c.customerName.toLowerCase().includes(q) ||
+      c.customerPhone.toLowerCase().includes(q) ||
+      (c.customerEmail && c.customerEmail.toLowerCase().includes(q)) ||
+      (c.vehicleRegNo && c.vehicleRegNo.toLowerCase().includes(q)) ||
+      (c.woNo && c.woNo.toLowerCase().includes(q)) ||
+      (c.category && c.category.toLowerCase().includes(q)) ||
+      (c.description && c.description.toLowerCase().includes(q)) ||
+      (c.station && c.station.toLowerCase().includes(q))
+    );
+  }, [drilldown, drilldownSearch]);
+
+  const handleOpenDrilldown = (
+    stationName: string, 
+    stationCode: string, 
+    metricLabel: string, 
+    list: Complaint[], 
+    badgeColor: "slate" | "emerald" | "amber" | "orange" | "rose" | "blue" | "indigo" | "sky" | "purple"
+  ) => {
+    setDrilldown({
+      isOpen: true,
+      stationName,
+      stationCode,
+      metricLabel,
+      badgeColor,
+      complaints: list
+    });
+    setDrilldownSearch("");
+  };
+
+  const handleCopyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleExportDrilldownCSV = () => {
+    if (!drilldown || drilldown.complaints.length === 0) return;
+    const headers = [
+      "Complaint ID",
+      "Work Order No",
+      "Customer Name",
+      "Customer Phone",
+      "Vehicle Reg No",
+      "Service Station",
+      "Category",
+      "Status",
+      "Feedback Status",
+      "Date Received",
+      "Station Contacted Date",
+      "Aging (Days)",
+      "Customer Issue Description",
+      "Station Resolution Notes",
+      "Call Center Final Remarks"
+    ];
+    const rows = drilldown.complaints.map(c => [
+      c.id,
+      c.woNo || "N/A",
+      c.customerName,
+      c.customerPhone,
+      c.vehicleRegNo || "N/A",
+      c.station,
+      c.category,
+      c.status,
+      c.feedbackStatus || "N/A",
+      c.date || "N/A",
+      c.stationContactedDate || "N/A",
+      getComplaintAging(c).days.toString(),
+      c.description || "N/A",
+      c.stationResolutionNotes || "N/A",
+      c.callCenterFinalRemarks || "N/A"
+    ]);
+    downloadCSV(headers, rows, `Scorecard_Drilldown_${drilldown.stationCode}_${drilldown.metricLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
+  };
 
   const handleResetFilters = () => {
     setStationFilter("all");
@@ -195,26 +312,49 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
   // Helper for overall list aging metrics
   const todayStr = new Date().toISOString().split("T")[0];
 
-  const getOverallReportAgingStats = (complaintList: Complaint[]) => {
-    let stSum = 0, stCount = 0;
-    let ccSum = 0, ccCount = 0;
+  // Dynamic Service Stations list extracted from database complaints and predefined STATIONS
+  const dynamicStations = useMemo(() => {
+    const stationMap = new Map<string, { code: string; name: string }>();
+    STATIONS.forEach((s) => {
+      stationMap.set(s.code.toLowerCase(), { code: s.code, name: s.name });
+    });
+    complaints.forEach((c) => {
+      if (!c.station) return;
+      const cleanSt = c.station.trim();
+      const existing = Array.from(stationMap.values()).find(
+        s => s.code.toLowerCase() === cleanSt.toLowerCase() || s.name.toLowerCase() === cleanSt.toLowerCase()
+      );
+      if (!existing) {
+        stationMap.set(cleanSt.toLowerCase(), { code: cleanSt, name: cleanSt });
+      }
+    });
+    return Array.from(stationMap.values());
+  }, [complaints]);
+
+  // Helper for calculating accurate timestamp differences for contact and solve metrics
+  const getStationMetricsCalculations = (stationComplaints: Complaint[]) => {
+    let stContactSum = 0, stContactCount = 0;
+    let ccContactSum = 0, ccContactCount = 0;
     let solveSum = 0, solveCount = 0;
 
-    complaintList.forEach((c) => {
-      // 1) Avg Days to Contact Customer (Service Station)
-      const stContactDate = c.stationContactedDate;
-      stSum += getDaysDiff(c.date, stContactDate || todayStr);
-      stCount++;
-
-      // 2) Avg Days to Contact Customer (Call Center) - calculated ONLY if contacted by Service Center
-      if (isStationContacted(c)) {
-        const startAfterStation = c.stationContactedDate || c.date;
-        const ccContactDate = c.callCenterContactedDate || c.solutionDate || c.updatedAt || todayStr;
-        ccSum += getDaysDiff(startAfterStation, ccContactDate);
-        ccCount++;
+    stationComplaints.forEach((c) => {
+      // 1. Avg Days to Contact Customer (Service Station) - only for cases with SC contact
+      if (isStationContacted(c) || c.stationContactedDate) {
+        const contactDate = c.stationContactedDate || c.updatedAt || c.date;
+        const diff = getDaysDiff(c.date, contactDate);
+        stContactSum += diff;
+        stContactCount++;
       }
 
-      // 3) Avg Days to Solve Case
+      // 2. Avg Days to Contact Customer (Call Center) - only for eligible cases where CC recorded contact
+      if (isStationContacted(c) && c.callCenterContactedDate) {
+        const startRef = c.stationContactedDate || c.date;
+        const diff = getDaysDiff(startRef, c.callCenterContactedDate);
+        ccContactSum += diff;
+        ccContactCount++;
+      }
+
+      // 3. Avg Days to Solve Case - only for resolved cases
       const isResolved = 
         c.status === "Resolved" || 
         c.finalStatus === "Closed" || 
@@ -226,71 +366,120 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
         c.currentSatisfaction === "Very Satisfied";
 
       if (isResolved) {
-        const resolveDate = c.solutionDate || c.updatedAt || todayStr;
-        solveSum += getDaysDiff(c.date, resolveDate);
+        const solveDate = c.solutionDate || c.callCenterContactedDate || c.updatedAt || c.stationContactedDate || c.date;
+        const diff = getDaysDiff(c.date, solveDate);
+        solveSum += diff;
         solveCount++;
       }
     });
 
     return {
-      avgDaysStationContact: stCount > 0 ? Math.round(stSum / stCount) : 0,
-      avgDaysCallCenterContact: ccCount > 0 ? Math.round(ccSum / ccCount) : 0,
+      avgDaysStationContact: stContactCount > 0 ? Math.round(stContactSum / stContactCount) : 0,
+      avgDaysCallCenterContact: ccContactCount > 0 ? Math.round(ccContactSum / ccContactCount) : 0,
       avgDaysToSolveCase: solveCount > 0 ? Math.round(solveSum / solveCount) : 0,
     };
   };
 
-  const overallReportAging = getOverallReportAgingStats(filteredComplaints);
-
-  // Calculate Service Station Wise Metrics
-  const stationMetrics = STATIONS.map((station) => {
+  // Dynamically calculate CX Recovery & Service Station Performance Metrics from raw database records
+  const stationMetrics = dynamicStations.map((station) => {
     const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
     const total = stationComplaints.length;
-    const resolved = stationComplaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length;
-    const escalated = stationComplaints.filter(c => isComplaintRejected(c) || c.feedbackStatus === "Escalated" || c.finalStatus === "Escalated" || c.finalStatus?.includes("Re-assigned")).length;
-    const pending = Math.max(0, total - resolved - escalated);
+    const totalList = stationComplaints;
 
-    // Service Center Contact Status
-    const scContactedCount = stationComplaints.filter(c => isStationContacted(c)).length;
+    // 1. Resolved Complaints: Contacted & customer verified satisfied / closed, and not active in rejection
+    const resolvedList = stationComplaints.filter(c => {
+      const isSatisfiedOrClosed = 
+        c.status === "Resolved" || 
+        c.feedbackStatus === "Satisfied" || 
+        c.feedbackStatus === "Satisfied After Resolution" ||
+        c.currentSatisfaction === "Satisfied" ||
+        c.currentSatisfaction === "Very Satisfied" ||
+        c.finalStatus === "Closed" ||
+        c.finalStatus === "Resolved" ||
+        c.finalStatus === "Completed";
+
+      const isNotRejected = 
+        !isComplaintRejected(c) && 
+        c.stationResponseStatus !== "Rejected" && 
+        c.feedbackStatus !== "Rejected Again to Service Station";
+
+      return isSatisfiedOrClosed && isNotRejected;
+    });
+    const resolved = resolvedList.length;
+
+    // 2. Rejected by Call Center / Escalated: Case response rejected/returned by CC
+    const escalatedList = stationComplaints.filter(c => {
+      const isAlreadyResolved = resolvedList.some(r => r.id === c.id);
+      if (isAlreadyResolved) return false;
+      return (
+        isComplaintRejected(c) || 
+        c.stationResponseStatus === "Rejected" || 
+        c.feedbackStatus === "Rejected Again to Service Station" || 
+        c.feedbackStatus === "Still Dissatisfied" || 
+        c.finalStatus?.includes("Re-assigned") ||
+        c.feedbackStatus === "Escalated" || 
+        c.finalStatus === "Escalated"
+      );
+    });
+    const escalated = escalatedList.length;
+
+    // 3. Pending / In-Progress Complaints: Still waiting for initial service station contact/action
+    const pendingList = stationComplaints.filter(c => 
+      !resolvedList.some(r => r.id === c.id) && 
+      !escalatedList.some(e => e.id === c.id)
+    );
+    const pending = pendingList.length;
+
+    // 4. Unclassified records (if any record doesn't fit standard categories)
+    const unclassifiedList = stationComplaints.filter(c => 
+      !resolvedList.some(r => r.id === c.id) && 
+      !escalatedList.some(e => e.id === c.id) &&
+      !pendingList.some(p => p.id === c.id)
+    );
+    const unclassified = unclassifiedList.length;
+
+    // 5. Aging Buckets: Calculated EXCLUSIVELY for pending complaints waiting for station action
+    const days0_3List = pendingList.filter(c => getComplaintAging(c).days <= 3);
+    const days3_5List = pendingList.filter(c => { const d = getComplaintAging(c).days; return d > 3 && d <= 5; });
+    const days6_10List = pendingList.filter(c => { const d = getComplaintAging(c).days; return d > 5 && d <= 10; });
+    const days10PlusList = pendingList.filter(c => getComplaintAging(c).days > 10);
+
+    const days0_3 = days0_3List.length;
+    const days3_5 = days3_5List.length;
+    const days6_10 = days6_10List.length;
+    const days10Plus = days10PlusList.length;
+
+    // Service Station Contact Status
+    const scContactedList = stationComplaints.filter(c => isStationContacted(c));
+    const scContactedCount = scContactedList.length;
     const scContactedPercent = total > 0 ? Math.round((scContactedCount / total) * 100) : 0;
 
-    // Call Center SLA Eligibility & Metrics (Requirement 2 & 3: CC SLA ONLY includes cases where SC Contacted = YES)
-    const ccEligibleCount = scContactedCount; // SC Contacted = YES
+    // Call Center SLA Eligibility & Metrics
+    const ccEligibleList = scContactedList;
+    const ccEligibleCount = scContactedCount;
     const ccExcludedCount = total - ccEligibleCount;
-    const ccContactedCount = stationComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate).length;
+    const ccContactedList = stationComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate);
+    const ccContactedCount = ccContactedList.length;
     const ccContactedPercent = ccEligibleCount > 0 ? Math.round((ccContactedCount / ccEligibleCount) * 100) : 0;
 
     const ccSlaMetCount = stationComplaints.filter(c => isStationContacted(c) && !getCallCenterSLAStatus(c).isBreached).length;
     const ccSlaBreachedCount = stationComplaints.filter(c => isStationContacted(c) && getCallCenterSLAStatus(c).isBreached).length;
     const ccSlaAchievementRate = ccEligibleCount > 0 ? Math.round((ccSlaMetCount / ccEligibleCount) * 100) : 100;
 
-    // Aging Buckets
-    let days0_3 = 0;
-    let days3_5 = 0;
-    let days6_10 = 0;
-    let days10Plus = 0;
-
-    stationComplaints.forEach((c) => {
-      const { days } = getComplaintAging(c);
-      if (days <= 3) days0_3++;
-      else if (days <= 5) days3_5++;
-      else if (days <= 10) days6_10++;
-      else days10Plus++;
-    });
-
     const resolutionRate = total > 0 ? `${Math.round((resolved / total) * 100)}%` : "0%";
     const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
 
-    const stationAging = getOverallReportAgingStats(stationComplaints);
+    const stationAging = getStationMetricsCalculations(stationComplaints);
     const avgDaysStationContact = stationAging.avgDaysStationContact;
     const avgDaysCallCenterContact = stationAging.avgDaysCallCenterContact;
     const avgDaysToSolveCase = stationAging.avgDaysToSolveCase;
 
-    // Overall Average aging
-    let totalAgingDays = 0;
-    stationComplaints.forEach((c) => {
-      totalAgingDays += getComplaintAging(c).days;
+    // Overall Average aging of pending complaints
+    let totalPendingAgingDays = 0;
+    pendingList.forEach((c) => {
+      totalPendingAgingDays += getComplaintAging(c).days;
     });
-    const avgAging = total > 0 ? Math.round(totalAgingDays / total) : 0;
+    const avgAging = pending > 0 ? Math.round(totalPendingAgingDays / pending) : 0;
 
     let avgAgingColor = isDark 
       ? "text-emerald-300 font-bold bg-emerald-950/40 border border-emerald-900/30 px-2 py-0.5 rounded text-[10px]"
@@ -313,20 +502,33 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       code: station.code,
       name: station.name,
       total,
+      totalList,
       resolved,
+      resolvedList,
       pending,
+      pendingList,
       escalated,
+      escalatedList,
+      unclassified,
+      unclassifiedList,
       days0_3,
+      days0_3List,
       days3_5,
+      days3_5List,
       days6_10,
+      days6_10List,
       days10Plus,
+      days10PlusList,
       resolutionRate,
       rate,
       scContactedCount,
+      scContactedList,
       scContactedPercent,
       ccEligibleCount,
+      ccEligibleList,
       ccExcludedCount,
       ccContactedCount,
+      ccContactedList,
       ccContactedPercent,
       ccSlaMetCount,
       ccSlaBreachedCount,
@@ -341,23 +543,85 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
 
   // Grand summary totals across all stations
   const grandTotal = stationMetrics.reduce((acc, sm) => acc + sm.total, 0);
+  const grandTotalList = filteredComplaints;
+
   const grandResolved = stationMetrics.reduce((acc, sm) => acc + sm.resolved, 0);
-  const grandPending = stationMetrics.reduce((acc, sm) => acc + sm.pending, 0);
+  const grandResolvedList = filteredComplaints.filter(c => {
+    const isSatisfiedOrClosed = 
+      c.status === "Resolved" || 
+      c.feedbackStatus === "Satisfied" || 
+      c.feedbackStatus === "Satisfied After Resolution" ||
+      c.currentSatisfaction === "Satisfied" ||
+      c.currentSatisfaction === "Very Satisfied" ||
+      c.finalStatus === "Closed" ||
+      c.finalStatus === "Resolved" ||
+      c.finalStatus === "Completed";
+
+    const isNotRejected = 
+      !isComplaintRejected(c) && 
+      c.stationResponseStatus !== "Rejected" && 
+      c.feedbackStatus !== "Rejected Again to Service Station";
+
+    return isSatisfiedOrClosed && isNotRejected;
+  });
+
   const grandEscalated = stationMetrics.reduce((acc, sm) => acc + sm.escalated, 0);
-  const grandDays0_3 = stationMetrics.reduce((acc, sm) => acc + sm.days0_3, 0);
-  const grandDays3_5 = stationMetrics.reduce((acc, sm) => acc + sm.days3_5, 0);
-  const grandDays6_10 = stationMetrics.reduce((acc, sm) => acc + sm.days6_10, 0);
-  const grandDays10Plus = stationMetrics.reduce((acc, sm) => acc + sm.days10Plus, 0);
-  const grandScContacted = stationMetrics.reduce((acc, sm) => acc + sm.scContactedCount, 0);
+  const grandEscalatedList = filteredComplaints.filter(c => {
+    const isAlreadyResolved = grandResolvedList.some(r => r.id === c.id);
+    if (isAlreadyResolved) return false;
+    return (
+      isComplaintRejected(c) || 
+      c.stationResponseStatus === "Rejected" || 
+      c.feedbackStatus === "Rejected Again to Service Station" || 
+      c.feedbackStatus === "Still Dissatisfied" || 
+      c.finalStatus?.includes("Re-assigned") ||
+      c.feedbackStatus === "Escalated" || 
+      c.finalStatus === "Escalated"
+    );
+  });
+
+  const grandPending = stationMetrics.reduce((acc, sm) => acc + sm.pending, 0);
+  const grandPendingList = filteredComplaints.filter(c => 
+    !grandResolvedList.some(r => r.id === c.id) && 
+    !grandEscalatedList.some(e => e.id === c.id)
+  );
+
+  const grandUnclassified = stationMetrics.reduce((acc, sm) => acc + sm.unclassified, 0);
+  const grandUnclassifiedList = filteredComplaints.filter(c => 
+    !grandResolvedList.some(r => r.id === c.id) && 
+    !grandEscalatedList.some(e => e.id === c.id) &&
+    !grandPendingList.some(p => p.id === c.id)
+  );
+
+  // Grand Aging calculated exclusively for pending complaints
+  const grandDays0_3List = grandPendingList.filter(c => getComplaintAging(c).days <= 3);
+  const grandDays3_5List = grandPendingList.filter(c => { const d = getComplaintAging(c).days; return d > 3 && d <= 5; });
+  const grandDays6_10List = grandPendingList.filter(c => { const d = getComplaintAging(c).days; return d > 5 && d <= 10; });
+  const grandDays10PlusList = grandPendingList.filter(c => getComplaintAging(c).days > 10);
+
+  const grandDays0_3 = grandDays0_3List.length;
+  const grandDays3_5 = grandDays3_5List.length;
+  const grandDays6_10 = grandDays6_10List.length;
+  const grandDays10Plus = grandDays10PlusList.length;
+
+  const grandScContactedList = filteredComplaints.filter(c => isStationContacted(c));
+  const grandScContacted = grandScContactedList.length;
   const grandScContactedRate = grandTotal > 0 ? Math.round((grandScContacted / grandTotal) * 100) : 0;
+
+  const grandCcEligibleList = grandScContactedList;
   const grandCcEligible = grandScContacted;
   const grandCcExcluded = grandTotal - grandCcEligible;
-  const grandCcContacted = stationMetrics.reduce((acc, sm) => acc + sm.ccContactedCount, 0);
+
+  const grandCcContactedList = filteredComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate);
+  const grandCcContacted = grandCcContactedList.length;
   const grandCcContactedRate = grandCcEligible > 0 ? Math.round((grandCcContacted / grandCcEligible) * 100) : 0;
+
   const grandCcSlaMet = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaMetCount, 0);
   const grandCcSlaBreached = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaBreachedCount, 0);
   const grandCcSlaRate = grandCcEligible > 0 ? Math.round((grandCcSlaMet / grandCcEligible) * 100) : 100;
   const grandResolutionRate = grandTotal > 0 ? `${Math.round((grandResolved / grandTotal) * 100)}%` : "0%";
+
+  const overallReportAging = getStationMetricsCalculations(filteredComplaints);
 
   // CSV Export: Detailed Aging Report
   const handleDownloadDetailedReport = () => {
@@ -426,19 +690,14 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     const headers = [
       "Service Station Code",
       "Service Station Name",
-      "Total Complaints",
-      "Resolved Complaints",
-      "Pending/In-Progress Complaints",
-      "Escalated/Rejected",
+      "Total Complaints (Received)",
+      "Resolved Complaints (Contacted & Satisfied by CC)",
+      "Pending/In-Progress (Not Contacted by Service Station)",
+      "Rejected by Call Center (Escalated)",
       "0-3 Days (New)",
       "3-5 Days (Pending)",
       "6-10 Days (Escalated)",
       ">10 Days (Critical)",
-      "Service Center Contact Status (YES/Total)",
-      "Call Center Contact Status (Contacted/Eligible)",
-      "Call Center SLA Eligible Cases (SC Contact = YES)",
-      "Call Center SLA Achievement (%)",
-      "Resolution Rate Overall (%)",
       "Avg Days to Contact Customer (Service Station)",
       "Avg Days to Contact Customer (Call Center)",
       "Average Days to Solve Case"
@@ -455,11 +714,6 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
       sm.days3_5 > 0 ? sm.days3_5.toString() : "0",
       sm.days6_10 > 0 ? sm.days6_10.toString() : "0",
       sm.days10Plus > 0 ? sm.days10Plus.toString() : "0",
-      `${sm.scContactedCount}/${sm.total} (${sm.scContactedPercent}%)`,
-      `${sm.ccContactedCount}/${sm.ccEligibleCount} (${sm.ccContactedPercent}%)`,
-      sm.ccEligibleCount.toString(),
-      `${sm.ccSlaAchievementRate}%`,
-      sm.resolutionRate,
       sm.avgDaysStationContact.toString(),
       sm.avgDaysCallCenterContact.toString(),
       sm.avgDaysToSolveCase.toString()
@@ -554,35 +808,67 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
     return acc;
   }, {} as Record<SatisfactionLevel, number>);
 
-  // Feedback Status Breakdown (Call Center Response - Evaluated on Service Station Contacted = YES cases only)
+  // Feedback Status Breakdown (Call Center Response - Evaluated on Service Station Contacted / Actioned cases)
   const feedbackStatusLevels = [
     "Satisfied After Resolution",
     "Still Dissatisfied",
     "No Solution Received",
     "Customer Unreachable",
-    "Follow-up Required"
+    "Rejected Again to Service Station"
   ];
 
-  const scContactedActiveScopeComplaints = activeScopeComplaints.filter(c => isStationContacted(c));
+  const scContactedActiveScopeComplaints = activeScopeComplaints.filter(c => isStationContacted(c) || isComplaintRejected(c));
   const scContactedActiveScopeCount = scContactedActiveScopeComplaints.length;
 
   const feedbackStatusCounts = feedbackStatusLevels.reduce((acc, level) => {
     acc[level] = scContactedActiveScopeComplaints.filter(c => {
       const status = c.feedbackStatus;
       if (level === "Satisfied After Resolution") {
-        return status === "Satisfied After Resolution" || status === "Satisfied";
+        return (
+          status === "Satisfied After Resolution" ||
+          status === "Satisfied" ||
+          c.callCenterFinalSatisfaction === "Satisfied" ||
+          c.callCenterFinalSatisfaction === "Very Satisfied" ||
+          c.currentSatisfaction === "Satisfied" ||
+          c.currentSatisfaction === "Very Satisfied"
+        );
       }
       if (level === "Still Dissatisfied") {
-        return status === "Still Dissatisfied" || status === "Not Satisfied";
+        return (
+          status === "Still Dissatisfied" ||
+          status === "Not Satisfied" ||
+          c.callCenterFinalSatisfaction === "Dissatisfied" ||
+          c.callCenterFinalSatisfaction === "Very Dissatisfied" ||
+          c.currentSatisfaction === "Dissatisfied" ||
+          c.currentSatisfaction === "Very Dissatisfied"
+        );
       }
       if (level === "No Solution Received") {
-        return status === "No Solution Received" || status === "No solution Received";
+        return (
+          status === "No Solution Received" ||
+          status === "No solution Received"
+        );
       }
       if (level === "Customer Unreachable") {
-        return status === "Customer Unreachable";
+        return (
+          status === "Customer Unreachable" ||
+          status === "Unreachable"
+        );
       }
-      if (level === "Follow-up Required") {
-        return status === "Follow-up Required" || status === "Follow Up Required" || !status;
+      if (level === "Rejected Again to Service Station") {
+        return (
+          isComplaintRejected(c) ||
+          status === "Rejected Again to Service Station" ||
+          status === "Returned to Service Station" ||
+          status === "Rejected" ||
+          c.stationResponseStatus === "Rejected" ||
+          c.stationResponseStatus === "Rejected by Call Center" ||
+          c.stationResponseStatus === "Returned to Service Station" ||
+          c.stationResponseStatus === "Returned to Call Center" ||
+          c.finalStatus?.includes("Rejected") ||
+          c.finalStatus?.includes("Returned") ||
+          c.finalStatus?.includes("Re-assigned")
+        );
       }
       return status === level;
     }).length;
@@ -842,6 +1128,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
           else if (lvl === "Still Dissatisfied") col = [239, 68, 68]; // rose-500
           else if (lvl === "No Solution Received") col = [245, 158, 11]; // amber-500
           else if (lvl === "Customer Unreachable") col = [168, 85, 247]; // purple-500
+          else if (lvl === "Rejected Again to Service Station") col = [234, 88, 12]; // orange-600
           
           pdf.setFillColor(col[0], col[1], col[2]);
           pdf.rect(12 + chartW + 10, curY + 2, (pct / 100) * 50, 3, "F");
@@ -1555,6 +1842,46 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                 </div>
               </div>
 
+              {/* Dynamic Database Recalculation & Integrity Bar */}
+              <div className={`mb-4 px-4 py-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs ${
+                isDark ? "bg-blue-950/30 border-blue-900/40 text-blue-300" : "bg-blue-50/80 border-blue-200 text-blue-900"
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="font-extrabold uppercase tracking-wider text-[11px]">
+                    Dynamic DB Engine:
+                  </span>
+                  <span className="font-medium text-slate-600 dark:text-slate-300">
+                    Live calculated from {grandTotal} raw records across {stationMetrics.length} station{stationMetrics.length === 1 ? "" : "s"}.
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className={`px-2 py-0.5 rounded-md font-bold border ${
+                    isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-slate-200 text-slate-700"
+                  }`}>
+                    Reconciliation: {grandTotal} Total = {grandResolved} Res + {grandPending} Pnd + {grandEscalated} Rej{grandUnclassified > 0 ? ` + ${grandUnclassified} Unclassified` : ""}
+                  </span>
+
+                  <span className={`px-2 py-0.5 rounded-md font-bold border ${
+                    isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-slate-200 text-slate-700"
+                  }`}>
+                    Aging: {grandPending} Pending = {grandDays0_3} (0-3d) + {grandDays3_5} (3-5d) + {grandDays6_10} (6-10d) + {grandDays10Plus} (&gt;10d)
+                  </span>
+
+                  {grandUnclassified > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDrilldown("All Service Stations", "ALL", "Unclassified / Other Complaints", grandUnclassifiedList, "purple")}
+                      className="px-2 py-0.5 rounded-md font-black bg-purple-600 hover:bg-purple-700 text-white cursor-pointer transition-all flex items-center gap-1 shadow-2xs"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      {grandUnclassified} Unclassified Record{grandUnclassified === 1 ? "" : "s"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Table Container - Fits full width */}
               <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
                 <table className="w-full text-left border-collapse whitespace-nowrap">
@@ -1562,21 +1889,39 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                     <tr className={`border-b text-[10px] font-black uppercase tracking-wider transition-colors duration-500 ${
                       isDark ? "border-slate-800 bg-slate-950/90 text-slate-400" : "border-slate-200 bg-slate-50/90 text-slate-600"
                     }`}>
-                      <th className="py-3 px-4">Service Station</th>
-                      <th className="py-3 px-3 text-center">Total</th>
-                      <th className="py-3 px-3 text-center text-emerald-600">Resolved</th>
-                      <th className="py-3 px-3 text-center text-amber-600">Pending</th>
-                      <th className="py-3 px-3 text-center text-rose-600">Escalated</th>
-                      <th className="py-3 px-3 text-center text-emerald-600">0-3d (New)</th>
-                      <th className="py-3 px-3 text-center text-amber-600">3-5d (Pending)</th>
-                      <th className="py-3 px-3 text-center text-orange-600">6-10d (Escalated)</th>
-                      <th className="py-3 px-3 text-center text-rose-600">&gt;10d (Critical)</th>
-                      <th className="py-3 px-3 text-center text-blue-600">SC Contact Status</th>
-                      <th className="py-3 px-3 text-center text-indigo-600">CC Contact Status</th>
-                      <th className="py-3 px-3 text-center text-sky-600">CC SLA Eligible</th>
-                      <th className="py-3 px-3 text-center text-purple-600">CC SLA %</th>
-                      <th className="py-3 px-3 text-center text-blue-600">Avg Days Station Contact</th>
-                      <th className="py-3 px-3 text-center text-emerald-600">Avg Days Solve Case</th>
+                      <th className="py-3.5 px-4 font-black">Service Station Name</th>
+                      <th className="py-3.5 px-3 text-center">
+                        <div>Total Complaints</div>
+                        <div className="text-[8.5px] font-bold text-slate-400 lowercase">(received)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">
+                        <div>Resolved Complaints</div>
+                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(contacted &amp; satisfied)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-amber-600 dark:text-amber-400">
+                        <div>Pending / In-Progress</div>
+                        <div className="text-[8.5px] font-bold text-amber-500/80 lowercase">(pending sc contact)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">
+                        <div>Rejected by CC</div>
+                        <div className="text-[8.5px] font-bold text-rose-500/80 lowercase">(escalated / rejected)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">0-3 Days (New)</th>
+                      <th className="py-3.5 px-3 text-center text-amber-600 dark:text-amber-400">3-5 Days (Pending)</th>
+                      <th className="py-3.5 px-3 text-center text-orange-600 dark:text-orange-400">6-10 Days (Escalated)</th>
+                      <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">&gt;10 Days (Critical)</th>
+                      <th className="py-3.5 px-3 text-center text-blue-600 dark:text-blue-400">
+                        <div>Avg Days Contact</div>
+                        <div className="text-[8.5px] font-bold text-blue-500/80 lowercase">(service station)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-indigo-600 dark:text-indigo-400">
+                        <div>Avg Days Contact</div>
+                        <div className="text-[8.5px] font-bold text-indigo-500/80 lowercase">(call center)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">
+                        <div>Avg Days to Solve</div>
+                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(case lifecycle)</div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
@@ -1609,54 +1954,159 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                               )}
                             </div>
                           </td>
+                          {/* Total */}
                           <td className="py-3 px-3 text-center">
-                            <span className={`font-black px-2.5 py-1 rounded-md border text-xs ${
-                              isDark ? "text-slate-200 bg-slate-950 border-slate-800" : "text-slate-800 bg-slate-100 border-slate-200"
-                            }`}>{sm.total}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenDrilldown(sm.name, sm.code, "All Assigned Complaints (Received)", sm.totalList, "slate");
+                              }}
+                              title={`Click to view all ${sm.total} complaints for ${sm.name}`}
+                              className={`font-black px-2.5 py-1 rounded-md border text-xs cursor-pointer hover:scale-105 transition-all shadow-2xs ${
+                                isDark ? "text-slate-200 bg-slate-950 border-slate-800 hover:bg-slate-850 hover:border-slate-700" : "text-slate-800 bg-slate-100 border-slate-200 hover:bg-slate-200"
+                              }`}
+                            >
+                              {sm.total}
+                            </button>
                           </td>
-                          <td className="py-3 px-3 text-center font-black text-emerald-600 text-xs">
-                            {sm.resolved}
+                          {/* Resolved */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.resolved > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "Resolved Complaints (Contacted & Satisfied)", sm.resolvedList, "emerald");
+                                }}
+                                title={`Click to view ${sm.resolved} resolved complaints for ${sm.name}`}
+                                className="font-black px-2 py-0.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
+                              >
+                                {sm.resolved}
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-black text-amber-600 text-xs">
-                            {sm.pending}
+                          {/* Pending */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.pending > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "Pending to Contact by Service Station", sm.pendingList, "amber");
+                                }}
+                                title={`Click to view ${sm.pending} pending to contact complaints for ${sm.name}`}
+                                className="font-black px-2 py-0.5 rounded-md text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
+                              >
+                                {sm.pending}
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-black text-rose-600 text-xs">
-                            {sm.escalated}
+                          {/* Escalated / Rejected by CC */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.escalated > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "Rejected by Call Center / Escalated", sm.escalatedList, "rose");
+                                }}
+                                title={`Click to view ${sm.escalated} rejected/escalated complaints for ${sm.name}`}
+                                className="font-black px-2 py-0.5 rounded-md text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
+                              >
+                                {sm.escalated}
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-bold text-emerald-600 text-xs">
-                            {sm.days0_3 || "-"}
+                          {/* 0-3d */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.days0_3 > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "0-3 Days (New)", sm.days0_3List, "emerald");
+                                }}
+                                title={`Click to view ${sm.days0_3} new (0-3d) complaints for ${sm.name}`}
+                                className="font-bold px-2 py-0.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 cursor-pointer hover:scale-105 transition-all"
+                              >
+                                {sm.days0_3}
+                              </button>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-bold text-amber-600 text-xs">
-                            {sm.days3_5 || "-"}
+                          {/* 3-5d */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.days3_5 > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "3-5 Days (Pending SLA)", sm.days3_5List, "amber");
+                                }}
+                                title={`Click to view ${sm.days3_5} pending (3-5d) complaints for ${sm.name}`}
+                                className="font-bold px-2 py-0.5 rounded-md text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer hover:scale-105 transition-all"
+                              >
+                                {sm.days3_5}
+                              </button>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-bold text-orange-600 text-xs">
-                            {sm.days6_10 || "-"}
+                          {/* 6-10d */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.days6_10 > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, "6-10 Days (Escalated Aging)", sm.days6_10List, "orange");
+                                }}
+                                title={`Click to view ${sm.days6_10} escalated aging (6-10d) complaints for ${sm.name}`}
+                                className="font-bold px-2 py-0.5 rounded-md text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/50 cursor-pointer hover:scale-105 transition-all"
+                              >
+                                {sm.days6_10}
+                              </button>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-bold text-rose-600 text-xs">
-                            {sm.days10Plus || "-"}
+                          {/* >10d (Critical Aging) */}
+                          <td className="py-3 px-3 text-center">
+                            {sm.days10Plus > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDrilldown(sm.name, sm.code, ">10 Days (Critical Aging)", sm.days10PlusList, "rose");
+                                }}
+                                title={`Click to inspect details of all ${sm.days10Plus} critical aging (>10d) complaints for ${sm.name}`}
+                                className="inline-flex items-center justify-center font-black px-2.5 py-1 rounded-md text-xs bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/70 dark:text-rose-300 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800/80 shadow-2xs hover:shadow-sm hover:scale-105 transition-all cursor-pointer group"
+                              >
+                                <span className="group-hover:underline">{sm.days10Plus}</span>
+                                <span className="ml-1 text-[10px] opacity-75">🔍</span>
+                              </button>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                            )}
                           </td>
-                          <td className="py-3 px-3 text-center font-bold text-blue-700 text-xs">
-                            {sm.scContactedCount}/{sm.total} ({sm.scContactedPercent}%)
-                          </td>
-                          <td className="py-3 px-3 text-center font-bold text-indigo-700 text-xs">
-                            {sm.ccContactedCount}/{sm.ccEligibleCount} ({sm.ccContactedPercent}%)
-                          </td>
-                          <td className="py-3 px-3 text-center font-black text-sky-700 text-xs bg-sky-50/50 rounded">
-                            {sm.ccEligibleCount}
-                          </td>
-                          <td className="py-3 px-3 text-center font-black text-xs">
-                            <span className={`px-2 py-0.5 rounded font-black ${
-                              sm.ccSlaAchievementRate >= 80 
-                                ? "bg-emerald-100 text-emerald-800 border border-emerald-200" 
-                                : "bg-amber-100 text-amber-800 border border-amber-200"
-                            }`}>
-                              {sm.ccSlaAchievementRate}%
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-black text-blue-600 text-xs">
+                          {/* Avg Days Station Contact */}
+                          <td className="py-3 px-3 text-center font-black text-blue-600 dark:text-blue-400 text-xs">
                             {sm.avgDaysStationContact} {sm.avgDaysStationContact === 1 ? "day" : "days"}
                           </td>
-                          <td className="py-3 px-3 text-center font-black text-emerald-600 text-xs">
+                          {/* Avg Days Call Center Contact */}
+                          <td className="py-3 px-3 text-center font-black text-indigo-600 dark:text-indigo-400 text-xs">
+                            {sm.avgDaysCallCenterContact} {sm.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                          </td>
+                          {/* Avg Days to Solve Case */}
+                          <td className="py-3 px-3 text-center font-black text-emerald-600 dark:text-emerald-400 text-xs">
                             {sm.avgDaysToSolveCase} {sm.avgDaysToSolveCase === 1 ? "day" : "days"}
                           </td>
                         </tr>
@@ -1677,20 +2127,131 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                         <span>Overall Summary / All Stations</span>
                         {selectedStationCode === "all" && <span className="text-[10px] bg-blue-500 text-white font-black px-2 py-0.5 rounded">(Selected)</span>}
                       </td>
-                      <td className="py-3.5 px-3 text-center">{grandTotal}</td>
-                      <td className="py-3.5 px-3 text-center text-emerald-400">{grandResolved}</td>
-                      <td className="py-3.5 px-3 text-center text-amber-400">{grandPending}</td>
-                      <td className="py-3.5 px-3 text-center text-rose-400">{grandEscalated}</td>
-                      <td className="py-3.5 px-3 text-center text-emerald-400">{grandDays0_3}</td>
-                      <td className="py-3.5 px-3 text-center text-amber-400">{grandDays3_5}</td>
-                      <td className="py-3.5 px-3 text-center text-orange-400">{grandDays6_10}</td>
-                      <td className="py-3.5 px-3 text-center text-rose-400">{grandDays10Plus}</td>
-                      <td className="py-3.5 px-3 text-center text-blue-300">{grandScContacted}/{grandTotal} ({grandScContactedRate}%)</td>
-                      <td className="py-3.5 px-3 text-center text-indigo-300">{grandCcContacted}/{grandCcEligible} ({grandCcContactedRate}%)</td>
-                      <td className="py-3.5 px-3 text-center text-sky-300">{grandCcEligible}</td>
-                      <td className="py-3.5 px-3 text-center text-purple-300">{grandCcSlaRate}%</td>
-                      <td className="py-3.5 px-3 text-center text-blue-300">{overallReportAging.avgDaysStationContact} days</td>
-                      <td className="py-3.5 px-3 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase} days</td>
+                      {/* Grand Total */}
+                      <td className="py-3.5 px-3 text-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "All Assigned Complaints (Received)", grandTotalList, "slate");
+                          }}
+                          title={`Click to view all ${grandTotal} complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandTotal}
+                        </button>
+                      </td>
+                      {/* Grand Resolved */}
+                      <td className="py-3.5 px-3 text-center text-emerald-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "Resolved Complaints (Contacted & Satisfied)", grandResolvedList, "emerald");
+                          }}
+                          title={`Click to view ${grandResolved} resolved complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandResolved}
+                        </button>
+                      </td>
+                      {/* Grand Pending */}
+                      <td className="py-3.5 px-3 text-center text-amber-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "Pending to Contact by Service Station", grandPendingList, "amber");
+                          }}
+                          title={`Click to view ${grandPending} pending complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandPending}
+                        </button>
+                      </td>
+                      {/* Grand Escalated */}
+                      <td className="py-3.5 px-3 text-center text-rose-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "Rejected by Call Center / Escalated", grandEscalatedList, "rose");
+                          }}
+                          title={`Click to view ${grandEscalated} rejected/escalated complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandEscalated}
+                        </button>
+                      </td>
+                      {/* Grand 0-3d */}
+                      <td className="py-3.5 px-3 text-center text-emerald-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "0-3 Days (New)", grandDays0_3List, "emerald");
+                          }}
+                          title={`Click to view ${grandDays0_3} new (0-3d) complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandDays0_3}
+                        </button>
+                      </td>
+                      {/* Grand 3-5d */}
+                      <td className="py-3.5 px-3 text-center text-amber-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "3-5 Days (Pending SLA)", grandDays3_5List, "amber");
+                          }}
+                          title={`Click to view ${grandDays3_5} pending (3-5d) complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandDays3_5}
+                        </button>
+                      </td>
+                      {/* Grand 6-10d */}
+                      <td className="py-3.5 px-3 text-center text-orange-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", "6-10 Days (Escalated Aging)", grandDays6_10List, "orange");
+                          }}
+                          title={`Click to view ${grandDays6_10} escalated aging (6-10d) complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer"
+                        >
+                          {grandDays6_10}
+                        </button>
+                      </td>
+                      {/* Grand >10d */}
+                      <td className="py-3.5 px-3 text-center text-rose-400">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDrilldown("All Service Stations", "ALL", ">10 Days (Critical Aging)", grandDays10PlusList, "rose");
+                          }}
+                          title={`Click to inspect details of all ${grandDays10Plus} critical aging (>10d) complaints across all stations`}
+                          className="hover:underline font-black cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <span>{grandDays10Plus}</span>
+                          <span className="text-[10px]">🔍</span>
+                        </button>
+                      </td>
+                      {/* Overall Avg Days SC Contact */}
+                      <td className="py-3.5 px-3 text-center text-blue-300">
+                        {overallReportAging.avgDaysStationContact} {overallReportAging.avgDaysStationContact === 1 ? "day" : "days"}
+                      </td>
+                      {/* Overall Avg Days CC Contact */}
+                      <td className="py-3.5 px-3 text-center text-indigo-300">
+                        {overallReportAging.avgDaysCallCenterContact} {overallReportAging.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                      </td>
+                      {/* Overall Avg Days to Solve Case */}
+                      <td className="py-3.5 px-3 text-center text-emerald-300">
+                        {overallReportAging.avgDaysToSolveCase} {overallReportAging.avgDaysToSolveCase === 1 ? "day" : "days"}
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
@@ -2229,10 +2790,10 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                       barColor = "bg-purple-500";
                       badgeColor = isDark ? "text-purple-400 bg-purple-950/60 border-purple-900/40" : "text-purple-800 bg-purple-50 border-purple-200";
                       dotColor = "bg-purple-500";
-                    } else if (level === "Follow-up Required") {
-                      barColor = "bg-sky-500";
-                      badgeColor = isDark ? "text-sky-400 bg-sky-950/60 border-sky-900/40" : "text-sky-800 bg-sky-50 border-sky-200";
-                      dotColor = "bg-sky-500";
+                    } else if (level === "Rejected Again to Service Station") {
+                      barColor = "bg-orange-600";
+                      badgeColor = isDark ? "text-orange-400 bg-orange-950/60 border-orange-900/40" : "text-orange-800 bg-orange-50 border-orange-200";
+                      dotColor = "bg-orange-600";
                     }
 
                     return (
@@ -2621,7 +3182,7 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
               </div>
               <div className="text-right">
                 <span className="bg-blue-600 text-white text-[10px] font-black uppercase px-2.5 py-1 rounded">
-                  All 15 Columns Included
+                  All 12 Columns Included
                 </span>
               </div>
             </div>
@@ -2640,12 +3201,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                     <th className="py-2.5 px-2 text-center text-amber-400">3-5d</th>
                     <th className="py-2.5 px-2 text-center text-orange-400">6-10d</th>
                     <th className="py-2.5 px-2 text-center text-rose-400">&gt;10d</th>
-                    <th className="py-2.5 px-2 text-center text-blue-300">SC Contact Status</th>
-                    <th className="py-2.5 px-2 text-center text-indigo-300">CC Contact Status</th>
-                    <th className="py-2.5 px-2 text-center text-sky-300">CC SLA Eligible</th>
-                    <th className="py-2.5 px-2 text-center text-purple-300">CC SLA %</th>
-                    <th className="py-2.5 px-2 text-center">Avg SC Contact</th>
-                    <th className="py-2.5 px-2 text-center">Avg Solve Time</th>
+                    <th className="py-2.5 px-2 text-center text-blue-300">Avg SC Contact</th>
+                    <th className="py-2.5 px-2 text-center text-indigo-300">Avg CC Contact</th>
+                    <th className="py-2.5 px-2 text-center text-emerald-300">Avg Solve Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -2663,20 +3221,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                       <td className="py-2 px-2 text-center font-bold text-amber-600">{sm.days3_5 || "—"}</td>
                       <td className="py-2 px-2 text-center font-bold text-orange-600">{sm.days6_10 || "—"}</td>
                       <td className="py-2 px-2 text-center font-bold text-rose-600">{sm.days10Plus || "—"}</td>
-                      <td className="py-2 px-2 text-center font-bold text-blue-800">
-                        {sm.scContactedCount}/{sm.total} ({sm.scContactedPercent}%)
-                      </td>
-                      <td className="py-2 px-2 text-center font-bold text-indigo-800">
-                        {sm.ccContactedCount}/{sm.ccEligibleCount} ({sm.ccContactedPercent}%)
-                      </td>
-                      <td className="py-2 px-2 text-center font-black text-sky-800 bg-sky-50 rounded">
-                        {sm.ccEligibleCount}
-                      </td>
-                      <td className="py-2 px-2 text-center font-black text-purple-800 bg-purple-50 rounded">
-                        {sm.ccSlaAchievementRate}%
-                      </td>
-                      <td className="py-2 px-2 text-center font-semibold text-slate-700">{sm.avgDaysStationContact}d</td>
-                      <td className="py-2 px-2 text-center font-semibold text-slate-700">{sm.avgDaysToSolveCase}d</td>
+                      <td className="py-2 px-2 text-center font-semibold text-blue-800">{sm.avgDaysStationContact}d</td>
+                      <td className="py-2 px-2 text-center font-semibold text-indigo-800">{sm.avgDaysCallCenterContact}d</td>
+                      <td className="py-2 px-2 text-center font-semibold text-emerald-800">{sm.avgDaysToSolveCase}d</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2691,12 +3238,9 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
                     <td className="py-2.5 px-2 text-center text-amber-400">{grandDays3_5}</td>
                     <td className="py-2.5 px-2 text-center text-orange-400">{grandDays6_10}</td>
                     <td className="py-2.5 px-2 text-center text-rose-400">{grandDays10Plus}</td>
-                    <td className="py-2.5 px-2 text-center text-blue-300">{grandScContacted}/{grandTotal} ({grandScContactedRate}%)</td>
-                    <td className="py-2.5 px-2 text-center text-indigo-300">{grandCcContacted}/{grandCcEligible} ({grandCcContactedRate}%)</td>
-                    <td className="py-2.5 px-2 text-center text-sky-300">{grandCcEligible}</td>
-                    <td className="py-2.5 px-2 text-center text-purple-300">{grandCcSlaRate}%</td>
-                    <td className="py-2.5 px-2 text-center">{overallReportAging.avgDaysStationContact}d</td>
-                    <td className="py-2.5 px-2 text-center">{overallReportAging.avgDaysToSolveCase}d</td>
+                    <td className="py-2.5 px-2 text-center text-blue-300">{overallReportAging.avgDaysStationContact}d</td>
+                    <td className="py-2.5 px-2 text-center text-indigo-300">{overallReportAging.avgDaysCallCenterContact}d</td>
+                    <td className="py-2.5 px-2 text-center text-emerald-300">{overallReportAging.avgDaysToSolveCase}d</td>
                   </tr>
                 </tfoot>
               </table>
@@ -2980,6 +3524,502 @@ export default function ReportsPanel({ complaints, theme = "light", onOpenSLARep
           </div>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* INTERACTIVE SCORECARD METRIC DRILL-DOWN MODAL */}
+      {/* ========================================================================= */}
+      {drilldown && drilldown.isOpen && (
+        <div 
+          id="scorecard-drilldown-modal-backdrop"
+          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200"
+          onClick={() => setDrilldown(null)}
+        >
+          <div 
+            id="scorecard-drilldown-modal"
+            className={`w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl shadow-2xl border overflow-hidden ${
+              isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`p-4 sm:p-5 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              isDark ? "border-slate-800 bg-slate-950/60" : "border-slate-200 bg-slate-50/80"
+            }`}>
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 border border-blue-200 dark:border-blue-800/60">
+                  <BarChart3 className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {drilldown.stationCode}
+                    </span>
+                    <h2 className="text-base sm:text-lg font-black tracking-tight">
+                      {drilldown.stationName} &bull; {drilldown.metricLabel}
+                    </h2>
+                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs">
+                      {drilldown.complaints.length} Case{drilldown.complaints.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Live operational drill-down view of all matching complaint records contributing to this scorecard metric.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons & Close */}
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleExportDrilldownCSV}
+                  className="px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-2xs"
+                  title="Export this filtered list as a CSV spreadsheet"
+                >
+                  <Download className="h-3.5 w-3.5 text-slate-500" />
+                  <span>Export CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDrilldown(null)}
+                  className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Metrics Bar & Search */}
+            <div className={`px-4 sm:px-5 py-3 border-b flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+              isDark ? "border-slate-800/80 bg-slate-900/50" : "border-slate-100 bg-slate-50/50"
+            }`}>
+              {/* Search Bar */}
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter by ID, Customer, Phone, Vehicle, WO, Category..."
+                  value={drilldownSearch}
+                  onChange={(e) => setDrilldownSearch(e.target.value)}
+                  className={`w-full pl-9 pr-8 py-1.5 text-xs rounded-lg border outline-hidden transition-all ${
+                    isDark 
+                      ? "bg-slate-950 border-slate-800 focus:border-blue-500 text-slate-200 placeholder-slate-500" 
+                      : "bg-white border-slate-200 focus:border-blue-500 text-slate-800 placeholder-slate-400 shadow-2xs"
+                  }`}
+                />
+                {drilldownSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setDrilldownSearch("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Summary Stats Chips */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-slate-500 dark:text-slate-400">
+                  Showing: <strong className="text-slate-900 dark:text-slate-100">{filteredDrilldownComplaints.length}</strong> of {drilldown.complaints.length} records
+                </span>
+                {drilldown.complaints.length > 0 && (
+                  <>
+                    <span className="text-slate-300 dark:text-slate-700">&bull;</span>
+                    <span className="px-2 py-0.5 rounded-md font-bold text-[11px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                      {drilldown.complaints.filter(c => c.status === "Resolved" || c.feedbackStatus === "Satisfied").length} Resolved
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md font-bold text-[11px] bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60">
+                      {drilldown.complaints.filter(c => c.status !== "Resolved" && c.feedbackStatus !== "Satisfied").length} Outstanding
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md font-bold text-[11px] bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                      {drilldown.complaints.filter(c => isStationContacted(c)).length} SC Contacted
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Body: Complaints Table */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3">
+              {filteredDrilldownComplaints.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <AlertCircle className="h-10 w-10 mx-auto mb-2 opacity-40 text-slate-500" />
+                  <p className="text-sm font-bold">No complaints match the filter criteria</p>
+                  <p className="text-xs text-slate-500 mt-1">Try clearing your search query to view all records in this metric.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className={`border-b text-[10px] font-black uppercase tracking-wider ${
+                        isDark ? "border-slate-800 bg-slate-950/80 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-600"
+                      }`}>
+                        <th className="py-2.5 px-3">Complaint ID &amp; WO</th>
+                        <th className="py-2.5 px-3">Customer Information</th>
+                        <th className="py-2.5 px-3">Vehicle / Model</th>
+                        <th className="py-2.5 px-3">Category &amp; Issue Preview</th>
+                        <th className="py-2.5 px-3 text-center">Aging Days</th>
+                        <th className="py-2.5 px-3 text-center">Status</th>
+                        <th className="py-2.5 px-3 text-center">SC Contacted</th>
+                        <th className="py-2.5 px-3 text-center">Date Received</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? "divide-slate-800/80" : "divide-slate-100"}`}>
+                      {filteredDrilldownComplaints.map((c) => {
+                        const aging = getComplaintAging(c);
+                        const isOver10 = aging.days > 10;
+                        const isStationCont = isStationContacted(c);
+
+                        return (
+                          <tr 
+                            key={c.id} 
+                            className={`transition-colors ${
+                              isDark ? "hover:bg-slate-800/40" : "hover:bg-slate-50/80"
+                            }`}
+                          >
+                            {/* ID & WO */}
+                            <td className="py-3 px-3">
+                              <div className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-black text-blue-600 dark:text-blue-400">
+                                    {c.id}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyText(c.id, `id-${c.id}`)}
+                                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-0.5"
+                                    title="Copy Complaint ID"
+                                  >
+                                    {copiedId === `id-${c.id}` ? (
+                                      <Check className="h-3 w-3 text-emerald-500" />
+                                    ) : (
+                                      <Copy className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                </div>
+                                {c.woNo && (
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    WO: {c.woNo}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Customer Info */}
+                            <td className="py-3 px-3">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-bold text-slate-900 dark:text-slate-100">
+                                  {c.customerName}
+                                </span>
+                                <div className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                                  <Phone className="h-3 w-3 text-slate-400" />
+                                  <span>{c.customerPhone}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyText(c.customerPhone, `phone-${c.id}`)}
+                                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-0.5"
+                                    title="Copy Phone Number"
+                                  >
+                                    {copiedId === `phone-${c.id}` ? (
+                                      <Check className="h-3 w-3 text-emerald-500" />
+                                    ) : (
+                                      <Copy className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Vehicle / Model */}
+                            <td className="py-3 px-3">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                  {c.vehicleRegNo || "N/A"}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {c.model || c.vehicleModel || "Vehicle Record"}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Category & Issue Preview */}
+                            <td className="py-3 px-3 max-w-xs">
+                              <div className="space-y-1">
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                  {c.category}
+                                </span>
+                                <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2 italic" title={c.description}>
+                                  "{c.description}"
+                                </p>
+                              </div>
+                            </td>
+
+                            {/* Aging Days */}
+                            <td className="py-3 px-3 text-center">
+                              <span className={`inline-flex items-center gap-1 font-black px-2.5 py-1 rounded-md text-xs border ${
+                                isOver10
+                                  ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 animate-pulse"
+                                  : aging.days > 5
+                                    ? "bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-800"
+                                    : aging.days > 3
+                                      ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                                      : "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                              }`}>
+                                {isOver10 && <span className="text-[10px]">🔥</span>}
+                                {aging.days} {aging.days === 1 ? "day" : "days"}
+                              </span>
+                            </td>
+
+                            {/* Status */}
+                            <td className="py-3 px-3 text-center">
+                              <div className="flex flex-col items-center gap-1">
+                                <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                                  c.status === "Resolved" || c.feedbackStatus === "Satisfied"
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                    : isComplaintRejected(c)
+                                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                      : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                }`}>
+                                  {c.status}
+                                </span>
+                                {c.feedbackStatus && (
+                                  <span className="text-[9px] text-slate-500 font-medium">
+                                    {c.feedbackStatus}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* SC Contacted */}
+                            <td className="py-3 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                                isStationCont 
+                                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800" 
+                                  : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                              }`}>
+                                {isStationCont ? "YES" : "NO"}
+                              </span>
+                              {c.stationContactedDate && (
+                                <span className="block text-[9px] text-slate-400 mt-0.5">
+                                  {c.stationContactedDate}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Date Received */}
+                            <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                              {c.date}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-3 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveDetailComplaint(c)}
+                                  className="px-2 py-1 rounded text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Inspect full technical complaint details"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  <span>Inspect</span>
+                                </button>
+
+                                {onSelectComplaintInWorkspace && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onSelectComplaintInWorkspace(c.id);
+                                      setDrilldown(null);
+                                    }}
+                                    className="px-2 py-1 rounded text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                    title="Open and edit complaint in main Workspace"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    <span>Workspace</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`p-4 border-t flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+              isDark ? "border-slate-800 bg-slate-950/60 text-slate-400" : "border-slate-200 bg-slate-50/80 text-slate-600"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="font-bold">Total In Metric Scope:</span>
+                <strong className="text-slate-900 dark:text-slate-100">{drilldown.complaints.length} complaints</strong>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDrilldown(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold transition-colors cursor-pointer self-end sm:self-auto"
+              >
+                Close View
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SINGLE COMPLAINT INSPECTOR SUB-MODAL */}
+      {/* ========================================================================= */}
+      {activeDetailComplaint && (
+        <div 
+          id="complaint-detail-inspector-backdrop"
+          className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+          onClick={() => setActiveDetailComplaint(null)}
+        >
+          <div 
+            id="complaint-detail-inspector-modal"
+            className={`w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl shadow-2xl border overflow-hidden ${
+              isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`p-4 border-b flex items-center justify-between ${
+              isDark ? "border-slate-800 bg-slate-950/80" : "border-slate-200 bg-slate-50"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-black text-sm bg-blue-600 text-white px-2 py-0.5 rounded">
+                  {activeDetailComplaint.id}
+                </span>
+                <h3 className="font-black text-sm sm:text-base">
+                  Complaint Record Details
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveDetailComplaint(null)}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+              {/* Customer & Vehicle Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className={`p-3 rounded-xl border ${isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"}`}>
+                  <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Customer Details</span>
+                  <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{activeDetailComplaint.customerName}</p>
+                  <p className="text-slate-500 font-mono mt-0.5 flex items-center gap-1">
+                    <Phone className="h-3 w-3" />
+                    {activeDetailComplaint.customerPhone}
+                  </p>
+                  {activeDetailComplaint.customerEmail && (
+                    <p className="text-slate-500 mt-0.5">{activeDetailComplaint.customerEmail}</p>
+                  )}
+                </div>
+
+                <div className={`p-3 rounded-xl border ${isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"}`}>
+                  <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Vehicle &amp; Station</span>
+                  <p className="font-mono font-bold text-sm text-slate-900 dark:text-slate-100">{activeDetailComplaint.vehicleRegNo || "N/A"}</p>
+                  <p className="text-slate-600 dark:text-slate-300 mt-0.5">{activeDetailComplaint.station}</p>
+                  {activeDetailComplaint.woNo && (
+                    <p className="text-slate-500 font-mono text-[10px] mt-0.5">WO: {activeDetailComplaint.woNo}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Status and Aging Overview */}
+              <div className={`p-3 rounded-xl border grid grid-cols-2 sm:grid-cols-4 gap-2 text-center ${
+                isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"
+              }`}>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">Status</span>
+                  <span className="font-black text-slate-900 dark:text-slate-100">{activeDetailComplaint.status}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">Aging Days</span>
+                  <span className={`font-black ${getComplaintAging(activeDetailComplaint).days > 10 ? "text-rose-600 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`}>
+                    {getComplaintAging(activeDetailComplaint).days} Days
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">SC Contacted</span>
+                  <span className="font-black text-blue-600 dark:text-blue-400">
+                    {isStationContacted(activeDetailComplaint) ? "YES" : "NO"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">Feedback SLA</span>
+                  <span className="font-black text-slate-900 dark:text-slate-100">
+                    {activeDetailComplaint.feedbackStatus || "Pending"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className={`p-3 rounded-xl border ${isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"}`}>
+                <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Customer Issue Description</span>
+                <p className="text-slate-700 dark:text-slate-300 leading-relaxed italic whitespace-pre-wrap">
+                  "{activeDetailComplaint.description}"
+                </p>
+              </div>
+
+              {/* Station Notes & Remarks */}
+              {activeDetailComplaint.stationResolutionNotes && (
+                <div className={`p-3 rounded-xl border ${isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"}`}>
+                  <span className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 block mb-1">Service Station Action / Resolution Notes</span>
+                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                    {activeDetailComplaint.stationResolutionNotes}
+                  </p>
+                </div>
+              )}
+
+              {activeDetailComplaint.callCenterFinalRemarks && (
+                <div className={`p-3 rounded-xl border ${isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-100 bg-slate-50"}`}>
+                  <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400 block mb-1">Call Center Verification Remarks</span>
+                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                    {activeDetailComplaint.callCenterFinalRemarks}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className={`p-4 border-t flex items-center justify-between gap-3 ${
+              isDark ? "border-slate-800 bg-slate-950/80" : "border-slate-200 bg-slate-50"
+            }`}>
+              <button
+                type="button"
+                onClick={() => setActiveDetailComplaint(null)}
+                className="px-4 py-1.5 rounded-lg border text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Back to List
+              </button>
+
+              {onSelectComplaintInWorkspace && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectComplaintInWorkspace(activeDetailComplaint.id);
+                    setActiveDetailComplaint(null);
+                    setDrilldown(null);
+                  }}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Open in Workspace</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
