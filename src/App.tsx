@@ -62,6 +62,22 @@ import {
   dispatchSystemicEmailsForComplaints, 
   playCallCenterNotificationSound 
 } from "./utils/systemicEmailNotifier";
+import {
+  fetchComplaintsCentral,
+  saveComplaintsCentral,
+  deleteComplaintCentral,
+  clearAllComplaintsCentral,
+  fetchCalendarCentral,
+  saveCalendarDateCentral,
+  deleteCalendarDateCentral,
+  fetchOfficersCentral,
+  saveOfficersCentral,
+  fetchStationsCentral,
+  saveStationsCentral,
+  fetchEmailLogsCentral,
+  saveEmailLogsCentral,
+  subscribeToCentralRealtime
+} from "./utils/centralDbSync";
 
 
 // Initialize client-side Supabase client with safe publishable credentials
@@ -100,172 +116,176 @@ export default function App() {
     return null;
   });
 
-  const [officersList, setOfficersList] = useState<CallCenterOfficer[]>(() => {
-    const saved = localStorage.getItem("ideal_group_callcenter_officers");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // fallback
+  const [officersList, setOfficersList] = useState<CallCenterOfficer[]>(CALL_CENTER_OFFICERS);
+  const [stationsList, setStationsList] = useState<StationProfile[]>(STATIONS);
+  const [calendarDates, setCalendarDates] = useState<WorkstationCalendarDate[]>(() => getStoredCalendarDates());
+  const [emailLogs, setEmailLogs] = useState<SystemicEmailLog[]>(() => getStoredSystemicEmailLogs());
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+
+  // Central Database Sync & Feedback States
+  const [dbSaveState, setDbSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [dbSaveErrorMsg, setDbSaveErrorMsg] = useState<string | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
+
+  // Master load from Supabase Single Source of Truth
+  const refreshAllFromCentralDb = async () => {
+    try {
+      const [resC, resO, resS, resCal, resEml] = await Promise.all([
+        fetchComplaintsCentral(),
+        fetchOfficersCentral(),
+        fetchStationsCentral(),
+        fetchCalendarCentral(),
+        fetchEmailLogsCentral(),
+      ]);
+
+      if (resC.success && resC.data) {
+        setComplaints(resC.data);
+        setSupabaseActive(true);
+        setSupabaseError(null);
+      } else if (!resC.success) {
+        setSupabaseActive(false);
+        setSupabaseError(resC.error || "Failed to load complaints from central database");
       }
-    }
-    return CALL_CENTER_OFFICERS;
-  });
 
-  const [stationsList, setStationsList] = useState<StationProfile[]>(() => {
-    const saved = localStorage.getItem("ideal_group_stations");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // fallback
+      if (resO.success && resO.data && resO.data.length > 0) {
+        setOfficersList(resO.data);
       }
+      if (resS.success && resS.data && resS.data.length > 0) {
+        setStationsList(resS.data);
+      }
+      if (resCal.success && resCal.data && resCal.data.length > 0) {
+        setCalendarDates(resCal.data);
+      }
+      if (resEml.success && resEml.data) {
+        setEmailLogs(resEml.data);
+      }
+      setLastSyncTime(new Date().toLocaleTimeString());
+    } catch (err: any) {
+      console.error("Central database fetch error:", err);
     }
-    return STATIONS;
-  });
-
-  const handleUpdateOfficersList = (newList: CallCenterOfficer[]) => {
-    setOfficersList(newList);
-    localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(newList));
-
-    // Sync to backend API & Supabase
-    fetch("/api/officers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ officers: newList }),
-    }).catch((err) => console.error("Error saving officers to Supabase API:", err));
   };
 
-  const handleUpdateStationsList = (newList: StationProfile[]) => {
-    setStationsList(newList);
-    localStorage.setItem("ideal_group_stations", JSON.stringify(newList));
-
-    // Sync to backend API & Supabase
-    fetch("/api/stations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stations: newList }),
-    }).catch((err) => console.error("Error saving stations to Supabase API:", err));
-  };
-
-  // Fetch officers & stations on initial load from Supabase backend API
+  // Initial load on mount
   useEffect(() => {
-    fetch("/api/officers")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.officers && data.officers.length > 0) {
-          setOfficersList(data.officers);
-          localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(data.officers));
-        }
-      })
-      .catch(() => console.log("Officers sync using local storage / fallback"));
-
-    fetch("/api/stations")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.stations && data.stations.length > 0) {
-          setStationsList(data.stations);
-          localStorage.setItem("ideal_group_stations", JSON.stringify(data.stations));
-        }
-      })
-      .catch(() => console.log("Stations sync using local storage / fallback"));
-
-    fetch("/api/calendar")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.dates && data.dates.length > 0) {
-          setCalendarDates(data.dates);
-          saveCalendarDates(data.dates);
-        }
-      })
-      .catch(() => console.log("Calendar sync using local storage / fallback"));
-
-    fetch("/api/email-logs")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
-          setEmailLogs(data.logs);
-          saveSystemicEmailLogs(data.logs);
-        } else {
-          setEmailLogs(getStoredSystemicEmailLogs());
-        }
-      })
-      .catch(() => setEmailLogs(getStoredSystemicEmailLogs()));
+    refreshAllFromCentralDb();
   }, []);
 
-  // Periodic background sync across all devices / IPs every 4 seconds
+  // Multi-table Supabase Realtime synchronization across all operational tables
   useEffect(() => {
-    const syncBackendData = async () => {
-      try {
-        const [resC, resO, resS, resCal, resEml] = await Promise.allSettled([
-          fetch("/api/complaints"),
-          fetch("/api/officers"),
-          fetch("/api/stations"),
-          fetch("/api/calendar"),
-          fetch("/api/email-logs")
-        ]);
-
-        if (resC.status === "fulfilled" && resC.value.ok) {
-          const text = await resC.value.text();
-          if (!text.trim().startsWith("<!DOCTYPE")) {
-            const data = JSON.parse(text);
-            if (data && data.complaints && Array.isArray(data.complaints)) {
-              setComplaints(data.complaints);
+    const channel = subscribeToCentralRealtime({
+      onComplaintsChange: (payload) => {
+        console.log("⚡ [Realtime Complaints Event]:", payload.eventType);
+        if (payload.eventType === "DELETE" && payload.old?.id) {
+          setComplaints((prev) => prev.filter((c) => c.id !== payload.old.id && c.woNo !== payload.old.id));
+        } else if (payload.new) {
+          const normalized = normalizeComplaintFromSupabase(payload.new);
+          setComplaints((prev) => {
+            const exists = prev.some((c) => c.id === normalized.id || (normalized.woNo && c.woNo === normalized.woNo));
+            if (exists) {
+              return prev.map((c) => (c.id === normalized.id || (normalized.woNo && c.woNo === normalized.woNo) ? normalized : c));
+            } else {
+              return [normalized, ...prev];
             }
-          }
+          });
         }
+        setLastSyncTime(new Date().toLocaleTimeString());
+      },
+      onCalendarChange: (payload) => {
+        console.log("⚡ [Realtime Calendar Event]:", payload.eventType);
+        if (payload.eventType === "DELETE" && payload.old?.id) {
+          setCalendarDates((prev) => prev.filter((item) => item.id !== payload.old.id));
+        } else if (payload.new) {
+          const newDate: WorkstationCalendarDate = {
+            id: payload.new.id,
+            station: payload.new.station || "All",
+            date: payload.new.date,
+            type: payload.new.type || "off_day",
+            reason: payload.new.reason || "",
+            createdAt: payload.new.createdAt || payload.new.created_at || new Date().toISOString(),
+            createdBy: payload.new.createdBy || payload.new.created_by || "System Admin",
+          };
+          setCalendarDates((prev) => {
+            const exists = prev.some((item) => item.id === newDate.id);
+            if (exists) {
+              return prev.map((item) => (item.id === newDate.id ? newDate : item));
+            } else {
+              return [newDate, ...prev];
+            }
+          });
+        }
+        setLastSyncTime(new Date().toLocaleTimeString());
+      },
+      onOfficersChange: (payload) => {
+        console.log("⚡ [Realtime Officers Event]:", payload.eventType);
+        fetchOfficersCentral().then((res) => {
+          if (res.success && res.data) setOfficersList(res.data);
+        });
+      },
+      onStationsChange: (payload) => {
+        console.log("⚡ [Realtime Stations Event]:", payload.eventType);
+        fetchStationsCentral().then((res) => {
+          if (res.success && res.data) setStationsList(res.data);
+        });
+      },
+      onEmailLogsChange: (payload) => {
+        console.log("⚡ [Realtime Email Logs Event]:", payload.eventType);
+        fetchEmailLogsCentral().then((res) => {
+          if (res.success && res.data) setEmailLogs(res.data);
+        });
+      },
+    });
 
-        if (resO.status === "fulfilled" && resO.value.ok) {
-          const dataO = await resO.value.json();
-          if (dataO && dataO.officers && Array.isArray(dataO.officers) && dataO.officers.length > 0) {
-            setOfficersList(dataO.officers);
-            localStorage.setItem("ideal_group_callcenter_officers", JSON.stringify(dataO.officers));
-          }
-        }
+    // Periodic poll every 5s for cross-workstation fallback sync
+    const syncInterval = setInterval(() => {
+      refreshAllFromCentralDb();
+    }, 5000);
 
-        if (resS.status === "fulfilled" && resS.value.ok) {
-          const dataS = await resS.value.json();
-          if (dataS && dataS.stations && Array.isArray(dataS.stations) && dataS.stations.length > 0) {
-            setStationsList(dataS.stations);
-            localStorage.setItem("ideal_group_stations", JSON.stringify(dataS.stations));
-          }
-        }
-
-        if (resCal.status === "fulfilled" && resCal.value.ok) {
-          const dataCal = await resCal.value.json();
-          if (dataCal && dataCal.dates && Array.isArray(dataCal.dates)) {
-            setCalendarDates(dataCal.dates);
-            saveCalendarDates(dataCal.dates);
-          }
-        }
-
-        if (resEml.status === "fulfilled" && resEml.value.ok) {
-          const dataEml = await resEml.value.json();
-          if (dataEml && dataEml.logs && Array.isArray(dataEml.logs)) {
-            saveSystemicEmailLogs(dataEml.logs);
-          }
-        }
-      } catch (e) {
-        // Silent catch for background sync
-      }
+    return () => {
+      channel.unsubscribe();
+      clearInterval(syncInterval);
     };
-
-    const interval = setInterval(syncBackendData, 4000);
-    return () => clearInterval(interval);
   }, []);
+
+  const handleUpdateOfficersList = async (newList: CallCenterOfficer[]) => {
+    setOfficersList(newList);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await saveOfficersCentral(newList);
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to save officers to central database");
+    }
+  };
+
+  const handleUpdateStationsList = async (newList: StationProfile[]) => {
+    setStationsList(newList);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await saveStationsCentral(newList);
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to save stations to central database");
+    }
+  };
 
   const handleUpdateCurrentUser = (updated: UserProfile) => {
     setCurrentUser(updated);
     localStorage.setItem("ideal_group_current_user", JSON.stringify(updated));
   };
 
-  const [calendarDates, setCalendarDates] = useState<WorkstationCalendarDate[]>(() => getStoredCalendarDates());
   const [showCalendarModal, setShowCalendarModal] = useState<boolean>(false);
   const [calendarStationTarget, setCalendarStationTarget] = useState<string>("All");
 
   // Systemic Email Logs & Call Center Notification Sound States
   const [showStationDirectoryModal, setShowStationDirectoryModal] = useState<boolean>(false);
-  const [emailLogs, setEmailLogs] = useState<SystemicEmailLog[]>(() => getStoredSystemicEmailLogs());
   const [callCenterNotifications, setCallCenterNotifications] = useState<CallCenterNotification[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
@@ -287,40 +307,51 @@ export default function App() {
     }
   };
 
-  const handleAddCalendarDate = (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
+  const handleAddCalendarDate = async (newDateData: Omit<WorkstationCalendarDate, "id" | "createdAt" | "createdBy">) => {
+    const stationSlug = (newDateData.station || "All").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+    const stableId = `cal-${stationSlug}-${newDateData.date}`;
+
     const newEntry: WorkstationCalendarDate = {
       ...newDateData,
-      id: "cal-" + Date.now(),
+      id: stableId,
       createdAt: new Date().toISOString(),
       createdBy: currentUser?.name || (currentUser?.role === "admin" ? "System Admin" : "Call Center Admin"),
     };
-    const updated = [newEntry, ...calendarDates];
-    setCalendarDates(updated);
-    saveCalendarDates(updated);
-    fetch("/api/calendar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dates: updated }),
-    }).catch((err) => console.error("Error saving calendar date:", err));
+    
+    setCalendarDates(prev => {
+      const filtered = prev.filter(item => item.id !== stableId);
+      return [newEntry, ...filtered];
+    });
+
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await saveCalendarDateCentral(newEntry);
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to save calendar date to central database");
+    }
   };
 
-  const handleRemoveCalendarDate = (id: string) => {
-    const updated = calendarDates.filter((item) => item.id !== id);
-    setCalendarDates(updated);
-    saveCalendarDates(updated);
-    fetch(`/api/calendar/${id}`, { method: "DELETE" }).catch((err) =>
-      console.error("Error deleting calendar date from Supabase:", err)
-    );
-    fetch("/api/calendar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dates: updated }),
-    }).catch((err) => console.error("Error updating calendar dates:", err));
+  const handleRemoveCalendarDate = async (id: string) => {
+    setCalendarDates(prev => prev.filter(item => item.id !== id));
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await deleteCalendarDateCentral(id);
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to delete calendar date from central database");
+    }
   };
 
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
-
-  const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"analytics" | "list" | "stations" | "upload" | "reports">("analytics");
 
@@ -475,104 +506,6 @@ export default function App() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showSLAReportModal, setShowSLAReportModal] = useState(false);
 
-  const fetchComplaintsDirectly = async (originalErrorMsg?: string) => {
-    try {
-      console.log("Contacting Supabase directly from browser as single source of truth...");
-      const { data, error } = await supabaseClient
-        .from("complaints")
-        .select("*")
-        .order("date", { ascending: false });
-
-      if (error) {
-        console.error("Direct Supabase select error:", error);
-        setSupabaseActive(false);
-        setSupabaseError(error.message);
-        return false;
-      }
-
-      if (data) {
-        const normalized = data.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow) as Complaint);
-        setComplaints(normalized);
-      }
-      setSupabaseActive(true);
-      setSupabaseError(null);
-      return true;
-    } catch (err: any) {
-      console.error("Direct Supabase connection exception:", err);
-      setSupabaseActive(false);
-      setSupabaseError(originalErrorMsg || err.message);
-      return false;
-    }
-  };
-
-  const fetchComplaints = async () => {
-    try {
-      const res = await fetch("/api/complaints");
-      const text = await res.text();
-      
-      if (text.trim().startsWith("<!DOCTYPE")) {
-        console.warn("Backend API not found (HTML response). Fetching directly from Supabase...");
-        return await fetchComplaintsDirectly();
-      }
-
-      const data = JSON.parse(text);
-      if (data.complaints && Array.isArray(data.complaints)) {
-        const normalized = data.complaints.map((c: any) => normalizeComplaintFromSupabase(c) as Complaint);
-        setComplaints(normalized);
-      }
-      setSupabaseActive(data.isSupabaseActive);
-      if (!data.isSupabaseActive && data.error) {
-        setSupabaseError(data.error);
-        return false;
-      } else {
-        setSupabaseError(null);
-        return true;
-      }
-    } catch (e: any) {
-      console.warn("Backend API call failed, falling back to direct Supabase query:", e);
-      return await fetchComplaintsDirectly(e.message);
-    }
-  };
-
-  // Initial load: Fetch directly from Supabase (Single Source of Truth)
-  useEffect(() => {
-    fetchComplaints();
-  }, []);
-
-  // Supabase Realtime Subscription: Listen for INSERT, UPDATE, DELETE on 'complaints' table
-  useEffect(() => {
-    const channel = supabaseClient
-      .channel("complaints-realtime-sync")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "complaints"
-        },
-        (payload) => {
-          console.log("⚡ [Supabase Realtime] Event received:", payload.eventType, payload);
-          // Directly refresh state from Supabase single source of truth
-          fetchComplaints();
-        }
-      )
-      .subscribe((status) => {
-        console.log("⚡ [Supabase Realtime] Channel status:", status);
-      });
-
-    return () => {
-      supabaseClient.removeChannel(channel);
-    };
-  }, []);
-
-  // Continuous background fallback synchronization across IP addresses and devices every 4 seconds
-  useEffect(() => {
-    const syncInterval = setInterval(() => {
-      fetchComplaints();
-    }, 4000);
-    return () => clearInterval(syncInterval);
-  }, []);
-
   // Diagnostics logging for CX Recovery DB & Query Verification (Requirement #12)
   useEffect(() => {
     const tissaRecords = complaints.filter(
@@ -598,59 +531,23 @@ export default function App() {
     console.log("====================================");
   }, [complaints, currentUser, supabaseActive, supabaseError]);
 
-  const saveComplaintsDirectly = async (updatedList: Complaint[]) => {
-    try {
-      console.log("Upserting directly to Supabase client-side...");
-      const { error, strippedColumns } = await performResilientSupabaseUpsert(supabaseClient, updatedList);
-
-      if (error) {
-        console.error("Direct Supabase upsert error:", error);
-        setSupabaseActive(false);
-        setSupabaseError(error.message);
-      } else {
-        setSupabaseActive(true);
-        setSupabaseError(null);
-        if (strippedColumns && strippedColumns.length > 0) {
-          console.warn("Saved to Supabase with auto-stripped unmigrated columns:", strippedColumns);
-        }
-      }
-    } catch (err: any) {
-      console.error("Direct Supabase upsert failed:", err);
-      setSupabaseActive(false);
-      setSupabaseError(err.message);
-    }
-  };
-
-  // Handle saving and syncing with Supabase on complaints change
   const saveComplaints = async (updatedList: Complaint[]) => {
     setComplaints(updatedList);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
 
-    // Save directly to Supabase
-    saveComplaintsDirectly(updatedList);
-
-    // Also notify server backend API to ensure background synchronization
-    try {
-      const res = await fetch("/api/complaints", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complaints: updatedList })
-      });
-      const text = await res.text();
-
-      if (!text.trim().startsWith("<!DOCTYPE")) {
-        const data = JSON.parse(text);
-        setSupabaseActive(data.isSupabaseActive);
-        if (!data.isSupabaseActive && data.error) {
-          setSupabaseError(data.error);
-        } else {
-          setSupabaseError(null);
-        }
-        if (data.complaints && Array.isArray(data.complaints)) {
-          setComplaints(data.complaints.map((c: any) => normalizeComplaintFromSupabase(c) as Complaint));
-        }
-      }
-    } catch (e: any) {
-      console.warn("Backend API save notification failed, direct Supabase save handled the write:", e);
+    const res = await saveComplaintsCentral(updatedList);
+    if (res.success) {
+      setDbSaveState("saved");
+      setSupabaseActive(true);
+      setSupabaseError(null);
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to save complaints to central database");
+      setSupabaseActive(false);
+      setSupabaseError(res.error || "Failed to sync");
     }
   };
 
@@ -747,37 +644,16 @@ export default function App() {
     }
     setDeletingId(null);
 
-    // Direct Supabase delete
-    try {
-      const conditions: string[] = [];
-      if (targetId) {
-        conditions.push(`id.eq.${targetId}`);
-        conditions.push(`woNo.eq.${targetId}`);
-        conditions.push(`wo_no.eq.${targetId}`);
-      }
-      if (targetWoNo) {
-        conditions.push(`id.eq.${targetWoNo}`);
-        conditions.push(`woNo.eq.${targetWoNo}`);
-        conditions.push(`wo_no.eq.${targetWoNo}`);
-        conditions.push(`id.eq.COMP-${targetWoNo}`);
-      }
-      await supabaseClient
-        .from("complaints")
-        .delete()
-        .or(conditions.join(","));
-    } catch (err) {
-      console.warn("Direct Supabase delete failed:", err);
-    }
-
-    // Server API delete call
-    try {
-      await fetch("/api/complaints/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: targetId, woNo: targetWoNo }),
-      });
-    } catch (err) {
-      console.warn("Backend API delete failed:", err);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await deleteComplaintCentral(targetId, targetWoNo);
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to delete complaint from central database");
     }
   };
 
@@ -788,22 +664,16 @@ export default function App() {
     setDeletingId(null);
     setShowDeleteAllConfirm(false);
 
-    try {
-      await supabaseClient
-        .from("complaints")
-        .delete()
-        .neq("id", "FORCE_NONE_MATCHING_ID");
-    } catch (err) {
-      console.warn("Direct Supabase clear all failed:", err);
-    }
-
-    try {
-      await fetch("/api/complaints/clear", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-    } catch (err) {
-      console.warn("Backend API clear failed:", err);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
+    const res = await clearAllComplaintsCentral();
+    if (res.success) {
+      setDbSaveState("saved");
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to clear complaints from central database");
     }
   };
 
@@ -883,80 +753,26 @@ export default function App() {
     handleDeleteSingleComplaint(complaintId);
   };
 
-  const clearComplaintsDirectly = async () => {
-    try {
-      console.log("Clearing all complaints directly from Supabase client-side...");
-      const { error } = await supabaseClient
-        .from("complaints")
-        .delete()
-        .neq("id", "FORCE_NONE_MATCHING_ID");
-
-      if (error) {
-        console.error("Direct Supabase clear error:", error);
-        setSupabaseActive(false);
-        setSupabaseError(error.message);
-      } else {
-        setSupabaseActive(true);
-        setSupabaseError(null);
-      }
-    } catch (err: any) {
-      console.error("Direct Supabase clear exception:", err);
-      setSupabaseActive(false);
-      setSupabaseError(err.message);
-    }
-  };
-
-  const resetComplaintsDirectly = async () => {
-    try {
-      console.log("Resetting complaints directly from Supabase client-side...");
-      // First clear all
-      await supabaseClient
-        .from("complaints")
-        .delete()
-        .neq("id", "FORCE_NONE_MATCHING_ID");
-
-      // Then perform resilient upsert of default ones
-      const { error } = await performResilientSupabaseUpsert(supabaseClient, DEMO_COMPLAINTS);
-
-      if (error) {
-        console.error("Direct Supabase insert during reset error:", error);
-        setSupabaseActive(false);
-        setSupabaseError(error.message);
-      } else {
-        setSupabaseActive(true);
-        setSupabaseError(null);
-      }
-    } catch (err: any) {
-      console.error("Direct Supabase reset exception:", err);
-      setSupabaseActive(false);
-      setSupabaseError(err.message);
-    }
-  };
-
   // Reset demo complaints data
   const handleResetDemo = async () => {
     setComplaints(DEMO_COMPLAINTS);
     setSelectedComplaintId(null);
     setShowResetConfirm(false);
+    setDbSaveState("saving");
+    setDbSaveErrorMsg(null);
 
-    try {
-      const res = await fetch("/api/complaints/reset", { method: "POST" });
-      const text = await res.text();
-
-      if (text.trim().startsWith("<!DOCTYPE")) {
-        console.warn("Backend API reset not found (HTML response). Resetting directly on Supabase client-side...");
-        await resetComplaintsDirectly();
-        return;
-      }
-
-      const data = JSON.parse(text);
-      setSupabaseActive(data.isSupabaseActive);
-      if (data.complaints) {
-        setComplaints(data.complaints);
-      }
-    } catch (e: any) {
-      console.warn("Backend reset failed, resetting directly on Supabase client-side:", e);
-      await resetComplaintsDirectly();
+    // Clear all then reseed
+    await clearAllComplaintsCentral();
+    const res = await saveComplaintsCentral(DEMO_COMPLAINTS);
+    if (res.success) {
+      setDbSaveState("saved");
+      setSupabaseActive(true);
+      setSupabaseError(null);
+      setLastSyncTime(new Date().toLocaleTimeString());
+      setTimeout(() => setDbSaveState("idle"), 3000);
+    } else {
+      setDbSaveState("error");
+      setDbSaveErrorMsg(res.error || "Failed to reset demo data in central database");
     }
   };
 
@@ -1773,24 +1589,49 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Supabase Status Indicator */}
-            {supabaseActive !== null && (
-              <div 
-                id="supabase-status-badge"
-                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold ${
-                  supabaseActive 
-                    ? isDark 
-                      ? "bg-emerald-950/30 border-emerald-900/40 text-emerald-300" 
-                      : "bg-emerald-50 border-emerald-200 text-emerald-700" 
-                    : isDark 
-                      ? "bg-amber-950/30 border-amber-900/40 text-amber-300" 
-                      : "bg-amber-50 border-amber-200 text-amber-700"
-                }`}
+            {/* Supabase Central Sync Status Indicator */}
+            <div 
+              id="supabase-status-badge"
+              className={`flex items-center gap-2 py-1 px-2.5 rounded-md border text-[11px] font-bold ${
+                dbSaveState === "error" || supabaseActive === false
+                  ? isDark
+                    ? "bg-red-950/30 border-red-900/50 text-red-300"
+                    : "bg-red-50 border-red-200 text-red-700"
+                  : dbSaveState === "saving"
+                  ? isDark
+                    ? "bg-amber-950/30 border-amber-900/50 text-amber-300"
+                    : "bg-amber-50 border-amber-200 text-amber-700"
+                  : isDark 
+                    ? "bg-emerald-950/30 border-emerald-900/40 text-emerald-300" 
+                    : "bg-emerald-50 border-emerald-200 text-emerald-700"
+              }`}
+              title={dbSaveErrorMsg ? `Sync Issue: ${dbSaveErrorMsg}` : `Supabase Central Database: Synced at ${lastSyncTime}`}
+            >
+              <span className={`h-2 w-2 rounded-full ${
+                dbSaveState === "error" || supabaseActive === false
+                  ? "bg-red-500"
+                  : dbSaveState === "saving"
+                  ? "bg-amber-500 animate-ping"
+                  : "bg-emerald-500 animate-pulse"
+              }`} />
+              <span>
+                {dbSaveState === "saving"
+                  ? "Saving to Supabase..."
+                  : dbSaveState === "saved"
+                  ? "Changes Saved to Central DB"
+                  : dbSaveState === "error" || supabaseActive === false
+                  ? "Supabase Error / Reconnecting..."
+                  : "Supabase Central SSOT (Live)"}
+              </span>
+              <button
+                type="button"
+                onClick={refreshAllFromCentralDb}
+                className="opacity-70 hover:opacity-100 transition-opacity ml-1 cursor-pointer"
+                title="Force refresh all workstations from central Supabase"
               >
-                <span className={`h-2 w-2 rounded-full ${supabaseActive ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-                <span>{supabaseActive ? "Supabase Active" : "Supabase: Offline Fallback"}</span>
-              </div>
-            )}
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            </div>
 
             {/* Workstation Calendar Button */}
             <button
@@ -1920,11 +1761,8 @@ export default function App() {
                 disabled={isTestingSupabase}
                 onClick={async () => {
                   setIsTestingSupabase(true);
-                  const success = await fetchComplaints();
+                  await refreshAllFromCentralDb();
                   setIsTestingSupabase(false);
-                  if (success) {
-                    alert("✅ Successfully connected to Supabase database!");
-                  }
                 }}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] py-1.5 px-3 rounded shadow-xs transition-all cursor-pointer uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
               >

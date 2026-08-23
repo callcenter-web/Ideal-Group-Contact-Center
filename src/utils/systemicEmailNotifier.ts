@@ -1,5 +1,6 @@
 import { Complaint, StationProfile, SystemicEmailLog } from "../types";
 import { STATIONS } from "../demoData";
+import { saveEmailLogsCentral } from "./centralDbSync";
 
 // Web Audio API synth chime for real-time Call Center audio alerts
 export function playCallCenterNotificationSound() {
@@ -282,32 +283,25 @@ export function generateSystemicEmailContent(
   return { recipients, subject, bodyHtml };
 }
 
-// Local storage key for email log history
-const EMAIL_LOG_STORAGE_KEY = "ideal_group_systemic_email_logs";
+// In-memory cache for systemic email logs across sessions
+let inMemoryEmailLogs: SystemicEmailLog[] = [];
 
 export function getStoredSystemicEmailLogs(): SystemicEmailLog[] {
-  try {
-    const raw = localStorage.getItem(EMAIL_LOG_STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return inMemoryEmailLogs;
 }
 
 export function saveSystemicEmailLogs(logs: SystemicEmailLog[]) {
-  try {
-    localStorage.setItem(EMAIL_LOG_STORAGE_KEY, JSON.stringify(logs));
-  } catch (err) {
-    console.error("Failed to save email logs:", err);
-  }
+  inMemoryEmailLogs = logs;
+  saveEmailLogsCentral(logs).catch((err) => {
+    console.warn("Async central save for email logs:", err);
+  });
 }
 
 // Trigger systemic email dispatch for a batch of complaints per station
 export function dispatchSystemicEmailsForComplaints(
   complaints: Complaint[]
 ): SystemicEmailLog[] {
-  const logs: SystemicEmailLog[] = getStoredSystemicEmailLogs();
+  const logs: SystemicEmailLog[] = [...inMemoryEmailLogs];
   const newDispatchedLogs: SystemicEmailLog[] = [];
 
   // Group complaints by station

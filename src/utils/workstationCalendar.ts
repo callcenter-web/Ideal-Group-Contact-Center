@@ -1,11 +1,14 @@
 import { WorkstationCalendarDate } from "../types";
+import { 
+  fetchCalendarCentral, 
+  saveCalendarDateCentral, 
+  deleteCalendarDateCentral 
+} from "./centralDbSync";
 
-const CALENDAR_STORAGE_KEY = "ideal_workstation_calendar_v1";
-
-// Initial default Sri Lanka public/company holidays
-const DEFAULT_CALENDAR_DATES: WorkstationCalendarDate[] = [
+// Initial default Sri Lanka public/company holidays as seed fallback
+export const DEFAULT_CALENDAR_DATES: WorkstationCalendarDate[] = [
   {
-    id: "default-1",
+    id: "cal-all-2026-08-15",
     station: "All",
     date: "2026-08-15",
     type: "off_day",
@@ -14,7 +17,7 @@ const DEFAULT_CALENDAR_DATES: WorkstationCalendarDate[] = [
     createdBy: "System Admin",
   },
   {
-    id: "default-2",
+    id: "cal-all-2026-09-16",
     station: "All",
     date: "2026-09-16",
     type: "off_day",
@@ -23,7 +26,7 @@ const DEFAULT_CALENDAR_DATES: WorkstationCalendarDate[] = [
     createdBy: "System Admin",
   },
   {
-    id: "default-3",
+    id: "cal-colombo-2026-08-20",
     station: "Colombo",
     date: "2026-08-20",
     type: "off_day",
@@ -33,27 +36,18 @@ const DEFAULT_CALENDAR_DATES: WorkstationCalendarDate[] = [
   },
 ];
 
+let inMemoryCalendarCache: WorkstationCalendarDate[] = [...DEFAULT_CALENDAR_DATES];
+
 export const getStoredCalendarDates = (): WorkstationCalendarDate[] => {
-  try {
-    const raw = localStorage.getItem(CALENDAR_STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(DEFAULT_CALENDAR_DATES));
-      return DEFAULT_CALENDAR_DATES;
-    }
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
-  } catch (e) {
-    console.error("Failed to parse workstation calendar state", e);
-  }
-  return DEFAULT_CALENDAR_DATES;
+  return inMemoryCalendarCache;
+};
+
+export const setStoredCalendarDates = (dates: WorkstationCalendarDate[]): void => {
+  inMemoryCalendarCache = dates;
 };
 
 export const saveCalendarDates = (dates: WorkstationCalendarDate[]): void => {
-  try {
-    localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(dates));
-  } catch (e) {
-    console.error("Failed to save workstation calendar state", e);
-  }
+  inMemoryCalendarCache = dates;
 };
 
 /**
@@ -67,7 +61,7 @@ export const saveCalendarDates = (dates: WorkstationCalendarDate[]): void => {
 export const isDateWorkingDay = (
   date: Date,
   stationName?: string,
-  calendarDates: WorkstationCalendarDate[] = getStoredCalendarDates()
+  calendarDates: WorkstationCalendarDate[] = inMemoryCalendarCache
 ): boolean => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -75,8 +69,8 @@ export const isDateWorkingDay = (
   const dateStr = `${year}-${month}-${day}`;
 
   // Find matches for this station or "All"
-  const matched = calendarDates.filter(
-    (item) => item.date === dateStr && (item.station === "All" || (stationName && item.station.toLowerCase() === stationName.toLowerCase()))
+  const matched = (calendarDates || []).filter(
+    (item) => item && item.date === dateStr && (item.station === "All" || (stationName && item.station.toLowerCase() === stationName.toLowerCase()))
   );
 
   // If explicit off_day exists

@@ -2,9 +2,14 @@ import React, { useState } from "react";
 import { UserProfile, Complaint, CallCenterOfficer, StationProfile } from "../types";
 import { 
   X, User, Shield, Phone, Mail, MapPin, CheckCircle2, Clock, Award, Lock, Sparkles, 
-  Edit3, Save, UserPlus, Users, Eye, EyeOff, Search, Check, Key, Plus
+  Edit3, Save, UserPlus, Users, Eye, EyeOff, Search, Check, Key, Plus, AlertCircle, Loader2
 } from "lucide-react";
 import { STATIONS as DEFAULT_STATIONS } from "../demoData";
+import { 
+  saveUserProfileCentral, 
+  saveOfficersCentral, 
+  saveStationsCentral 
+} from "../utils/centralDbSync";
 
 interface UserProfileModalProps {
   user: UserProfile;
@@ -75,6 +80,8 @@ export default function UserProfileModal({
 
   const [searchTerm, setSearchTerm] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const getInitials = (name?: string) => {
     if (!name) return "CX";
@@ -90,8 +97,12 @@ export default function UserProfileModal({
   };
 
   // Admin Save Station Edit
-  const handleSaveStationEdit = (code: string) => {
+  const handleSaveStationEdit = async (code: string) => {
     if (!onUpdateStationsList || !stationsList) return;
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveMessage("Saving to central database...");
+
     const updatedList = stationsList.map((st) => {
       if (st.code === code) {
         return {
@@ -101,17 +112,30 @@ export default function UserProfileModal({
       }
       return st;
     });
+
+    const res = await saveStationsCentral(updatedList);
+    setIsSaving(false);
+
+    if (!res.success) {
+      setSaveError(`Save failed — central database was not updated: ${res.error}`);
+      return;
+    }
+
     onUpdateStationsList(updatedList);
     setEditingStationCode(null);
-    setSaveMessage("Station credentials & profile updated!");
-    setTimeout(() => setSaveMessage(null), 3000);
+    setSaveMessage("Saved to central database");
+    setTimeout(() => setSaveMessage(null), 3500);
   };
 
   // Admin Add New Station
-  const handleAddNewStation = (e: React.FormEvent) => {
+  const handleAddNewStation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!onUpdateStationsList || !stationsList) return;
     if (!newStationForm.name.trim() || !newStationForm.code.trim()) return;
+
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveMessage("Saving to central database...");
 
     const newStation: StationProfile = {
       ...newStationForm,
@@ -119,7 +143,16 @@ export default function UserProfileModal({
       passwordHash: newStationForm.passwordHash || "ideal123",
     };
 
-    onUpdateStationsList([...stationsList, newStation]);
+    const updatedList = [...stationsList, newStation];
+    const res = await saveStationsCentral(updatedList);
+    setIsSaving(false);
+
+    if (!res.success) {
+      setSaveError(`Save failed — central database was not updated: ${res.error}`);
+      return;
+    }
+
+    onUpdateStationsList(updatedList);
     setIsAddingStation(false);
     setNewStationForm({
       name: "",
@@ -129,13 +162,17 @@ export default function UserProfileModal({
       email: "",
       phone: "+94 ",
     });
-    setSaveMessage(`Station ${newStation.name} registered successfully!`);
-    setTimeout(() => setSaveMessage(null), 3000);
+    setSaveMessage(`Station ${newStation.name} saved to central database`);
+    setTimeout(() => setSaveMessage(null), 3500);
   };
 
   // Save Self Profile
-  const handleSaveSelf = (e: React.FormEvent) => {
+  const handleSaveSelf = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveMessage("Saving to central database...");
+
     const updatedUser: UserProfile = {
       ...user,
       name: selfForm.name,
@@ -145,7 +182,8 @@ export default function UserProfileModal({
       department: selfForm.department,
       avatar: selfForm.avatar || getInitials(selfForm.name),
     };
-    onUpdateCurrentUser(updatedUser);
+
+    const res = await saveUserProfileCentral(updatedUser);
 
     // If user is a Call Center officer, sync in officers list
     if (user.officerId && onUpdateOfficersList && officersList) {
@@ -163,6 +201,7 @@ export default function UserProfileModal({
         }
         return off;
       });
+      await saveOfficersCentral(updatedList);
       onUpdateOfficersList(updatedList);
     }
 
@@ -179,16 +218,29 @@ export default function UserProfileModal({
         }
         return st;
       });
+      await saveStationsCentral(updatedStations);
       onUpdateStationsList(updatedStations);
     }
 
+    setIsSaving(false);
+
+    if (!res.success) {
+      setSaveError(`Save failed — central database was not updated: ${res.error}`);
+      return;
+    }
+
+    onUpdateCurrentUser(updatedUser);
     setIsEditingSelf(false);
-    setSaveMessage("Profile updated successfully!");
-    setTimeout(() => setSaveMessage(null), 3000);
+    setSaveMessage("Saved to central database");
+    setTimeout(() => setSaveMessage(null), 3500);
   };
 
   // Admin Save Officer Edit
-  const handleSaveOfficerEdit = (officerId: string) => {
+  const handleSaveOfficerEdit = async (officerId: string) => {
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveMessage("Saving to central database...");
+
     const updatedList = officersList.map((off) => {
       if (off.id === officerId) {
         return {
@@ -199,16 +251,29 @@ export default function UserProfileModal({
       }
       return off;
     });
+
+    const res = await saveOfficersCentral(updatedList);
+    setIsSaving(false);
+
+    if (!res.success) {
+      setSaveError(`Save failed — central database was not updated: ${res.error}`);
+      return;
+    }
+
     onUpdateOfficersList(updatedList);
     setEditingOfficerId(null);
-    setSaveMessage("User profile updated!");
-    setTimeout(() => setSaveMessage(null), 3000);
+    setSaveMessage("Saved to central database");
+    setTimeout(() => setSaveMessage(null), 3500);
   };
 
   // Admin Add New Officer
-  const handleAddNewUser = (e: React.FormEvent) => {
+  const handleAddNewUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserForm.name.trim()) return;
+
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveMessage("Saving to central database...");
 
     const newOfficer: CallCenterOfficer = {
       id: newUserForm.id || `CC-${100 + officersList.length + 1}`,
@@ -220,7 +285,16 @@ export default function UserProfileModal({
       department: newUserForm.department,
     };
 
-    onUpdateOfficersList([...officersList, newOfficer]);
+    const updatedList = [...officersList, newOfficer];
+    const res = await saveOfficersCentral(updatedList);
+    setIsSaving(false);
+
+    if (!res.success) {
+      setSaveError(`Save failed — central database was not updated: ${res.error}`);
+      return;
+    }
+
+    onUpdateOfficersList(updatedList);
     setIsAddingUser(false);
     setNewUserForm({
       name: "",
@@ -231,8 +305,8 @@ export default function UserProfileModal({
       avatar: "",
       department: "Ideal Motors Central CX Call Center"
     });
-    setSaveMessage(`User ${newOfficer.name} created successfully!`);
-    setTimeout(() => setSaveMessage(null), 3000);
+    setSaveMessage(`User ${newOfficer.name} saved to central database`);
+    setTimeout(() => setSaveMessage(null), 3500);
   };
 
   // Statistics calculation for Call Center
@@ -322,8 +396,27 @@ export default function UserProfileModal({
           </div>
         </div>
 
-        {/* Save notification toast */}
-        {saveMessage && (
+        {/* Save notification toast / Error toast / Loading toast */}
+        {isSaving && (
+          <div className="bg-amber-600 text-white text-xs font-bold px-4 py-2 flex items-center justify-between shrink-0 animate-fade-in">
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Saving to central database (Supabase)...
+            </span>
+          </div>
+        )}
+
+        {saveError && (
+          <div className="bg-rose-600 text-white text-xs font-bold px-4 py-2 flex items-center justify-between shrink-0 animate-fade-in">
+            <span className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" /> {saveError}
+            </span>
+            <button type="button" onClick={() => setSaveError(null)} className="text-white/80 hover:text-white">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {!isSaving && !saveError && saveMessage && (
           <div className="bg-emerald-600 text-white text-xs font-bold px-4 py-2 flex items-center justify-between shrink-0 animate-fade-in">
             <span className="flex items-center gap-2">
               <Check className="h-4 w-4" /> {saveMessage}

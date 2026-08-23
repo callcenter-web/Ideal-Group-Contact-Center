@@ -6,7 +6,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO_COMPLAINTS, CALL_CENTER_OFFICERS, STATIONS } from "./src/demoData";
-import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./src/utils/supabaseSanitizer";
+import { 
+  sanitizeComplaintForSupabase, 
+  normalizeComplaintFromSupabase, 
+  performResilientSupabaseUpsert 
+} from "./src/utils/supabaseSanitizer";
 
 dotenv.config();
 
@@ -14,7 +18,7 @@ dotenv.config();
 let SUPABASE_URL = process.env.SUPABASE_URL || "https://qsistbvaukxuwebqupiy.supabase.co";
 let SUPABASE_KEY = process.env.SUPABASE_KEY || "sb_publishable_Npa3x5SHHp65jinonZFnKA_56lBMOQb";
 
-// Clean and normalize the Supabase URL (strip /rest/v1/ and trailing slashes to prevent SDK 404 errors)
+// Clean and normalize the Supabase URL
 if (SUPABASE_URL) {
   SUPABASE_URL = SUPABASE_URL.trim();
   if (SUPABASE_URL.endsWith("/rest/v1/")) {
@@ -33,91 +37,27 @@ if (SUPABASE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Memory cache & disk persistence setup
-let localComplaintsCache = [...DEMO_COMPLAINTS];
-let localOfficersCache = [...CALL_CENTER_OFFICERS];
-let localStationsCache = [...STATIONS];
-let localEmailLogsCache: any[] = [];
-let localCalendarCache: any[] = [
-  {
-    id: "default-1",
-    station: "All",
-    date: "2026-08-15",
-    type: "off_day",
-    reason: "Company Annual Holiday / Nikini Full Moon Poya",
-    createdAt: new Date().toISOString(),
-    createdBy: "System Admin",
-  },
-  {
-    id: "default-2",
-    station: "All",
-    date: "2026-09-16",
-    type: "off_day",
-    reason: "Milad-Un-Nabi (Holy Prophet's Birthday)",
-    createdAt: new Date().toISOString(),
-    createdBy: "System Admin",
-  },
-  {
-    id: "default-3",
-    station: "Colombo",
-    date: "2026-08-20",
-    type: "off_day",
-    reason: "Colombo Workshop Scheduled Equipment Maintenance",
-    createdAt: new Date().toISOString(),
-    createdBy: "Admin",
-  },
-];
-
-const DB_FILE_PATH = path.join(process.cwd(), "persistent_database.json");
-
-function loadPersistentData() {
-  try {
-    if (fs.existsSync(DB_FILE_PATH)) {
-      const raw = fs.readFileSync(DB_FILE_PATH, "utf-8");
-      const data = JSON.parse(raw);
-      if (data.complaints && Array.isArray(data.complaints) && data.complaints.length > 0) {
-        localComplaintsCache = data.complaints;
-      }
-      if (data.officers && Array.isArray(data.officers) && data.officers.length > 0) {
-        localOfficersCache = data.officers;
-      }
-      if (data.stations && Array.isArray(data.stations) && data.stations.length > 0) {
-        localStationsCache = data.stations;
-      }
-      if (data.calendar && Array.isArray(data.calendar)) {
-        localCalendarCache = data.calendar;
-      }
-      if (data.emailLogs && Array.isArray(data.emailLogs)) {
-        localEmailLogsCache = data.emailLogs;
-      }
-      console.log("Loaded persistent database store from disk successfully.");
-    } else {
-      savePersistentData();
-    }
-  } catch (err) {
-    console.error("Error loading persistent database file:", err);
+function stringToStableUuid(str: string): string {
+  const clean = (str || "admin-master").trim().toLowerCase();
+  let hash1 = 0x811c9dc5;
+  let hash2 = 0x41c64e6d;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean.charCodeAt(i);
+    hash1 = (hash1 ^ ch) * 0x01000193;
+    hash2 = (hash2 ^ (ch << 1)) * 0x5bd1e995;
   }
+  const hex1 = (hash1 >>> 0).toString(16).padStart(8, "0");
+  const hex2 = (hash2 >>> 0).toString(16).padStart(8, "0");
+  const hexCombined = (hex1 + hex2 + hex1 + hex2).substring(0, 32);
+
+  return [
+    hexCombined.substring(0, 8),
+    hexCombined.substring(8, 12),
+    "4" + hexCombined.substring(13, 16),
+    ((parseInt(hexCombined.substring(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0") + hexCombined.substring(18, 20),
+    hexCombined.substring(20, 32),
+  ].join("-");
 }
-
-function savePersistentData() {
-  try {
-    const payload = {
-      complaints: localComplaintsCache,
-      officers: localOfficersCache,
-      stations: localStationsCache,
-      calendar: localCalendarCache,
-      emailLogs: localEmailLogsCache,
-      lastUpdated: new Date().toISOString()
-    };
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(payload, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error writing persistent database file:", err);
-  }
-}
-
-// Initial boot load
-loadPersistentData();
-
 
 async function startServer() {
   const app = express();
@@ -163,7 +103,7 @@ Complaint Description: ${description}
 Ensure your response is highly detailed, professional, and directly actionable for the service station agent.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are an elite Customer Experience (CX) Recovery Expert. Your goal is to guide service station agents on how to convert highly dissatisfied customers into loyal promoters using active listening, deep empathy, and swift, practical resolutions. Do not provide any conversational filler in your response output, only return the requested JSON object.",
@@ -213,33 +153,23 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       if (error) {
         console.error("Supabase SELECT error:", error);
-        return res.json({
-          complaints: localComplaintsCache,
+        return res.status(500).json({
+          complaints: [],
           isSupabaseActive: false,
           error: error.message,
           code: error.code,
-          hint: "Table 'complaints' might not exist or lacks correct RLS policies. Run the DDL setup in your Supabase SQL Editor."
         });
       }
 
-      if (data) {
-        const normalized = data.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow)) as any;
-        localComplaintsCache = normalized;
-        savePersistentData();
-        return res.json({
-          complaints: normalized,
-          isSupabaseActive: true
-        });
-      }
-
+      const normalized = (data || []).map((sbRow: any) => normalizeComplaintFromSupabase(sbRow));
       res.json({
-        complaints: localComplaintsCache,
+        complaints: normalized,
         isSupabaseActive: true
       });
     } catch (err: any) {
       console.error("Fetch complaints exception:", err);
-      res.json({
-        complaints: localComplaintsCache,
+      res.status(500).json({
+        complaints: [],
         isSupabaseActive: false,
         error: err.message
       });
@@ -255,18 +185,15 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
 
       const complaintsArray = Array.isArray(complaints) ? complaints : [complaints];
-
-      // Perform resilient write to Supabase
       const { data, error, strippedColumns } = await performResilientSupabaseUpsert(supabase, complaintsArray);
 
       if (error) {
         console.error("Supabase UPSERT error:", error);
-        return res.json({
+        return res.status(500).json({
           success: false,
           isSupabaseActive: false,
           error: error.message,
-          code: error.code,
-          complaints: localComplaintsCache
+          code: error.code
         });
       }
 
@@ -276,24 +203,20 @@ Ensure your response is highly detailed, professional, and directly actionable f
         .select("*")
         .order("date", { ascending: false });
 
-      if (freshData) {
-        localComplaintsCache = freshData.map((sbRow: any) => normalizeComplaintFromSupabase(sbRow)) as any;
-        savePersistentData();
-      }
+      const normalized = (freshData || []).map((sbRow: any) => normalizeComplaintFromSupabase(sbRow));
 
       res.json({
         success: true,
         isSupabaseActive: true,
         strippedColumns,
-        complaints: localComplaintsCache
+        complaints: normalized
       });
     } catch (err: any) {
       console.error("Save complaints exception:", err);
-      res.json({
+      res.status(500).json({
         success: false,
         isSupabaseActive: false,
-        error: err.message,
-        complaints: localComplaintsCache
+        error: err.message
       });
     }
   });
@@ -306,23 +229,6 @@ Ensure your response is highly detailed, professional, and directly actionable f
         return res.status(400).json({ error: "Complaint ID or WO Number is required for deletion." });
       }
 
-      const targetId = id ? String(id).trim().toUpperCase() : "";
-      const targetWoNo = woNo ? String(woNo).trim().toUpperCase() : "";
-
-      // Filter local memory cache thoroughly and persist to disk
-      localComplaintsCache = localComplaintsCache.filter((c) => {
-        const cId = (c.id || "").trim().toUpperCase();
-        const cWo = (c.woNo || "").trim().toUpperCase();
-
-        if (targetId && (cId === targetId || cWo === targetId)) return false;
-        if (targetWoNo && (cId === targetWoNo || cWo === targetWoNo)) return false;
-        if (targetWoNo && cId === `COMP-${targetWoNo}`) return false;
-        if (targetId && cId === `COMP-${targetId}`) return false;
-        return true;
-      });
-      savePersistentData();
-
-      // Try deleting from Supabase
       const conditions: string[] = [];
       if (id) {
         conditions.push(`id.eq.${id}`);
@@ -343,26 +249,23 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       if (error) {
         console.error("Supabase DELETE single complaint error:", error);
-        return res.json({
-          success: true,
+        return res.status(500).json({
+          success: false,
           isSupabaseActive: false,
           error: error.message,
-          complaints: localComplaintsCache
         });
       }
 
       res.json({
         success: true,
-        isSupabaseActive: true,
-        complaints: localComplaintsCache
+        isSupabaseActive: true
       });
     } catch (err: any) {
       console.error("Delete complaint exception:", err);
-      res.json({
-        success: true,
+      res.status(500).json({
+        success: false,
         isSupabaseActive: false,
-        error: err.message,
-        complaints: localComplaintsCache
+        error: err.message
       });
     }
   });
@@ -377,11 +280,11 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
       const { data, error } = await query;
       if (error) {
-        return res.json({ history: [], isSupabaseActive: false, error: error.message });
+        return res.status(500).json({ history: [], isSupabaseActive: false, error: error.message });
       }
       res.json({ history: data || [], isSupabaseActive: true });
     } catch (err: any) {
-      res.json({ history: [], isSupabaseActive: false, error: err.message });
+      res.status(500).json({ history: [], isSupabaseActive: false, error: err.message });
     }
   });
 
@@ -411,18 +314,18 @@ Ensure your response is highly detailed, professional, and directly actionable f
         created_at: event.created_at || new Date().toISOString()
       };
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("complaint_workflow_history")
         .upsert([newEvent], { onConflict: "id" });
 
       if (error) {
         console.warn("Supabase workflow_history upsert warning:", error.message);
-        return res.json({ success: true, isSupabaseActive: false, event: newEvent, error: error.message });
+        return res.status(500).json({ success: false, isSupabaseActive: false, error: error.message });
       }
 
       res.json({ success: true, isSupabaseActive: true, event: newEvent });
     } catch (err: any) {
-      res.json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -435,39 +338,21 @@ Ensure your response is highly detailed, professional, and directly actionable f
         .order("id", { ascending: true });
 
       if (error) {
-        console.warn("Supabase officers fetch warning/fallback:", error.message);
-        return res.json({
-          officers: localOfficersCache,
-          isSupabaseActive: false
+        console.warn("Supabase officers fetch warning:", error.message);
+        return res.status(500).json({
+          officers: [],
+          isSupabaseActive: false,
+          error: error.message
         });
       }
 
-      if (!data || data.length === 0) {
-        // Pre-populate if empty in Supabase
-        const { error: insertError } = await supabase
-          .from("call_center_officers")
-          .insert(CALL_CENTER_OFFICERS);
-
-        if (!insertError) {
-          localOfficersCache = [...CALL_CENTER_OFFICERS];
-          savePersistentData();
-          return res.json({
-            officers: CALL_CENTER_OFFICERS,
-            isSupabaseActive: true
-          });
-        }
-      } else {
-        localOfficersCache = data;
-        savePersistentData();
-      }
-
       res.json({
-        officers: data || localOfficersCache,
+        officers: data || [],
         isSupabaseActive: true
       });
     } catch (err: any) {
-      res.json({
-        officers: localOfficersCache,
+      res.status(500).json({
+        officers: [],
         isSupabaseActive: false,
         error: err.message
       });
@@ -483,34 +368,29 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
 
       const officersArray = Array.isArray(officers) ? officers : [officers];
-      localOfficersCache = officersArray;
-      savePersistentData();
-
       const { data, error } = await supabase
         .from("call_center_officers")
         .upsert(officersArray, { onConflict: "id" });
 
       if (error) {
         console.error("Supabase officers UPSERT error:", error);
-        return res.json({
-          success: true,
+        return res.status(500).json({
+          success: false,
           isSupabaseActive: false,
           error: error.message,
-          officers: localOfficersCache
         });
       }
 
       res.json({
         success: true,
         isSupabaseActive: true,
-        officers: localOfficersCache
+        officers: officersArray
       });
     } catch (err: any) {
-      res.json({
-        success: true,
+      res.status(500).json({
+        success: false,
         isSupabaseActive: false,
-        error: err.message,
-        officers: localOfficersCache
+        error: err.message
       });
     }
   });
@@ -521,42 +401,24 @@ Ensure your response is highly detailed, professional, and directly actionable f
       const { data, error } = await supabase
         .from("stations")
         .select("*")
-        .order("code", { ascending: true });
+        .order("name", { ascending: true });
 
       if (error) {
-        console.warn("Supabase stations fetch warning/fallback:", error.message);
-        return res.json({
-          stations: localStationsCache,
-          isSupabaseActive: false
+        console.warn("Supabase stations fetch warning:", error.message);
+        return res.status(500).json({
+          stations: [],
+          isSupabaseActive: false,
+          error: error.message
         });
       }
 
-      if (!data || data.length === 0) {
-        // Pre-populate if empty in Supabase
-        const { error: insertError } = await supabase
-          .from("stations")
-          .insert(STATIONS);
-
-        if (!insertError) {
-          localStationsCache = [...STATIONS];
-          savePersistentData();
-          return res.json({
-            stations: STATIONS,
-            isSupabaseActive: true
-          });
-        }
-      } else {
-        localStationsCache = data;
-        savePersistentData();
-      }
-
       res.json({
-        stations: data || localStationsCache,
+        stations: data || [],
         isSupabaseActive: true
       });
     } catch (err: any) {
-      res.json({
-        stations: localStationsCache,
+      res.status(500).json({
+        stations: [],
         isSupabaseActive: false,
         error: err.message
       });
@@ -572,34 +434,29 @@ Ensure your response is highly detailed, professional, and directly actionable f
       }
 
       const stationsArray = Array.isArray(stations) ? stations : [stations];
-      localStationsCache = stationsArray;
-      savePersistentData();
-
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("stations")
         .upsert(stationsArray, { onConflict: "code" });
 
       if (error) {
         console.error("Supabase stations UPSERT error:", error);
-        return res.json({
-          success: true,
+        return res.status(500).json({
+          success: false,
           isSupabaseActive: false,
-          error: error.message,
-          stations: localStationsCache
+          error: error.message
         });
       }
 
       res.json({
         success: true,
         isSupabaseActive: true,
-        stations: localStationsCache
+        stations: stationsArray
       });
     } catch (err: any) {
-      res.json({
-        success: true,
+      res.status(500).json({
+        success: false,
         isSupabaseActive: false,
-        error: err.message,
-        stations: localStationsCache
+        error: err.message
       });
     }
   });
@@ -607,15 +464,131 @@ Ensure your response is highly detailed, professional, and directly actionable f
   // API Routes for Workstation Calendar
   app.get("/api/calendar", async (req, res) => {
     try {
-      const { data, error } = await supabase.from("workstation_calendar").select("*");
-      if (error || !data || data.length === 0) {
-        return res.json({ dates: localCalendarCache, isSupabaseActive: !error });
+      const { data, error } = await supabase
+        .from("workstation_calendar")
+        .select("*")
+        .order("date", { ascending: true });
+
+      if (error) {
+        return res.status(500).json({ dates: [], isSupabaseActive: false, error: error.message });
       }
-      localCalendarCache = data;
-      savePersistentData();
-      res.json({ dates: data, isSupabaseActive: true });
+      res.json({ dates: data || [], isSupabaseActive: true });
     } catch (err: any) {
-      res.json({ dates: localCalendarCache, isSupabaseActive: false });
+      res.status(500).json({ dates: [], isSupabaseActive: false, error: err.message });
+    }
+  });
+
+  app.post("/api/calendar", async (req, res) => {
+    try {
+      const { dates } = req.body;
+      if (dates && Array.isArray(dates)) {
+        const { error } = await supabase.from("workstation_calendar").upsert(dates, { onConflict: "id" });
+        if (error) {
+          console.error("Supabase calendar UPSERT error:", error);
+          return res.status(500).json({ success: false, error: error.message });
+        }
+      }
+      res.json({ success: true, dates });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/calendar/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { error } = await supabase.from("workstation_calendar").delete().eq("id", id);
+      if (error) {
+        console.error("Supabase calendar DELETE error:", error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+      res.json({ success: true, id });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API Routes for Systemic Email Logs
+  app.get("/api/email-logs", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("systemic_email_logs")
+        .select("*")
+        .order("sentAt", { ascending: false });
+
+      if (error) {
+        return res.status(500).json({ logs: [], error: error.message });
+      }
+      res.json({ logs: data || [] });
+    } catch (err: any) {
+      res.status(500).json({ logs: [], error: err.message });
+    }
+  });
+
+  app.post("/api/email-logs", async (req, res) => {
+    try {
+      const { logs } = req.body;
+      if (logs && Array.isArray(logs)) {
+        const { error } = await supabase.from("systemic_email_logs").upsert(logs, { onConflict: "id" });
+        if (error) {
+          return res.status(500).json({ success: false, error: error.message });
+        }
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API Routes for User Profiles
+  app.get("/api/user-profiles", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        return res.status(500).json({ profiles: [], error: error.message });
+      }
+      res.json({ profiles: data || [] });
+    } catch (err: any) {
+      res.status(500).json({ profiles: [], error: err.message });
+    }
+  });
+
+  app.post("/api/user-profiles", async (req, res) => {
+    try {
+      const { profile } = req.body;
+      if (!profile) return res.status(400).json({ error: "Profile data is required" });
+
+      const userIdKey = profile.officerId || (profile.role === "admin" ? "admin-master" : profile.name || "user-default");
+      const stableUuid = stringToStableUuid(userIdKey);
+
+      const row = {
+        id: stableUuid,
+        user_id: userIdKey,
+        display_name: profile.name || "",
+        email: profile.email || "",
+        phone: profile.phone || "",
+        role: profile.role || "callcenter",
+        station: profile.station || null,
+        department: profile.department || "",
+        avatar: profile.avatar || "",
+        active: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("user_profiles")
+        .upsert([row], { onConflict: "user_id" });
+
+      if (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+      res.json({ success: true, profile });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -631,7 +604,6 @@ Ensure your response is highly detailed, professional, and directly actionable f
       res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
       return res.sendFile(targetPath);
     } else {
-      // Try running the python script synchronously if not yet generated
       try {
         const { execSync } = require("child_process");
         execSync("python3 generate_sla_dashboard.py", { stdio: "inherit" });
@@ -647,108 +619,37 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
-  app.post("/api/calendar", async (req, res) => {
-    try {
-      const { dates } = req.body;
-      if (dates && Array.isArray(dates)) {
-        localCalendarCache = dates;
-        savePersistentData();
-        const { error } = await supabase.from("workstation_calendar").upsert(dates, { onConflict: "id" });
-        if (error) {
-          console.error("Supabase calendar UPSERT error:", error);
-        }
-      }
-      res.json({ success: true, dates: localCalendarCache });
-    } catch (err: any) {
-      res.json({ success: true, dates: localCalendarCache });
-    }
-  });
-
-  app.delete("/api/calendar/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      localCalendarCache = localCalendarCache.filter((item) => item.id !== id);
-      savePersistentData();
-      const { error } = await supabase.from("workstation_calendar").delete().eq("id", id);
-      if (error) {
-        console.error("Supabase calendar DELETE error:", error);
-      }
-      res.json({ success: true, dates: localCalendarCache });
-    } catch (err: any) {
-      res.json({ success: true, dates: localCalendarCache });
-    }
-  });
-
-  // API Routes for Systemic Email Logs
-  app.get("/api/email-logs", async (req, res) => {
-    try {
-      const { data, error } = await supabase.from("systemic_email_logs").select("*").order("sentAt", { ascending: false });
-      if (error || !data || data.length === 0) {
-        return res.json({ logs: localEmailLogsCache });
-      }
-      localEmailLogsCache = data;
-      savePersistentData();
-      res.json({ logs: data });
-    } catch (err) {
-      res.json({ logs: localEmailLogsCache });
-    }
-  });
-
-  app.post("/api/email-logs", async (req, res) => {
-    try {
-      const { logs } = req.body;
-      if (logs && Array.isArray(logs)) {
-        localEmailLogsCache = [...logs, ...localEmailLogsCache];
-        savePersistentData();
-        await supabase.from("systemic_email_logs").upsert(logs, { onConflict: "id" });
-      }
-      res.json({ success: true, logs: localEmailLogsCache });
-    } catch (err) {
-      res.json({ success: true, logs: localEmailLogsCache });
-    }
-  });
-
-
   // API Route to reset the database back to DEMO_COMPLAINTS
   app.post("/api/complaints/reset", async (req, res) => {
     try {
-      localComplaintsCache = [...DEMO_COMPLAINTS];
-      savePersistentData();
-
-      // Attempt to clear and insert in Supabase
-      const { error: deleteError } = await supabase
+      // Clear and insert in Supabase
+      await supabase
         .from("complaints")
         .delete()
         .neq("id", "FORCE_NONE_MATCHING_ID");
-
-      if (deleteError) {
-        console.error("Supabase DELETE during reset error:", deleteError);
-      }
 
       const { error: insertError } = await performResilientSupabaseUpsert(supabase, DEMO_COMPLAINTS);
 
       if (insertError) {
         console.error("Supabase INSERT during reset error:", insertError);
-        return res.json({
-          success: true,
+        return res.status(500).json({
+          success: false,
           isSupabaseActive: false,
           error: insertError.message,
-          complaints: localComplaintsCache
         });
       }
 
       res.json({
         success: true,
         isSupabaseActive: true,
-        complaints: localComplaintsCache
+        complaints: DEMO_COMPLAINTS
       });
     } catch (err: any) {
       console.error("Reset complaints exception:", err);
-      res.json({
-        success: true,
+      res.status(500).json({
+        success: false,
         isSupabaseActive: false,
         error: err.message,
-        complaints: localComplaintsCache
       });
     }
   });
@@ -756,9 +657,6 @@ Ensure your response is highly detailed, professional, and directly actionable f
   // API Route to delete all complaints
   app.post("/api/complaints/clear", async (req, res) => {
     try {
-      localComplaintsCache = [];
-      savePersistentData();
-
       const { error: deleteError } = await supabase
         .from("complaints")
         .delete()
@@ -766,11 +664,10 @@ Ensure your response is highly detailed, professional, and directly actionable f
 
       if (deleteError) {
         console.error("Supabase clear error:", deleteError);
-        return res.json({
-          success: true,
+        return res.status(500).json({
+          success: false,
           isSupabaseActive: false,
           error: deleteError.message,
-          complaints: []
         });
       }
 
@@ -781,11 +678,10 @@ Ensure your response is highly detailed, professional, and directly actionable f
       });
     } catch (err: any) {
       console.error("Clear complaints exception:", err);
-      res.json({
-        success: true,
+      res.status(500).json({
+        success: false,
         isSupabaseActive: false,
         error: err.message,
-        complaints: []
       });
     }
   });
