@@ -16,9 +16,15 @@ import {
   ExternalLink,
   Info,
   Copy,
-  Check
+  Check,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Car,
+  Filter
 } from "lucide-react";
-import { dispatchSystemicEmailsForComplaints, generateSystemicEmailContent } from "../utils/systemicEmailNotifier";
+import { dispatchSystemicEmailsForComplaints, generateSystemicEmailContent, getPendingCasesToContact } from "../utils/systemicEmailNotifier";
+import { matchesStationCodeOrName, isStationContacted, isComplaintRejected } from "../utils/stationUtils";
 
 interface StationDirectoryAndEmailModalProps {
   isOpen: boolean;
@@ -41,6 +47,8 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   const [selectedLog, setSelectedLog] = useState<SystemicEmailLog | null>(null);
   const [dispatchStatusMsg, setDispatchStatusMsg] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [expandedStationCode, setExpandedStationCode] = useState<string | null>(null);
+  const [filterStationsWithPendingOnly, setFilterStationsWithPendingOnly] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -87,54 +95,46 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     }
   };
 
-  // Build full structured dispatch message for a station (counts only, no individual detail rows)
+  const getAgingDays = (c: Complaint) => {
+    if (!c.date) return 0;
+    const t = new Date(c.date).getTime();
+    if (isNaN(t)) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
+  };
+
+  // Build full structured dispatch message for a station focusing on pending cases to contact
   const getStationDispatchMessage = (station: StationProfile) => {
     const stationComplaints = complaints.filter(
-      (c) => c.station === station.name || c.station === station.code || c.station.toLowerCase().includes(station.code.toLowerCase())
+      (c) => matchesStationCodeOrName(c.station, station.code) || matchesStationCodeOrName(c.station, station.name)
     );
+
+    const pendingCasesToContact = getPendingCasesToContact(stationComplaints);
+    const count = pendingCasesToContact.length;
 
     const recipients = station.officers
       ? station.officers.map((o) => `${o.name} <${o.email}>`).join(", ")
       : station.email || "callcenter@idealgroup.lk";
 
-    const count = stationComplaints.length;
-    const toContactCount = stationComplaints.filter(
-      (c) => c.status === "Pending" || !c.status || c.stationResponseStatus === "Pending" || !c.stationContactedDate
+    const highPriorityCount = pendingCasesToContact.filter(
+      (c) => c.initialSatisfaction === "Very Dissatisfied" || getAgingDays(c) > 3 || c.feedbackStatus === "Still Dissatisfied"
     ).length;
-    const inProgressCount = stationComplaints.filter(
-      (c) => c.status === "In Progress" || c.status === "Contacted"
-    ).length;
-    const resolvedCount = stationComplaints.filter((c) => c.status === "Resolved").length;
-    const rejectedCount = stationComplaints.filter(
-      (c) =>
-        c.stationResponseStatus === "Rejected" ||
-        c.stationResponseStatus === "Rejected by Call Center" ||
-        c.stationResponseStatus === "Returned to Service Station" ||
-        c.feedbackStatus === "Rejected Again to Service Station" ||
-        c.feedbackStatus === "Returned to Service Station"
-    ).length;
-    const getAgingDays = (c: Complaint) => {
-      if (!c.date) return 0;
-      const t = new Date(c.date).getTime();
-      if (isNaN(t)) return 0;
-      return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
-    };
 
-    const highPriorityCount = stationComplaints.filter(
-      (c) => c.initialSatisfaction === "Very Dissatisfied" || getAgingDays(c) > 5 || c.feedbackStatus === "Still Dissatisfied"
-    ).length;
+    const rejectedCount = pendingCasesToContact.filter((c) => isComplaintRejected(c)).length;
+    const overdueCount = pendingCasesToContact.filter((c) => getAgingDays(c) > 3).length;
 
     // Categories breakdown
     const categoryMap: Record<string, number> = {};
-    stationComplaints.forEach((c) => {
+    pendingCasesToContact.forEach((c) => {
       const cat = c.category || c.mchCodeDescription || "General Service";
       categoryMap[cat] = (categoryMap[cat] || 0) + 1;
     });
 
-    const subject = `[Ideal Aftermarket] Complaint Summary Notice - ${count} Assigned Case(s) for ${station.name}`;
+    const subject = count > 0
+      ? `[Ideal Aftermarket] Action Required: ${count} Pending Case(s) for ${station.name} to Contact`
+      : `[Ideal Aftermarket] Status Notice: No Pending Cases to Contact - ${station.name}`;
 
     let msg = `====================================================\n`;
-    msg += `IDEAL GROUP CENTRAL CALL CENTER - COMPLAINT SUMMARY NOTICE\n`;
+    msg += `IDEAL GROUP CENTRAL CALL CENTER - WORKSTATION DISPATCH NOTICE\n`;
     msg += `====================================================\n`;
     msg += `SENDER: callcenter@idealgroup.lk\n`;
     msg += `TO: ${recipients}\n`;
@@ -143,40 +143,58 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     msg += `DISPATCH DATE: ${new Date().toLocaleString()}\n`;
     msg += `====================================================\n\n`;
     msg += `Dear ${station.name} Workshop & Service Management Team,\n\n`;
-    msg += `Central Call Center has registered ${count} total assigned customer complaint case(s) for your workstation.\n\n`;
     
-    msg += `1. EXECUTIVE COUNTS SUMMARY:\n`;
-    msg += `   - Total Assigned Complaints: ${count}\n`;
-    msg += `   - Pending Station Contact (To Contact): ${toContactCount}\n`;
-    msg += `   - In Progress / Contacted: ${inProgressCount}\n`;
-    msg += `   - Resolved Cases: ${resolvedCount}\n`;
-    msg += `   - Returned / Rejected for Re-action: ${rejectedCount}\n`;
-    msg += `   - High / Critical Priority: ${highPriorityCount}\n\n`;
-
-    msg += `2. CATEGORY BREAKDOWN COUNTS:\n`;
-    if (Object.keys(categoryMap).length > 0) {
-      Object.entries(categoryMap).forEach(([cat, cCount]) => {
-        const pct = count > 0 ? Math.round((cCount / count) * 100) : 0;
-        msg += `   * ${cat}: ${cCount} case(s) (${pct}%)\n`;
-      });
+    if (count === 0) {
+      msg += `All assigned complaints for ${station.name} have been contacted and resolved. There are currently NO pending cases requiring station contact.\n\n`;
     } else {
-      msg += `   * No active category records.\n`;
+      msg += `Central Call Center has recorded ${count} pending customer complaint case(s) that require your immediate customer contact, workshop inspection, and status update in the portal.\n\n`;
+      
+      msg += `1. PENDING CASES ACTION SUMMARY:\n`;
+      msg += `   - Cases Requiring Station Contact: ${count}\n`;
+      msg += `   - Critical / High Dissatisfaction: ${highPriorityCount}\n`;
+      msg += `   - Returned / Rejected for Re-action: ${rejectedCount}\n`;
+      msg += `   - Overdue SLA (> 3 Days): ${overdueCount}\n\n`;
+
+      msg += `2. ITEMIZED LIST OF PENDING CASES TO CONTACT:\n`;
+      msg += `----------------------------------------------------\n`;
+      pendingCasesToContact.forEach((c, idx) => {
+        const aging = getAgingDays(c);
+        const isRej = isComplaintRejected(c);
+        const statusLabel = isRej ? "⚠️ Returned to Station (Re-action Required)" : "⏳ Pending Station Contact & Inspection";
+        
+        msg += `[${idx + 1}] Case ID: ${c.id}${c.woNo ? ` | WO: ${c.woNo}` : ""}\n`;
+        msg += `    * Vehicle Reg No: ${c.vehicleRegNo || "N/A"}${c.chassiNo ? ` (Chassis: ${c.chassiNo})` : ""}\n`;
+        msg += `    * Customer Name: ${c.customerName || "Valued Customer"}\n`;
+        msg += `    * Customer Phone: ${c.customerPhone || "N/A"}${c.customerEmail ? ` | Email: ${c.customerEmail}` : ""}\n`;
+        msg += `    * Category / Issue: ${c.category || c.mchCodeDescription || "General Service"}\n`;
+        msg += `    * Customer Voice / Complaint: ${c.description || c.notes || "No complaint notes"}\n`;
+        msg += `    * Date Logged: ${c.date || "N/A"} (${aging} day${aging === 1 ? "" : "s"} aging)\n`;
+        msg += `    * Satisfaction: ${c.initialSatisfaction || "Dissatisfied"}\n`;
+        msg += `    * Current Action Status: ${statusLabel}\n`;
+        if (c.stationResponseRejectionReason) {
+          msg += `    * Rejection Reason: ${c.stationResponseRejectionReason}\n`;
+        }
+        if (c.advisorName) {
+          msg += `    * Assigned Advisor: ${c.advisorName}\n`;
+        }
+        msg += `----------------------------------------------------\n`;
+      });
+      msg += `\n`;
+
+      msg += `3. PENDING CATEGORY BREAKDOWN:\n`;
+      if (Object.keys(categoryMap).length > 0) {
+        Object.entries(categoryMap).forEach(([cat, cCount]) => {
+          const pct = count > 0 ? Math.round((cCount / count) * 100) : 0;
+          msg += `   * ${cat}: ${cCount} case(s) (${pct}%)\n`;
+        });
+      } else {
+        msg += `   * No active category records.\n`;
+      }
+      msg += `\n`;
     }
-    msg += `\n`;
-
-    const aging03 = stationComplaints.filter((c) => getAgingDays(c) <= 3).length;
-    const aging35 = stationComplaints.filter((c) => getAgingDays(c) > 3 && getAgingDays(c) <= 5).length;
-    const aging610 = stationComplaints.filter((c) => getAgingDays(c) > 5 && getAgingDays(c) <= 10).length;
-    const agingOver10 = stationComplaints.filter((c) => getAgingDays(c) > 10).length;
-
-    msg += `3. AGING / SLA COMPLIANCE COUNTS:\n`;
-    msg += `   * 0 - 3 Days (Normal SLA): ${aging03}\n`;
-    msg += `   * 3 - 5 Days (Pending SLA): ${aging35}\n`;
-    msg += `   * 6 - 10 Days (Escalated SLA): ${aging610}\n`;
-    msg += `   * > 10 Days (Critical Overdue): ${agingOver10}\n\n`;
 
     msg += `MANDATORY ACTION REQUIRED:\n`;
-    msg += `Please log in to the Ideal Group Complaint System portal to inspect customer contact details, contact the customers, and update 'Date Contacted' and 'Solution Provided'.\n\n`;
+    msg += `Please contact the above customer(s) directly on their provided phone numbers. After conducting the call and inspection, log into the Ideal Group Complaint System portal to record 'Date Contacted' and 'Solution Provided'.\n\n`;
     msg += `For support or re-assignments, contact: callcenter@idealgroup.lk\n\n`;
     msg += `Best Regards,\n`;
     msg += `Central Call Center Operations Team\n`;
@@ -208,7 +226,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   // Copy all station dispatch messages combined
   const handleCopyAllStationMessages = () => {
     let combinedMsg = `====================================================\n`;
-    combinedMsg += `ALL WORKSTATIONS MASTER CALL CENTER DISPATCH SUMMARY\n`;
+    combinedMsg += `ALL WORKSTATIONS PENDING CASES DISPATCH SUMMARY\n`;
     combinedMsg += `SENDER: callcenter@idealgroup.lk\n`;
     combinedMsg += `TIMESTAMP: ${new Date().toLocaleString()}\n`;
     combinedMsg += `====================================================\n\n`;
@@ -223,13 +241,14 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   const handleManualDispatchForStation = (station: StationProfile) => {
     // Filter complaints for this station
     const stationComplaints = complaints.filter(
-      (c) => c.station === station.name || c.station === station.code || c.station.toLowerCase().includes(station.code.toLowerCase())
+      (c) => matchesStationCodeOrName(c.station, station.code) || matchesStationCodeOrName(c.station, station.name)
     );
 
-    const targetList = stationComplaints.length > 0 ? stationComplaints : complaints.slice(0, 2);
+    const pendingCases = getPendingCasesToContact(stationComplaints);
+    const targetList = pendingCases.length > 0 ? pendingCases : stationComplaints;
     const newLogs = dispatchSystemicEmailsForComplaints(targetList);
 
-    setDispatchStatusMsg(`✅ Summary Email successfully dispatched to ${station.name} from callcenter@idealgroup.lk`);
+    setDispatchStatusMsg(`✅ Email successfully dispatched to ${station.name} (${pendingCases.length} pending cases to contact) from callcenter@idealgroup.lk`);
     if (onRefreshEmailLogs) onRefreshEmailLogs();
 
     setTimeout(() => {
@@ -240,38 +259,31 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   // Build mailto link for direct sending via desktop email client (Outlook/Gmail)
   const getStationMailtoLink = (station: StationProfile) => {
     const stationComplaints = complaints.filter(
-      (c) => c.station === station.name || c.station === station.code || c.station.toLowerCase().includes(station.code.toLowerCase())
+      (c) => matchesStationCodeOrName(c.station, station.code) || matchesStationCodeOrName(c.station, station.name)
     );
+    const pendingCasesToContact = getPendingCasesToContact(stationComplaints);
+    const count = pendingCasesToContact.length;
+
     const recipients = station.officers
       ? station.officers.map((o) => o.email).join(",")
       : station.email || "callcenter@idealgroup.lk";
 
-    const count = stationComplaints.length;
-    const toContactCount = stationComplaints.filter(
-      (c) => c.status === "Pending" || !c.status || c.stationResponseStatus === "Pending" || !c.stationContactedDate
-    ).length;
-    const getAgingDays = (c: Complaint) => {
-      if (!c.date) return 0;
-      const t = new Date(c.date).getTime();
-      if (isNaN(t)) return 0;
-      return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
-    };
+    const subject = encodeURIComponent(
+      count > 0
+        ? `[Ideal Aftermarket] Action Required: ${count} Pending Case(s) for ${station.name} to Contact`
+        : `[Ideal Aftermarket] Status Notice: No Pending Cases to Contact - ${station.name}`
+    );
 
-    const highPriorityCount = stationComplaints.filter(
-      (c) => c.initialSatisfaction === "Very Dissatisfied" || getAgingDays(c) > 5 || c.feedbackStatus === "Still Dissatisfied"
-    ).length;
-    const rejectedCount = stationComplaints.filter(
-      (c) =>
-        c.stationResponseStatus === "Rejected" ||
-        c.stationResponseStatus === "Rejected by Call Center" ||
-        c.stationResponseStatus === "Returned to Service Station" ||
-        c.feedbackStatus === "Rejected Again to Service Station" ||
-        c.feedbackStatus === "Returned to Service Station"
-    ).length;
-
-    const subject = encodeURIComponent(`[Ideal Aftermarket] Complaint Summary Notice - ${count} Assigned Case(s) for ${station.name}`);
-
-    let bodyText = `From: callcenter@idealgroup.lk\nTo: ${recipients}\nStation: ${station.name}\n\nDear Station Team,\n\nPlease find the summary counts of assigned complaints for ${station.name}:\n\n- Total Assigned Cases: ${count}\n- Pending Customer Contact: ${toContactCount}\n- High / Urgent Priority: ${highPriorityCount}\n- Returned / Rejected for Re-action: ${rejectedCount}\n\nPlease log in to the Central Call Center portal to access full customer details and record date contacted and solutions.\n\nRegards,\nCentral Call Center\nIdeal Group Sri Lanka\ncallcenter@idealgroup.lk`;
+    let bodyText = `From: callcenter@idealgroup.lk\nTo: ${recipients}\nStation: ${station.name}\n\n`;
+    if (count === 0) {
+      bodyText += `Dear Station Team,\n\nAll complaints assigned to ${station.name} are currently contacted and resolved. No pending cases requiring contact.\n\nRegards,\nCentral Call Center\ncallcenter@idealgroup.lk`;
+    } else {
+      bodyText += `Dear ${station.name} Workshop Team,\n\nPlease find the ${count} pending complaint case(s) requiring immediate customer contact and inspection:\n\n`;
+      pendingCasesToContact.forEach((c, idx) => {
+        bodyText += `${idx + 1}. [${c.id}] Vehicle: ${c.vehicleRegNo || "N/A"} | Customer: ${c.customerName} (Tel: ${c.customerPhone}) | Category: ${c.category || "Service"} | Note: ${c.description || "N/A"}\n`;
+      });
+      bodyText += `\nPlease log into the Ideal Group Complaint System portal to record Date Contacted and Solution Provided.\n\nRegards,\nCentral Call Center\nIdeal Group Sri Lanka\ncallcenter@idealgroup.lk`;
+    }
 
     return `mailto:${recipients}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
   };
@@ -287,10 +299,10 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
             </div>
             <div>
               <h2 className="text-lg font-black tracking-tight flex items-center gap-2">
-                Workstation Contact Directory & Systemic Dispatch
+                Workstation Contact Directory & Pending Cases Dispatch
               </h2>
               <p className="text-xs text-slate-300">
-                Central Call Center (<a href="mailto:callcenter@idealgroup.lk" className="underline text-blue-300 hover:text-white">callcenter@idealgroup.lk</a>) automated workshop dispatch & contacts
+                Central Call Center (<a href="mailto:callcenter@idealgroup.lk" className="underline text-blue-300 hover:text-white">callcenter@idealgroup.lk</a>) &bull; Only includes pending cases service station must contact
               </p>
             </div>
           </div>
@@ -323,7 +335,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
                 }`}
               >
-                📍 Service Station Directory ({STATIONS.length})
+                📍 Service Stations ({STATIONS.length})
               </button>
               <button
                 type="button"
@@ -335,17 +347,32 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                 }`}
               >
                 <FileText className="h-3.5 w-3.5" />
-                <span>Dispatch Email Logs ({emailLogs.length})</span>
+                <span>Dispatched Email Logs ({emailLogs.length})</span>
               </button>
             </div>
 
-            {/* Copy All Emails, Copy All Messages & Call Center Email Connection */}
+            {/* Filter Toggle & Copy All Messages / Emails */}
             <div className="flex flex-wrap items-center gap-2">
+              {activeTab === "directory" && (
+                <button
+                  type="button"
+                  onClick={() => setFilterStationsWithPendingOnly(!filterStationsWithPendingOnly)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer border ${
+                    filterStationsWithPendingOnly
+                      ? "bg-amber-600 text-white border-amber-700"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  <span>{filterStationsWithPendingOnly ? "Showing Stations with Pending Only" : "Show Pending Only"}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleCopyAllStationMessages}
                 className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer"
-                title="Copy complete dispatch message text for all workstations to clipboard"
+                title="Copy complete dispatch message text for all workstations with pending cases list"
               >
                 {copiedKey === "ALL_STATION_MESSAGES" ? (
                   <>
@@ -355,7 +382,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                 ) : (
                   <>
                     <Copy className="h-3.5 w-3.5 text-blue-200" />
-                    <span>Copy All Dispatch Messages</span>
+                    <span>Copy All Dispatch Texts</span>
                   </>
                 )}
               </button>
@@ -378,14 +405,6 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                   </>
                 )}
               </button>
-
-              <a
-                href="mailto:callcenter@idealgroup.lk"
-                className="text-xs text-slate-700 dark:text-slate-300 font-medium flex items-center gap-1 bg-blue-50 dark:bg-blue-950/40 px-3 py-1.5 rounded-lg border border-blue-200/60 dark:border-blue-800 hover:border-blue-400 transition-colors"
-              >
-                <Mail className="h-3.5 w-3.5 text-blue-600 shrink-0" />
-                <span>Sender: <strong className="text-blue-700 dark:text-blue-400">callcenter@idealgroup.lk</strong></span>
-              </a>
             </div>
           </div>
 
@@ -396,19 +415,28 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                 <div className="flex items-start gap-2.5">
                   <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-bold">Automated Systemic Email Dispatch Protocol</p>
+                    <p className="font-bold">Automated Email Dispatch - Pending Cases Scope</p>
                     <p className="text-slate-700 dark:text-amber-300/90 leading-relaxed mt-0.5">
-                      When complaints are imported or updated, an automated systemic dispatch is generated from <strong>callcenter@idealgroup.lk</strong>. You can also click <strong>"Direct Open Email App"</strong> to launch your default mail client with pre-filled details.
+                      All dispatch emails sent to service stations exclusively contain <strong>pending cases that the service station has to contact</strong> (including cases not yet contacted and cases returned by the Call Center for re-action). Click <strong>"Preview Cases to Contact"</strong> on any station to view the exact customer and vehicle records before dispatching.
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {STATIONS.map((station) => {
-                  const stationComplaints = complaints.filter(
-                    (c) => c.station === station.name || c.station === station.code || c.station.toLowerCase().includes(station.code.toLowerCase())
+                {STATIONS.filter((station) => {
+                  if (!filterStationsWithPendingOnly) return true;
+                  const stComplaints = complaints.filter(
+                    (c) => matchesStationCodeOrName(c.station, station.code) || matchesStationCodeOrName(c.station, station.name)
                   );
+                  return getPendingCasesToContact(stComplaints).length > 0;
+                }).map((station) => {
+                  const stationComplaints = complaints.filter(
+                    (c) => matchesStationCodeOrName(c.station, station.code) || matchesStationCodeOrName(c.station, station.name)
+                  );
+
+                  const pendingCasesToContact = getPendingCasesToContact(stationComplaints);
+                  const isExpanded = expandedStationCode === station.code;
 
                   const stationEmailsList = station.officers
                     ? station.officers.map((o) => o.email).join(", ")
@@ -419,7 +447,11 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                   return (
                     <div
                       key={station.name}
-                      className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm hover:shadow-md transition-all space-y-3 flex flex-col justify-between"
+                      className={`bg-white dark:bg-slate-900 rounded-xl border p-4 shadow-sm hover:shadow-md transition-all space-y-3 flex flex-col justify-between ${
+                        pendingCasesToContact.length > 0
+                          ? "border-amber-300 dark:border-amber-700/60 bg-amber-50/20 dark:bg-amber-950/10"
+                          : "border-slate-200 dark:border-slate-800"
+                      }`}
                     >
                       <div className="space-y-2">
                         {/* Header & Complaint Count Badge */}
@@ -428,9 +460,22 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                             <Building2 className="h-4 w-4 text-blue-600" />
                             {station.name}
                           </h3>
-                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 border border-blue-200">
-                            {stationComplaints.length} Pending Complaints
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {pendingCasesToContact.length > 0 ? (
+                              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 animate-pulse flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3 text-amber-600" />
+                                {pendingCasesToContact.length} to Contact
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 flex items-center gap-1">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                0 Pending Contact
+                              </span>
+                            )}
+                            <span className="text-[9px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                              {stationComplaints.length} Total
+                            </span>
+                          </div>
                         </div>
 
                         {/* Physical Address */}
@@ -493,6 +538,56 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                             </div>
                           )}
                         </div>
+
+                        {/* Expandable Preview of Pending Cases to Contact */}
+                        {pendingCasesToContact.length > 0 && (
+                          <div className="border border-amber-200 dark:border-amber-800 rounded-lg overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedStationCode(isExpanded ? null : station.code)}
+                              className="w-full bg-amber-100/70 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/50 p-2 text-left text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <Car className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400" />
+                                <span>Preview {pendingCasesToContact.length} Pending Case(s) Included in Email</span>
+                              </span>
+                              {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                            </button>
+
+                            {isExpanded && (
+                              <div className="p-2 bg-white dark:bg-slate-900 space-y-2 max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                                {pendingCasesToContact.map((pc) => {
+                                  const aging = getAgingDays(pc);
+                                  const isRej = isComplaintRejected(pc);
+                                  return (
+                                    <div key={pc.id} className="pt-2 first:pt-0 text-[11px] space-y-1">
+                                      <div className="flex items-center justify-between font-bold">
+                                        <span className="text-blue-700 dark:text-blue-400 font-mono">{pc.id} {pc.woNo ? `(WO: ${pc.woNo})` : ""}</span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
+                                          aging > 5 ? "bg-red-100 text-red-700" : aging > 3 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                                        }`}>
+                                          {aging}d aging
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-slate-800 dark:text-slate-200">
+                                        <span className="font-extrabold text-slate-900 dark:text-slate-100">🚗 {pc.vehicleRegNo || "No Reg"}</span>
+                                        <span className="text-emerald-700 dark:text-emerald-400 font-semibold">📞 {pc.customerPhone || "No Tel"}</span>
+                                      </div>
+                                      <div className="text-slate-600 dark:text-slate-400 truncate">
+                                        <span className="font-semibold text-slate-700 dark:text-slate-300">{pc.customerName}:</span> {pc.description || pc.category}
+                                      </div>
+                                      {isRej && (
+                                        <div className="text-[10px] text-rose-700 font-bold bg-rose-50 dark:bg-rose-950/40 p-1 rounded">
+                                          ⚠️ Returned to Station: {pc.stationResponseRejectionReason || "Re-action required"}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Manual Dispatch Trigger, Direct Mailto & Copy Message */}
@@ -502,17 +597,17 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                             type="button"
                             onClick={() => handleCopyText(getStationDispatchMessage(station), `MSG_${station.code}`)}
                             className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer"
-                            title="Copy complete structured dispatch email text for this station"
+                            title="Copy complete structured dispatch email text for this station with pending cases"
                           >
                             {copiedKey === `MSG_${station.code}` ? (
                               <>
                                 <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Copied Message!</span>
+                                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Copied Text!</span>
                               </>
                             ) : (
                               <>
                                 <Copy className="h-3 w-3 text-blue-600 dark:text-blue-400" />
-                                <span>Copy Dispatch Message</span>
+                                <span>Copy Notice Text</span>
                               </>
                             )}
                           </button>
@@ -520,10 +615,10 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                           <a
                             href={getStationMailtoLink(station)}
                             className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                            title="Open default email client (Outlook/Gmail) with pre-filled content from callcenter@idealgroup.lk"
+                            title="Open default email client (Outlook/Gmail) with pre-filled pending cases list from callcenter@idealgroup.lk"
                           >
                             <ExternalLink className="h-3 w-3 text-slate-500" />
-                            <span>Open Email App</span>
+                            <span>Open in Mail App</span>
                           </a>
                         </div>
 
@@ -533,7 +628,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs hover:shadow flex items-center gap-1.5 cursor-pointer"
                         >
                           <Send className="h-3 w-3" />
-                          <span>Systemic Dispatch Email</span>
+                          <span>Dispatch Email ({pendingCasesToContact.length})</span>
                         </button>
                       </div>
                     </div>
@@ -564,7 +659,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                           <th className="p-3">Workstation</th>
                           <th className="p-3">Recipients</th>
                           <th className="p-3">Subject</th>
-                          <th className="p-3 text-center">Complaints</th>
+                          <th className="p-3 text-center">Cases to Contact</th>
                           <th className="p-3 text-center">Status</th>
                           <th className="p-3 text-right">Action</th>
                         </tr>
@@ -585,8 +680,8 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
                               {log.subject}
                             </td>
                             <td className="p-3 text-center font-bold">
-                              <span className="bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-[10px]">
-                                {log.complaintCount} items
+                              <span className="bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 px-2 py-0.5 rounded-full text-[10px] border border-amber-300">
+                                {log.complaintCount} to contact
                               </span>
                             </td>
                             <td className="p-3 text-center">
@@ -618,7 +713,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
       {/* FULL EMAIL HTML PREVIEW MODAL */}
       {selectedLog && (
         <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-700">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-700">
             <div className="bg-slate-900 text-white p-4 flex items-center justify-between border-b border-slate-800">
               <div className="flex items-center gap-2 text-xs font-bold">
                 <Mail className="h-4 w-4 text-blue-400" />
@@ -656,4 +751,5 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
     </div>
   );
 };
+
 

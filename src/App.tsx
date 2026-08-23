@@ -76,7 +76,11 @@ import {
   saveStationsCentral,
   fetchEmailLogsCentral,
   saveEmailLogsCentral,
-  subscribeToCentralRealtime
+  fetchUserProfileCentral,
+  saveUserProfileCentral,
+  normalizeUserProfileFromSupabase,
+  subscribeToCentralRealtime,
+  centralSupabase
 } from "./utils/centralDbSync";
 
 
@@ -105,13 +109,11 @@ export default function App() {
   };
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    const savedUser = localStorage.getItem("ideal_group_current_user");
-    if (savedUser) {
-      try {
-        return JSON.parse(savedUser);
-      } catch (e) {
-        return null;
-      }
+    try {
+      const saved = localStorage.getItem("ideal_group_session_identity") || localStorage.getItem("ideal_group_current_user");
+      if (saved) return JSON.parse(saved);
+    } catch {
+      return null;
     }
     return null;
   });
@@ -126,6 +128,51 @@ export default function App() {
   const [dbSaveState, setDbSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [dbSaveErrorMsg, setDbSaveErrorMsg] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
+
+  // Authoritative user profile loader from public.user_profiles in Supabase
+  const loadActiveUserProfileFromDb = async () => {
+    try {
+      // 1. Check Supabase Auth
+      try {
+        const { data: authData } = await centralSupabase.auth.getUser();
+        if (authData?.user?.id) {
+          const authRes = await fetchUserProfileCentral({ authUserId: authData.user.id });
+          if (authRes.success && authRes.data) {
+            setCurrentUser(authRes.data);
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      // 2. Check saved session identity
+      const saved = localStorage.getItem("ideal_group_session_identity") || localStorage.getItem("ideal_group_current_user");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const criteria = {
+          id: parsed.id,
+          authUserId: parsed.auth_user_id,
+          userId: parsed.user_id || parsed.officerId,
+          role: parsed.role,
+          station: parsed.station,
+          officerId: parsed.officerId,
+        };
+        const res = await fetchUserProfileCentral(criteria);
+        if (res.success && res.data) {
+          setCurrentUser(res.data);
+        } else if (parsed.role) {
+          // Seed profile to database if not yet present
+          const seedRes = await saveUserProfileCentral(parsed);
+          if (seedRes.success && seedRes.data) {
+            setCurrentUser(seedRes.data);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[Central DB] Error loading user profile:", err);
+    }
+  };
 
   // Master load from Supabase Single Source of Truth
   const refreshAllFromCentralDb = async () => {
@@ -159,6 +206,10 @@ export default function App() {
       if (resEml.success && resEml.data) {
         setEmailLogs(resEml.data);
       }
+      
+      // Also refresh active profile from database
+      await loadActiveUserProfileFromDb();
+
       setLastSyncTime(new Date().toLocaleTimeString());
     } catch (err: any) {
       console.error("Central database fetch error:", err);
@@ -214,6 +265,26 @@ export default function App() {
           });
         }
         setLastSyncTime(new Date().toLocaleTimeString());
+      },
+      onUserProfilesChange: (payload) => {
+        console.log("⚡ [Realtime User Profiles Event]:", payload.eventType);
+        if (payload.new) {
+          const updatedProfile = normalizeUserProfileFromSupabase(payload.new);
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            const isMatch = (prev.id && prev.id === updatedProfile.id) ||
+                            (prev.auth_user_id && prev.auth_user_id === updatedProfile.auth_user_id) ||
+                            (prev.user_id && prev.user_id === updatedProfile.user_id) ||
+                            (prev.role === "admin" && updatedProfile.role === "admin") ||
+                            (prev.role === "callcenter" && prev.officerId && (prev.officerId === updatedProfile.user_id || prev.officerId === updatedProfile.officerId)) ||
+                            (prev.role === "agent" && prev.station && prev.station === updatedProfile.station);
+            if (isMatch) {
+              console.log("🔄 [Realtime] Authoritative profile update applied from central Supabase:", updatedProfile.name);
+              return { ...prev, ...updatedProfile };
+            }
+            return prev;
+          });
+        }
       },
       onOfficersChange: (payload) => {
         console.log("⚡ [Realtime Officers Event]:", payload.eventType);
@@ -278,7 +349,14 @@ export default function App() {
 
   const handleUpdateCurrentUser = (updated: UserProfile) => {
     setCurrentUser(updated);
-    localStorage.setItem("ideal_group_current_user", JSON.stringify(updated));
+    localStorage.setItem("ideal_group_session_identity", JSON.stringify({
+      id: updated.id,
+      auth_user_id: updated.auth_user_id,
+      user_id: updated.user_id || updated.officerId,
+      role: updated.role,
+      station: updated.station,
+      officerId: updated.officerId,
+    }));
   };
 
   const [showCalendarModal, setShowCalendarModal] = useState<boolean>(false);
@@ -552,12 +630,12 @@ export default function App() {
   };
 
   // Login handler
-  const handleLoginSuccess = (
+  const handleLoginSuccess = async (
     role: "admin" | "agent" | "callcenter", 
     stationCode?: string,
     officerDetails?: CallCenterOfficer
   ) => {
-    const userObj: UserProfile = { 
+    const baseUserObj: UserProfile = { 
       role, 
       station: stationCode,
       name: officerDetails?.name,
@@ -568,8 +646,38 @@ export default function App() {
       avatar: officerDetails?.avatar,
       department: officerDetails?.department
     };
-    setCurrentUser(userObj);
-    localStorage.setItem("ideal_group_current_user", JSON.stringify(userObj));
+
+    let profileToUse = baseUserObj;
+    try {
+      const criteria = {
+        role,
+        station: stationCode,
+        officerId: officerDetails?.id,
+        userId: officerDetails?.id || (role === "admin" ? "admin-master" : stationCode ? `station-${stationCode}` : undefined),
+      };
+      const res = await fetchUserProfileCentral(criteria);
+      if (res.success && res.data) {
+        profileToUse = res.data;
+      } else {
+        const seedRes = await saveUserProfileCentral(baseUserObj);
+        if (seedRes.success && seedRes.data) {
+          profileToUse = seedRes.data;
+        }
+      }
+    } catch (err) {
+      console.error("[Login Profile Sync Error]:", err);
+    }
+
+    setCurrentUser(profileToUse);
+    localStorage.setItem("ideal_group_session_identity", JSON.stringify({
+      id: profileToUse.id,
+      auth_user_id: profileToUse.auth_user_id,
+      user_id: profileToUse.user_id || profileToUse.officerId,
+      role: profileToUse.role,
+      station: profileToUse.station,
+      officerId: profileToUse.officerId,
+    }));
+
     // If agent, default station filter to their station and status filter to Pending Action ("To Contact")
     if (role === "agent") {
       if (stationCode) setStationFilter(stationCode);
@@ -590,6 +698,7 @@ export default function App() {
   // Logout handler
   const handleLogout = () => {
     setCurrentUser(null);
+    localStorage.removeItem("ideal_group_session_identity");
     localStorage.removeItem("ideal_group_current_user");
     setSelectedComplaintId(null);
   };

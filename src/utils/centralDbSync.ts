@@ -251,7 +251,95 @@ export async function deleteCalendarDateCentral(id: string): Promise<SyncRespons
 // USER PROFILES CENTRAL DATABASE OPERATIONS
 // -------------------------------------------------------------
 
-export async function fetchUserProfilesCentral(): Promise<SyncResponse<any[]>> {
+/**
+ * Normalizes a database row from public.user_profiles into a frontend UserProfile
+ */
+export function normalizeUserProfileFromSupabase(row: any): UserProfile {
+  if (!row || typeof row !== "object") return null as any;
+
+  const prefs = (row.communication_preferences && typeof row.communication_preferences === "object")
+    ? row.communication_preferences
+    : { email: true, sms: true };
+
+  const perms = (row.working_permissions && typeof row.working_permissions === "object")
+    ? row.working_permissions
+    : {};
+
+  const role = (row.role === "admin" || row.role === "agent" || row.role === "callcenter")
+    ? row.role
+    : "callcenter";
+
+  const defaultTitle = role === "admin" 
+    ? "National CX Director" 
+    : role === "callcenter" 
+    ? "Call Center CX Specialist" 
+    : "Service Station Representative";
+
+  return {
+    id: row.id,
+    auth_user_id: row.auth_user_id || null,
+    user_id: row.user_id || "",
+    role,
+    name: row.display_name || "",
+    title: perms.title || defaultTitle,
+    email: row.email || "",
+    phone: row.phone || "",
+    station: row.station || undefined,
+    officerId: (role === "callcenter" ? row.user_id : undefined) || perms.officerId || undefined,
+    avatar: row.avatar || "",
+    department: row.department || (role === "callcenter" ? "Ideal Central Call Center" : role === "admin" ? "National CX Command Center" : "Service Station HQ"),
+    communication_preferences: prefs,
+    working_permissions: perms,
+    emergency_hotline: row.emergency_hotline || null,
+    backup_contact_name: row.backup_contact_name || null,
+    backup_contact_phone: row.backup_contact_phone || null,
+    active: row.active ?? true,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    last_updated_by: row.last_updated_by || null,
+  };
+}
+
+/**
+ * Converts a UserProfile into a database row for public.user_profiles
+ */
+export function userProfileToSupabaseRow(profile: UserProfile, authUserId?: string | null): Record<string, any> {
+  const userIdKey = profile.user_id || profile.officerId || (
+    profile.role === "admin" ? "admin-master" : profile.station ? `station-${profile.station}` : "user-default"
+  );
+  const stableUuid = profile.id || stringToStableUuid(userIdKey);
+
+  const perms = {
+    ...(profile.working_permissions || {}),
+    title: profile.title || "",
+    officerId: profile.officerId || "",
+  };
+
+  const prefs = profile.communication_preferences || { email: true, sms: true };
+
+  return {
+    id: stableUuid,
+    auth_user_id: authUserId || profile.auth_user_id || null,
+    user_id: userIdKey,
+    display_name: profile.name || "",
+    email: profile.email || "",
+    phone: profile.phone || "",
+    role: profile.role || "callcenter",
+    station: profile.station || null,
+    department: profile.department || "",
+    communication_preferences: prefs,
+    working_permissions: perms,
+    emergency_hotline: profile.emergency_hotline || null,
+    backup_contact_name: profile.backup_contact_name || null,
+    backup_contact_phone: profile.backup_contact_phone || null,
+    avatar: profile.avatar || "",
+    active: profile.active ?? true,
+    updated_at: new Date().toISOString(),
+    last_updated_by: profile.name || "User",
+  };
+}
+
+export async function fetchUserProfilesCentral(): Promise<SyncResponse<UserProfile[]>> {
   try {
     const { data, error } = await centralSupabase
       .from("user_profiles")
@@ -263,42 +351,149 @@ export async function fetchUserProfilesCentral(): Promise<SyncResponse<any[]>> {
       return { success: false, error: error.message, code: error.code };
     }
 
-    return { success: true, data: data || [] };
+    const normalized = (data || []).map((row: any) => normalizeUserProfileFromSupabase(row));
+    return { success: true, data: normalized };
   } catch (err: any) {
     console.error("[Central DB] Fetch user profiles exception:", err);
     return { success: false, error: err.message || "Failed to fetch user profiles" };
   }
 }
 
+/**
+ * Loads a single authoritative user profile from public.user_profiles in Supabase.
+ * Checks authenticated user first via auth.getUser(), then queries by auth_user_id, id, user_id, or role.
+ */
+export async function fetchUserProfileCentral(criteria?: {
+  id?: string;
+  authUserId?: string | null;
+  userId?: string;
+  role?: string;
+  station?: string;
+  officerId?: string;
+}): Promise<SyncResponse<UserProfile>> {
+  try {
+    // 1. Try authenticated Supabase user first
+    try {
+      const { data: authData } = await centralSupabase.auth.getUser();
+      if (authData?.user?.id) {
+        const { data: authProfile, error: authProfileErr } = await centralSupabase
+          .from("user_profiles")
+          .select("*")
+          .eq("auth_user_id", authData.user.id)
+          .maybeSingle();
+
+        if (!authProfileErr && authProfile) {
+          return { success: true, data: normalizeUserProfileFromSupabase(authProfile) };
+        }
+      }
+    } catch (authErr) {
+      // Non-blocking if auth is not active
+    }
+
+    // 2. Query by specific criteria
+    if (criteria?.id) {
+      const { data, error } = await centralSupabase
+        .from("user_profiles")
+        .select("*")
+        .eq("id", criteria.id)
+        .maybeSingle();
+
+      if (!error && data) {
+        return { success: true, data: normalizeUserProfileFromSupabase(data) };
+      }
+    }
+
+    if (criteria?.authUserId) {
+      const { data, error } = await centralSupabase
+        .from("user_profiles")
+        .select("*")
+        .eq("auth_user_id", criteria.authUserId)
+        .maybeSingle();
+
+      if (!error && data) {
+        return { success: true, data: normalizeUserProfileFromSupabase(data) };
+      }
+    }
+
+    const targetUserIdKey = criteria?.userId || criteria?.officerId || (
+      criteria?.role === "admin" ? "admin-master" : criteria?.station ? `station-${criteria.station}` : undefined
+    );
+
+    if (targetUserIdKey) {
+      const { data, error } = await centralSupabase
+        .from("user_profiles")
+        .select("*")
+        .eq("user_id", targetUserIdKey)
+        .maybeSingle();
+
+      if (!error && data) {
+        return { success: true, data: normalizeUserProfileFromSupabase(data) };
+      }
+    }
+
+    if (criteria?.role === "admin") {
+      const { data, error } = await centralSupabase
+        .from("user_profiles")
+        .select("*")
+        .eq("role", "admin")
+        .maybeSingle();
+
+      if (!error && data) {
+        return { success: true, data: normalizeUserProfileFromSupabase(data) };
+      }
+    }
+
+    if (criteria?.role === "agent" && criteria?.station) {
+      const { data, error } = await centralSupabase
+        .from("user_profiles")
+        .select("*")
+        .eq("station", criteria.station)
+        .maybeSingle();
+
+      if (!error && data) {
+        return { success: true, data: normalizeUserProfileFromSupabase(data) };
+      }
+    }
+
+    return { success: false, error: "Profile not found in central database" };
+  } catch (err: any) {
+    console.error("[Central DB] Fetch user profile exception:", err);
+    return { success: false, error: err.message || "Failed to fetch user profile" };
+  }
+}
+
+/**
+ * Saves a user profile to public.user_profiles in Supabase.
+ * Returns the exact database record confirmed by Supabase.
+ */
 export async function saveUserProfileCentral(profile: UserProfile): Promise<SyncResponse<UserProfile>> {
   try {
-    const userIdKey = profile.officerId || (profile.role === "admin" ? "admin-master" : profile.name || "user-default");
-    const stableUuid = stringToStableUuid(userIdKey);
+    let authUserId: string | null = profile.auth_user_id || null;
+    try {
+      const { data: authData } = await centralSupabase.auth.getUser();
+      if (authData?.user?.id) {
+        authUserId = authData.user.id;
+      }
+    } catch {
+      // ignore
+    }
 
-    const row = {
-      id: stableUuid,
-      user_id: userIdKey,
-      display_name: profile.name || "",
-      email: profile.email || "",
-      phone: profile.phone || "",
-      role: profile.role || "callcenter",
-      station: profile.station || null,
-      department: profile.department || "",
-      avatar: profile.avatar || "",
-      active: true,
-      updated_at: new Date().toISOString(),
-    };
+    const row = userProfileToSupabaseRow(profile, authUserId);
 
-    const { error } = await centralSupabase
+    const { data, error } = await centralSupabase
       .from("user_profiles")
-      .upsert([row], { onConflict: "user_id" });
+      .upsert([row], { onConflict: "id" })
+      .select()
+      .single();
 
     if (error) {
       console.error("[Central DB] Save user profile error:", error);
       return { success: false, error: error.message, code: error.code };
     }
 
-    return { success: true, data: profile };
+    const savedProfile = normalizeUserProfileFromSupabase(data);
+    console.log("✅ [Central DB] Profile successfully saved to public.user_profiles in Supabase:", savedProfile);
+    return { success: true, data: savedProfile };
   } catch (err: any) {
     console.error("[Central DB] Save user profile exception:", err);
     return { success: false, error: err.message || "Failed to save user profile" };

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UserProfile, Complaint, CallCenterOfficer, StationProfile } from "../types";
 import { 
   X, User, Shield, Phone, Mail, MapPin, CheckCircle2, Clock, Award, Lock, Sparkles, 
@@ -46,7 +46,24 @@ export default function UserProfileModal({
     phone: user.phone || "",
     department: user.department || "",
     avatar: user.avatar || "",
+    emergency_hotline: user.emergency_hotline || "",
+    backup_contact_name: user.backup_contact_name || "",
+    backup_contact_phone: user.backup_contact_phone || "",
   });
+
+  useEffect(() => {
+    setSelfForm({
+      name: user.name || "",
+      title: user.title || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      department: user.department || "",
+      avatar: user.avatar || "",
+      emergency_hotline: user.emergency_hotline || "",
+      backup_contact_name: user.backup_contact_name || "",
+      backup_contact_phone: user.backup_contact_phone || "",
+    });
+  }, [user]);
 
   // Admin User Editing State
   const [editingOfficerId, setEditingOfficerId] = useState<string | null>(null);
@@ -175,15 +192,27 @@ export default function UserProfileModal({
 
     const updatedUser: UserProfile = {
       ...user,
-      name: selfForm.name,
-      title: selfForm.title,
-      email: selfForm.email,
-      phone: selfForm.phone,
-      department: selfForm.department,
-      avatar: selfForm.avatar || getInitials(selfForm.name),
+      name: selfForm.name.trim(),
+      title: selfForm.title.trim(),
+      email: selfForm.email.trim(),
+      phone: selfForm.phone.trim(),
+      department: selfForm.department.trim(),
+      avatar: selfForm.avatar.trim() || getInitials(selfForm.name),
+      emergency_hotline: selfForm.emergency_hotline?.trim() || null,
+      backup_contact_name: selfForm.backup_contact_name?.trim() || null,
+      backup_contact_phone: selfForm.backup_contact_phone?.trim() || null,
     };
 
     const res = await saveUserProfileCentral(updatedUser);
+    setIsSaving(false);
+
+    if (!res.success || !res.data) {
+      console.error("[Central DB Profile Save Error]:", res.error);
+      setSaveError(`Save failed — central database was not updated: ${res.error || "Unknown error"}`);
+      return;
+    }
+
+    const savedFromDb = res.data;
 
     // If user is a Call Center officer, sync in officers list
     if (user.officerId && onUpdateOfficersList && officersList) {
@@ -191,12 +220,12 @@ export default function UserProfileModal({
         if (off.id === user.officerId) {
           return {
             ...off,
-            name: selfForm.name,
-            title: selfForm.title,
-            email: selfForm.email,
-            phone: selfForm.phone,
-            department: selfForm.department,
-            avatar: selfForm.avatar || getInitials(selfForm.name),
+            name: savedFromDb.name || selfForm.name,
+            title: savedFromDb.title || selfForm.title,
+            email: savedFromDb.email || selfForm.email,
+            phone: savedFromDb.phone || selfForm.phone,
+            department: savedFromDb.department || selfForm.department,
+            avatar: savedFromDb.avatar || selfForm.avatar || getInitials(selfForm.name),
           };
         }
         return off;
@@ -211,9 +240,9 @@ export default function UserProfileModal({
         if (st.code === user.station || st.name.toLowerCase().includes(user.station!.toLowerCase())) {
           return {
             ...st,
-            managerName: selfForm.name,
-            email: selfForm.email,
-            phone: selfForm.phone,
+            managerName: savedFromDb.name || selfForm.name,
+            email: savedFromDb.email || selfForm.email,
+            phone: savedFromDb.phone || selfForm.phone,
           };
         }
         return st;
@@ -222,14 +251,8 @@ export default function UserProfileModal({
       onUpdateStationsList(updatedStations);
     }
 
-    setIsSaving(false);
-
-    if (!res.success) {
-      setSaveError(`Save failed — central database was not updated: ${res.error}`);
-      return;
-    }
-
-    onUpdateCurrentUser(updatedUser);
+    // Update UI directly from database-returned confirmed record
+    onUpdateCurrentUser(savedFromDb);
     setIsEditingSelf(false);
     setSaveMessage("Saved to central database");
     setTimeout(() => setSaveMessage(null), 3500);
@@ -555,22 +578,60 @@ export default function UserProfileModal({
                         }`}
                       />
                     </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Emergency Hotline (Optional)</label>
+                      <input
+                        type="text"
+                        value={selfForm.emergency_hotline}
+                        onChange={(e) => setSelfForm({ ...selfForm, emergency_hotline: e.target.value })}
+                        placeholder="e.g. +94 11 234 5678"
+                        className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                          isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Backup Contact Name & Phone</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={selfForm.backup_contact_name}
+                          onChange={(e) => setSelfForm({ ...selfForm, backup_contact_name: e.target.value })}
+                          placeholder="Contact Name"
+                          className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                            isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                          }`}
+                        />
+                        <input
+                          type="text"
+                          value={selfForm.backup_contact_phone}
+                          onChange={(e) => setSelfForm({ ...selfForm, backup_contact_phone: e.target.value })}
+                          placeholder="Phone No"
+                          className={`w-full text-xs font-bold rounded-lg p-2 border ${
+                            isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-300 text-slate-900"
+                          }`}
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">
                     <button
                       type="button"
                       onClick={() => setIsEditingSelf(false)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5"
+                      disabled={isSaving}
+                      className="px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       <Save className="h-3.5 w-3.5" />
-                      Save My Changes
+                      {isSaving ? "Saving..." : "Save My Changes"}
                     </button>
                   </div>
                 </form>
@@ -616,6 +677,30 @@ export default function UserProfileModal({
                       <span className="text-xs font-extrabold">{user.phone || "+94 11 770 0700"}</span>
                     </div>
                   </div>
+
+                  {user.emergency_hotline && (
+                    <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDark ? "bg-slate-950/60 border-slate-800" : "bg-slate-50 border-slate-100"}`}>
+                      <div className="p-2 rounded-lg bg-rose-500/10 text-rose-600">
+                        <Phone className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <span className="block text-[9px] font-black uppercase text-slate-400">Emergency Hotline</span>
+                        <span className="text-xs font-extrabold">{user.emergency_hotline}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {user.backup_contact_name && (
+                    <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDark ? "bg-slate-950/60 border-slate-800" : "bg-slate-50 border-slate-100"}`}>
+                      <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600">
+                        <Shield className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <span className="block text-[9px] font-black uppercase text-slate-400">Backup Escalation Contact</span>
+                        <span className="text-xs font-extrabold">{user.backup_contact_name} {user.backup_contact_phone ? `(${user.backup_contact_phone})` : ""}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

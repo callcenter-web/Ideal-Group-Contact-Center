@@ -168,6 +168,9 @@ export interface CallCenterOfficer {
 }
 
 export interface UserProfile {
+  id?: string;
+  auth_user_id?: string | null;
+  user_id?: string;
   role: "admin" | "agent" | "callcenter";
   station?: string;
   name?: string;
@@ -177,6 +180,15 @@ export interface UserProfile {
   phone?: string;
   avatar?: string;
   department?: string;
+  communication_preferences?: Record<string, any>;
+  working_permissions?: Record<string, any>;
+  emergency_hotline?: string | null;
+  backup_contact_name?: string | null;
+  backup_contact_phone?: string | null;
+  active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_updated_by?: string | null;
 }
 
 export interface WorkstationCalendarDate {
