@@ -515,6 +515,7 @@ export default function App() {
   const [formCallCenterFinalSatisfaction, setFormCallCenterFinalSatisfaction] = useState<SatisfactionLevel>("Satisfied");
   const [formAttemptStage, setFormAttemptStage] = useState<"1st Attempt" | "2nd Attempt">("1st Attempt");
   const [formFirstAttemptCallStatus, setFormFirstAttemptCallStatus] = useState<string>("Connected");
+  const [formSecondAttemptCallStatus, setFormSecondAttemptCallStatus] = useState<string>("Connected");
   const [formSecondAttemptFeedbackStatus, setFormSecondAttemptFeedbackStatus] = useState<string>("Follow Up Required");
   
   // Parallel track status fields
@@ -1000,12 +1001,15 @@ export default function App() {
           let calcFeedbackStatus = formFeedbackStatus;
           let calcFinalStatus = "Open";
 
-          // Detect if customer was satisfied during verification
+          // Detect if customer was satisfied during verification (1st attempt or 2nd attempt Connected/Satisfied)
           const isSatisfiedSelected = 
             ["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) ||
             formFeedbackStatus === "Satisfied" ||
             formFirstAttemptCallStatus === "Satisfied" ||
-            formSecondAttemptFeedbackStatus === "Satisfied";
+            formSecondAttemptCallStatus === "Satisfied" ||
+            formSecondAttemptFeedbackStatus === "Satisfied" ||
+            (!is1stAttempt && formSecondAttemptCallStatus === "Connected" && formSecondAttemptFeedbackStatus === "Satisfied") ||
+            (is1stAttempt && formFirstAttemptCallStatus === "Connected" && (formFeedbackStatus === "Satisfied" || formSecondAttemptFeedbackStatus === "Satisfied"));
 
           if (isSatisfiedSelected) {
             calcStatus = "Resolved";
@@ -1035,26 +1039,41 @@ export default function App() {
               isConnectedNow = false;
             }
           } else {
-            // 2nd Attempt
-            calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus;
-
-            if (formSecondAttemptFeedbackStatus === "Customer Unreachable") {
-              // After 2nd attempt customer is unreachable -> classify as NOT SATISFIED customer base
+            // 2nd Attempt - same structured process as 1st attempt
+            if (["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formSecondAttemptCallStatus)) {
+              // After 2nd attempt customer is uncontactable -> classify as NOT SATISFIED customer base
+              calcFeedbackStatus = formSecondAttemptCallStatus;
               calcStatus = "Pending";
               calcSatisfaction = "Dissatisfied"; // Classify under Not Satisfied Customer Base
               calcFinalStatus = "Unreachable (Not Satisfied Base)";
               isConnectedNow = false;
-            } else if (["Not Satisfied", "No solution Received", "No Solution Received"].includes(formSecondAttemptFeedbackStatus) || ["No solution Received", "No Solution Received"].includes(formFeedbackStatus)) {
-              calcStatus = "Pending";
-              calcSatisfaction = "Dissatisfied";
-              calcFinalStatus = "Re-assigned to Station (No Solution Received)";
+            } else if (formSecondAttemptCallStatus === "Connected") {
               isConnectedNow = true;
-            } else if (formSecondAttemptFeedbackStatus === "Escalated") {
-              calcStatus = "Pending";
-              calcSatisfaction = "Dissatisfied";
-              calcFinalStatus = "Escalated to Management";
-              isConnectedNow = true;
+              calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus || "Follow Up Required";
+
+              if (formSecondAttemptFeedbackStatus === "Customer Unreachable") {
+                calcStatus = "Pending";
+                calcSatisfaction = "Dissatisfied";
+                calcFinalStatus = "Unreachable (Not Satisfied Base)";
+                isConnectedNow = false;
+              } else if (["Not Satisfied", "No solution Received", "No Solution Received"].includes(formSecondAttemptFeedbackStatus) || ["No solution Received", "No Solution Received"].includes(formFeedbackStatus)) {
+                calcStatus = "Pending";
+                calcSatisfaction = "Dissatisfied";
+                calcFinalStatus = "Re-assigned to Station (No Solution Received)";
+                isConnectedNow = true;
+              } else if (formSecondAttemptFeedbackStatus === "Escalated") {
+                calcStatus = "Pending";
+                calcSatisfaction = "Dissatisfied";
+                calcFinalStatus = "Escalated to Management";
+                isConnectedNow = true;
+              } else {
+                calcStatus = "Pending";
+                calcSatisfaction = formCallCenterFinalSatisfaction || "Dissatisfied";
+                calcFinalStatus = "In Progress";
+                isConnectedNow = true;
+              }
             } else {
+              calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus;
               calcStatus = "Pending";
               calcSatisfaction = formCallCenterFinalSatisfaction;
               calcFinalStatus = "In Progress";
@@ -1063,7 +1082,10 @@ export default function App() {
           }
 
           const isNoSol = calcFinalStatus.includes("Re-assigned to Station");
-          const finalRemarks = formCallCenterFinalRemarks.trim() || (isSatisfiedSelected ? "Customer confirmed satisfied during call center verification" : "");
+          const defaultSatisfiedRemark = is1stAttempt 
+            ? "Customer confirmed satisfied during call center 1st attempt verification"
+            : "Customer confirmed satisfied during call center 2nd attempt verification";
+          const finalRemarks = formCallCenterFinalRemarks.trim() || (isSatisfiedSelected ? defaultSatisfiedRemark : "");
 
           const ccHistoryEntry: CaseHistoryEntry = {
             id: "HIST-CC-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
@@ -1092,10 +1114,11 @@ export default function App() {
             stationResponseRejectedBy: isNoSol ? (currentUser?.name || "Call Center Officer") : c.stationResponseRejectedBy,
             stationContactedDate: isNoSol ? "" : (c.stationContactedDate || ""), // clear if re-assigned so it moves back into Service Station pending queue
             attemptCount: is1stAttempt ? 1 : 2,
-            firstAttemptCallStatus: is1stAttempt ? (isSatisfiedSelected ? "Satisfied" : formFirstAttemptCallStatus) : (c.firstAttemptCallStatus || formFirstAttemptCallStatus),
+            firstAttemptCallStatus: is1stAttempt ? (isSatisfiedSelected ? (formFirstAttemptCallStatus === "Connected" ? "Connected" : "Satisfied") : formFirstAttemptCallStatus) : (c.firstAttemptCallStatus || formFirstAttemptCallStatus),
             firstAttemptDate: is1stAttempt ? submitDate : (c.firstAttemptDate || submitDate),
             firstAttemptNotes: is1stAttempt ? finalRemarks : c.firstAttemptNotes,
-            secondAttemptFeedbackStatus: !is1stAttempt ? (isSatisfiedSelected ? "Satisfied" : formSecondAttemptFeedbackStatus) : c.secondAttemptFeedbackStatus,
+            secondAttemptCallStatus: !is1stAttempt ? (isSatisfiedSelected ? (formSecondAttemptCallStatus === "Connected" ? "Connected" : "Satisfied") : formSecondAttemptCallStatus) : c.secondAttemptCallStatus,
+            secondAttemptFeedbackStatus: !is1stAttempt ? (isSatisfiedSelected ? "Satisfied" : (formSecondAttemptCallStatus === "Connected" ? formSecondAttemptFeedbackStatus : formSecondAttemptCallStatus)) : c.secondAttemptFeedbackStatus,
             secondAttemptDate: !is1stAttempt ? submitDate : c.secondAttemptDate,
             secondAttemptNotes: !is1stAttempt ? finalRemarks : c.secondAttemptNotes,
             solutionProvidedByAftermarket: formSolutionProvided,
@@ -1399,9 +1422,11 @@ export default function App() {
 
       // Pre-fill multi-attempt fields
       const firstStatus = selectedComplaint.firstAttemptCallStatus || "Connected";
-      const secondStatus = selectedComplaint.secondAttemptFeedbackStatus || "Follow Up Required";
+      const secondCallStatus = selectedComplaint.secondAttemptCallStatus || (selectedComplaint.secondAttemptFeedbackStatus ? (["Satisfied", "Not Satisfied", "No solution Received", "Follow Up Required", "Escalated"].includes(selectedComplaint.secondAttemptFeedbackStatus) ? "Connected" : selectedComplaint.secondAttemptFeedbackStatus) : "Connected");
+      const secondFeedback = selectedComplaint.secondAttemptFeedbackStatus || "Follow Up Required";
       setFormFirstAttemptCallStatus(firstStatus);
-      setFormSecondAttemptFeedbackStatus(secondStatus);
+      setFormSecondAttemptCallStatus(secondCallStatus);
+      setFormSecondAttemptFeedbackStatus(secondFeedback);
 
       // Auto-determine active attempt stage
       if (
@@ -1459,12 +1484,19 @@ export default function App() {
     return (
       c.status === "Resolved" ||
       c.feedbackStatus === "Satisfied" ||
+      c.feedbackStatus === "Satisfied After Resolution" ||
       c.callCenterFinalSatisfaction === "Satisfied" ||
       c.callCenterFinalSatisfaction === "Very Satisfied" ||
       c.currentSatisfaction === "Satisfied" ||
       c.currentSatisfaction === "Very Satisfied" ||
+      c.firstAttemptCallStatus === "Satisfied" ||
+      c.secondAttemptCallStatus === "Satisfied" ||
+      c.secondAttemptFeedbackStatus === "Satisfied" ||
+      (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
+      (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied") ||
       c.finalStatus === "Closed" ||
-      c.finalStatus === "Completed"
+      c.finalStatus === "Completed" ||
+      c.finalStatus === "Resolved"
     );
   };
 
@@ -3391,10 +3423,14 @@ NOTIFY pgrst, 'reload schema';
                                 onChange={(e) => {
                                   const val = e.target.value;
                                   setFormFirstAttemptCallStatus(val);
-                                  if (val === "Satisfied") {
+                                  if (val === "Satisfied" || val === "Connected") {
                                     setFormCallCenterFinalSatisfaction("Satisfied");
                                     setFormSecondAttemptFeedbackStatus("Satisfied");
                                     setFormFeedbackStatus("Satisfied");
+                                  } else if (["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(val)) {
+                                    setFormCallCenterFinalSatisfaction("Dissatisfied");
+                                    setFormSecondAttemptFeedbackStatus(val);
+                                    setFormFeedbackStatus(val);
                                   }
                                 }}
                                 className="w-full bg-white border border-amber-300 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold shadow-2xs"
@@ -3419,11 +3455,55 @@ NOTIFY pgrst, 'reload schema';
                             </div>
                           )}
 
-                          {/* 2nd Attempt or Connected Section */}
-                          {(formAttemptStage === "2nd Attempt" || formFirstAttemptCallStatus === "Connected" || formFirstAttemptCallStatus === "Satisfied") && (
+                          {/* 2nd Attempt Call Status Section */}
+                          {formAttemptStage === "2nd Attempt" && (
+                            <div className="bg-amber-50/60 p-3 rounded-lg border border-amber-200 space-y-2">
+                              <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-wider">
+                                2nd Attempt Call Status *
+                              </label>
+                              <select
+                                value={formSecondAttemptCallStatus}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setFormSecondAttemptCallStatus(val);
+                                  if (val === "Satisfied" || val === "Connected") {
+                                    setFormCallCenterFinalSatisfaction("Satisfied");
+                                    setFormSecondAttemptFeedbackStatus("Satisfied");
+                                    setFormFeedbackStatus("Satisfied");
+                                  } else if (["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(val)) {
+                                    setFormCallCenterFinalSatisfaction("Dissatisfied");
+                                    setFormSecondAttemptFeedbackStatus(val);
+                                    setFormFeedbackStatus(val);
+                                  }
+                                }}
+                                className="w-full bg-white border border-amber-300 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold shadow-2xs"
+                              >
+                                <option value="Connected">Connected</option>
+                                <option value="Satisfied">Satisfied (Pass to Complete)</option>
+                                <option value="Customer Busy">Customer Busy</option>
+                                <option value="Customer Unreachable">Customer Unreachable</option>
+                                <option value="Invalid Details">Invalid Details</option>
+                                <option value="Invalid Number">Invalid Number</option>
+                                <option value="No Answer">No Answer</option>
+                              </select>
+
+                              {["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formSecondAttemptCallStatus) && (
+                                <div className="text-[11px] text-rose-800 bg-rose-100/80 p-2 rounded border border-rose-300/80 font-medium flex items-start gap-1.5">
+                                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                                  <span>
+                                    <strong>Not Satisfied Base:</strong> Customer was uncontactable after 2nd attempt. Automatically classified as Not Satisfied customer base.
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Connected Feedback Section (for 1st Attempt Connected or 2nd Attempt Connected) */}
+                          {((formAttemptStage === "1st Attempt" && (formFirstAttemptCallStatus === "Connected" || formFirstAttemptCallStatus === "Satisfied")) ||
+                            (formAttemptStage === "2nd Attempt" && (formSecondAttemptCallStatus === "Connected" || formSecondAttemptCallStatus === "Satisfied"))) && (
                             <div className="bg-blue-50/60 p-3 rounded-lg border border-blue-200 space-y-2">
                               <label className="block text-[10px] font-bold text-blue-900 uppercase tracking-wider">
-                                {formAttemptStage === "2nd Attempt" ? "2nd Attempt Feedback Status / Remarks *" : "Call Feedback Status / Remarks *"}
+                                {formAttemptStage === "2nd Attempt" ? "2nd Attempt Customer Feedback Status / Remarks *" : "1st Attempt Customer Feedback Status / Remarks *"}
                               </label>
                               <select
                                 value={formSecondAttemptFeedbackStatus}
@@ -3433,6 +3513,10 @@ NOTIFY pgrst, 'reload schema';
                                   setFormFeedbackStatus(val);
                                   if (val === "Satisfied") {
                                     setFormCallCenterFinalSatisfaction("Satisfied");
+                                  } else if (["Not Satisfied", "No solution Received", "Customer Unreachable", "Escalated"].includes(val)) {
+                                    if (formCallCenterFinalSatisfaction === "Satisfied" || formCallCenterFinalSatisfaction === "Very Satisfied") {
+                                      setFormCallCenterFinalSatisfaction("Dissatisfied");
+                                    }
                                   }
                                 }}
                                 className="w-full bg-white border border-blue-300 rounded-md py-1.5 px-2.5 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-bold shadow-2xs"
@@ -3445,11 +3529,11 @@ NOTIFY pgrst, 'reload schema';
                                 <option value="Escalated">Escalated</option>
                               </select>
 
-                              {formSecondAttemptFeedbackStatus === "Customer Unreachable" && formAttemptStage === "2nd Attempt" && (
+                              {formSecondAttemptFeedbackStatus === "Customer Unreachable" && (
                                 <div className="text-[11px] text-rose-800 bg-rose-100/80 p-2 rounded border border-rose-300/80 font-medium flex items-start gap-1.5">
                                   <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
                                   <span>
-                                    <strong>Not Satisfied Base:</strong> Unreachable after 2nd attempt. Automatically classified as Not Satisfied customer base.
+                                    <strong>Unreachable:</strong> Customer unreachable during feedback follow-up call.
                                   </span>
                                 </div>
                               )}
@@ -3494,7 +3578,7 @@ NOTIFY pgrst, 'reload schema';
                             </div>
                           </div>
 
-                          {(["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formSecondAttemptFeedbackStatus === "Satisfied") && (
+                          {(["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formSecondAttemptCallStatus === "Satisfied" || formSecondAttemptFeedbackStatus === "Satisfied") && (
                             <div className="text-[11px] text-green-800 bg-green-100/80 p-2 rounded border border-green-300/80 font-medium flex items-center gap-1.5">
                               <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
                               <span>
@@ -3510,7 +3594,7 @@ NOTIFY pgrst, 'reload schema';
                             <textarea
                               id="callcenter-final-remarks-textarea"
                               rows={3}
-                              required
+                              required={!(["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formSecondAttemptFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formSecondAttemptCallStatus === "Satisfied" || formFeedbackStatus === "Satisfied")}
                               placeholder="Enter the customer's remarks and feedback details during call center follow up..."
                               value={formCallCenterFinalRemarks}
                               onChange={(e) => setFormCallCenterFinalRemarks(e.target.value)}
@@ -3529,20 +3613,20 @@ NOTIFY pgrst, 'reload schema';
                           <button
                             type="submit"
                             className={`w-full text-white font-bold text-xs py-2.5 px-4 rounded-md transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5 ${
-                              (["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formSecondAttemptFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formFeedbackStatus === "Satisfied")
+                              (["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formSecondAttemptFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formSecondAttemptCallStatus === "Satisfied" || formFeedbackStatus === "Satisfied")
                                 ? "bg-green-600 hover:bg-green-700"
-                                : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus)
+                                : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formFirstAttemptCallStatus)
                                 ? "bg-amber-600 hover:bg-amber-700"
-                                : formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Customer Unreachable"
+                                : formAttemptStage === "2nd Attempt" && (["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formSecondAttemptCallStatus) || formSecondAttemptFeedbackStatus === "Customer Unreachable")
                                 ? "bg-rose-600 hover:bg-rose-700"
                                 : "bg-blue-600 hover:bg-blue-700"
                             }`}
                           >
-                            {(["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formSecondAttemptFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formFeedbackStatus === "Satisfied")
+                            {(["Satisfied", "Very Satisfied"].includes(formCallCenterFinalSatisfaction) || formSecondAttemptFeedbackStatus === "Satisfied" || formFirstAttemptCallStatus === "Satisfied" || formSecondAttemptCallStatus === "Satisfied" || formFeedbackStatus === "Satisfied")
                               ? "✅ Save & Pass to Complete (Resolved)"
-                              : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer"].includes(formFirstAttemptCallStatus)
+                              : formAttemptStage === "1st Attempt" && ["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formFirstAttemptCallStatus)
                               ? "Save 1st Attempt & Pass to 2nd Attempt Queue"
-                              : formAttemptStage === "2nd Attempt" && formSecondAttemptFeedbackStatus === "Customer Unreachable"
+                              : formAttemptStage === "2nd Attempt" && (["Customer Busy", "Customer Unreachable", "No Answer", "Invalid Details", "Invalid Number"].includes(formSecondAttemptCallStatus) || formSecondAttemptFeedbackStatus === "Customer Unreachable")
                               ? "Save 2nd Attempt & Mark as Not Satisfied Base"
                               : "Save Call Center Log & Update Status"}
                           </button>

@@ -133,7 +133,12 @@ export function isComplaintResolved(c: Complaint | null | undefined): boolean {
     c.currentSatisfaction === "Satisfied" || 
     c.currentSatisfaction === "Very Satisfied" || 
     c.callCenterFinalSatisfaction === "Satisfied" ||
-    c.callCenterFinalSatisfaction === "Very Satisfied";
+    c.callCenterFinalSatisfaction === "Very Satisfied" ||
+    c.firstAttemptCallStatus === "Satisfied" ||
+    c.secondAttemptCallStatus === "Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Satisfied" ||
+    (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
+    (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied");
 
   // 2. Explicit Workflow Resolution Statuses
   const isResolvedStatus = 
