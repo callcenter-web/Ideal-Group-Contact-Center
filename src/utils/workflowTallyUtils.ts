@@ -36,11 +36,17 @@ export function isComplaintResolved(c: Complaint | null | undefined): boolean {
   return !!(
     c.status === "Resolved" ||
     c.feedbackStatus === "Satisfied" ||
+    c.feedbackStatus === "Satisfied After Resolution" ||
     c.currentSatisfaction === "Satisfied" ||
     c.currentSatisfaction === "Very Satisfied" ||
     c.callCenterFinalSatisfaction === "Satisfied" ||
     c.finalStatus === "Closed" ||
-    c.finalStatus === "Completed"
+    c.finalStatus === "Completed" ||
+    c.finalStatus === "Resolved" ||
+    c.finalStatus === "Unreachable" ||
+    c.finalStatus?.includes("Unreachable") ||
+    c.feedbackStatus === "Customer Unreachable" ||
+    c.feedbackStatus === "Unreachable"
   );
 }
 

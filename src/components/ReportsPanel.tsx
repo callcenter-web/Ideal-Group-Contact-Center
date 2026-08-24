@@ -306,8 +306,13 @@ export default function ReportsPanel({
     STATIONS.forEach((s) => {
       stationMap.set(s.code.toLowerCase(), { code: s.code, name: s.name });
     });
+    
+    let hasUnassignedOrOther = false;
     complaints.forEach((c) => {
-      if (!c.station) return;
+      if (!c.station || c.station.trim().length === 0 || c.station === "Unassigned" || c.station === "Other") {
+        hasUnassignedOrOther = true;
+        return;
+      }
       const cleanSt = c.station.trim();
       const existing = Array.from(stationMap.values()).find(
         s => s.code.toLowerCase() === cleanSt.toLowerCase() || s.name.toLowerCase() === cleanSt.toLowerCase()
@@ -316,6 +321,11 @@ export default function ReportsPanel({
         stationMap.set(cleanSt.toLowerCase(), { code: cleanSt, name: cleanSt });
       }
     });
+
+    if (hasUnassignedOrOther) {
+      stationMap.set("other", { code: "Other", name: "Other / Head Office" });
+    }
+
     return Array.from(stationMap.values());
   }, [complaints]);
 
@@ -348,8 +358,12 @@ export default function ReportsPanel({
         c.finalStatus === "Closed" || 
         c.finalStatus === "Completed" || 
         c.finalStatus === "Resolved" ||
+        c.finalStatus === "Unreachable" ||
+        c.finalStatus?.includes("Unreachable") ||
         c.feedbackStatus === "Satisfied" || 
         c.feedbackStatus === "Satisfied After Resolution" || 
+        c.feedbackStatus === "Customer Unreachable" ||
+        c.feedbackStatus === "Unreachable" ||
         c.currentSatisfaction === "Satisfied" || 
         c.currentSatisfaction === "Very Satisfied";
 
@@ -370,11 +384,23 @@ export default function ReportsPanel({
 
   // Dynamically calculate CX Recovery & Service Station Performance Metrics from raw database records
   const stationMetrics = dynamicStations.map((station) => {
-    const stationComplaints = filteredComplaints.filter(c => matchesStationCodeOrName(c.station, station.code));
+    const stationComplaints = filteredComplaints.filter(c => {
+      if (station.code === "Other") {
+        return (
+          !c.station ||
+          c.station.trim().length === 0 ||
+          c.station === "Unassigned" ||
+          c.station === "Other" ||
+          !STATIONS.some(s => matchesStationCodeOrName(c.station, s.code))
+        );
+      }
+      return matchesStationCodeOrName(c.station, station.code);
+    });
+
     const total = stationComplaints.length;
     const totalList = stationComplaints;
 
-    // 1. Resolved Complaints: Contacted & customer verified satisfied / closed, and not active in rejection
+    // 1. Resolved Complaints: Contacted & customer verified satisfied / closed / completed / unreachable-closed, and not active in rejection
     const resolvedList = stationComplaints.filter(c => {
       const isSatisfiedOrClosed = 
         c.status === "Resolved" || 
@@ -382,9 +408,14 @@ export default function ReportsPanel({
         c.feedbackStatus === "Satisfied After Resolution" ||
         c.currentSatisfaction === "Satisfied" ||
         c.currentSatisfaction === "Very Satisfied" ||
+        c.callCenterFinalSatisfaction === "Satisfied" ||
         c.finalStatus === "Closed" ||
         c.finalStatus === "Resolved" ||
-        c.finalStatus === "Completed";
+        c.finalStatus === "Completed" ||
+        c.finalStatus === "Unreachable" ||
+        c.finalStatus?.includes("Unreachable") ||
+        c.feedbackStatus === "Customer Unreachable" ||
+        c.feedbackStatus === "Unreachable";
 
       const isNotRejected = 
         !isComplaintRejected(c) && 
@@ -411,14 +442,14 @@ export default function ReportsPanel({
     });
     const escalated = escalatedList.length;
 
-    // 3. Pending / In-Progress Complaints: Still waiting for initial service station contact/action
+    // 3. Pending / In-Progress Complaints: Still waiting for initial service station contact/action (excludes unreachable cases)
     const pendingList = stationComplaints.filter(c => 
       !resolvedList.some(r => r.id === c.id) && 
       !escalatedList.some(e => e.id === c.id)
     );
     const pending = pendingList.length;
 
-    // 4. Unclassified records (if any record doesn't fit standard categories)
+    // 4. Unclassified records (strictly 0 by complete partition)
     const unclassifiedList = stationComplaints.filter(c => 
       !resolvedList.some(r => r.id === c.id) && 
       !escalatedList.some(e => e.id === c.id) &&
@@ -529,68 +560,34 @@ export default function ReportsPanel({
     };
   });
 
-  // Grand summary totals across all stations
+  // Grand summary totals strictly aggregated from stationMetrics (guaranteed 100% tally)
   const grandTotal = stationMetrics.reduce((acc, sm) => acc + sm.total, 0);
-  const grandTotalList = filteredComplaints;
+  const grandTotalList = stationMetrics.flatMap(sm => sm.totalList);
 
   const grandResolved = stationMetrics.reduce((acc, sm) => acc + sm.resolved, 0);
-  const grandResolvedList = filteredComplaints.filter(c => {
-    const isSatisfiedOrClosed = 
-      c.status === "Resolved" || 
-      c.feedbackStatus === "Satisfied" || 
-      c.feedbackStatus === "Satisfied After Resolution" ||
-      c.currentSatisfaction === "Satisfied" ||
-      c.currentSatisfaction === "Very Satisfied" ||
-      c.finalStatus === "Closed" ||
-      c.finalStatus === "Resolved" ||
-      c.finalStatus === "Completed";
-
-    const isNotRejected = 
-      !isComplaintRejected(c) && 
-      c.stationResponseStatus !== "Rejected" && 
-      c.feedbackStatus !== "Rejected Again to Service Station";
-
-    return isSatisfiedOrClosed && isNotRejected;
-  });
+  const grandResolvedList = stationMetrics.flatMap(sm => sm.resolvedList);
 
   const grandEscalated = stationMetrics.reduce((acc, sm) => acc + sm.escalated, 0);
-  const grandEscalatedList = filteredComplaints.filter(c => {
-    const isAlreadyResolved = grandResolvedList.some(r => r.id === c.id);
-    if (isAlreadyResolved) return false;
-    return (
-      isComplaintRejected(c) || 
-      c.stationResponseStatus === "Rejected" || 
-      c.feedbackStatus === "Rejected Again to Service Station" || 
-      c.feedbackStatus === "Still Dissatisfied" || 
-      c.finalStatus?.includes("Re-assigned") ||
-      c.feedbackStatus === "Escalated" || 
-      c.finalStatus === "Escalated"
-    );
-  });
+  const grandEscalatedList = stationMetrics.flatMap(sm => sm.escalatedList);
 
   const grandPending = stationMetrics.reduce((acc, sm) => acc + sm.pending, 0);
-  const grandPendingList = filteredComplaints.filter(c => 
-    !grandResolvedList.some(r => r.id === c.id) && 
-    !grandEscalatedList.some(e => e.id === c.id)
-  );
+  const grandPendingList = stationMetrics.flatMap(sm => sm.pendingList);
 
   const grandUnclassified = stationMetrics.reduce((acc, sm) => acc + sm.unclassified, 0);
-  const grandUnclassifiedList = filteredComplaints.filter(c => 
-    !grandResolvedList.some(r => r.id === c.id) && 
-    !grandEscalatedList.some(e => e.id === c.id) &&
-    !grandPendingList.some(p => p.id === c.id)
-  );
+  const grandUnclassifiedList = stationMetrics.flatMap(sm => sm.unclassifiedList);
 
-  // Grand Aging calculated exclusively for pending complaints
-  const grandDays0_3List = grandPendingList.filter(c => getComplaintAging(c).days <= 3);
-  const grandDays3_5List = grandPendingList.filter(c => { const d = getComplaintAging(c).days; return d > 3 && d <= 5; });
-  const grandDays6_10List = grandPendingList.filter(c => { const d = getComplaintAging(c).days; return d > 5 && d <= 10; });
-  const grandDays10PlusList = grandPendingList.filter(c => getComplaintAging(c).days > 10);
+  // Grand Aging calculated exclusively from pending complaints
+  const grandDays0_3 = stationMetrics.reduce((acc, sm) => acc + sm.days0_3, 0);
+  const grandDays0_3List = stationMetrics.flatMap(sm => sm.days0_3List);
 
-  const grandDays0_3 = grandDays0_3List.length;
-  const grandDays3_5 = grandDays3_5List.length;
-  const grandDays6_10 = grandDays6_10List.length;
-  const grandDays10Plus = grandDays10PlusList.length;
+  const grandDays3_5 = stationMetrics.reduce((acc, sm) => acc + sm.days3_5, 0);
+  const grandDays3_5List = stationMetrics.flatMap(sm => sm.days3_5List);
+
+  const grandDays6_10 = stationMetrics.reduce((acc, sm) => acc + sm.days6_10, 0);
+  const grandDays6_10List = stationMetrics.flatMap(sm => sm.days6_10List);
+
+  const grandDays10Plus = stationMetrics.reduce((acc, sm) => acc + sm.days10Plus, 0);
+  const grandDays10PlusList = stationMetrics.flatMap(sm => sm.days10PlusList);
 
   const grandScContactedList = filteredComplaints.filter(c => isStationContacted(c));
   const grandScContacted = grandScContactedList.length;
@@ -1886,9 +1883,9 @@ export default function ReportsPanel({
                         <div>Resolved Complaints</div>
                         <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(contacted &amp; satisfied)</div>
                       </th>
-                      <th className="py-3.5 px-3 text-center text-amber-600 dark:text-amber-400">
+                      <th className={`py-3.5 px-3 text-center text-amber-600 dark:text-amber-400 ${isDark ? "bg-amber-950/20" : "bg-amber-50/50"}`}>
                         <div>Pending / In-Progress</div>
-                        <div className="text-[8.5px] font-bold text-amber-500/80 lowercase">(pending sc contact)</div>
+                        <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(pending sc contact)</div>
                       </th>
                       <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">
                         <div>Rejected by CC</div>
@@ -1977,7 +1974,7 @@ export default function ReportsPanel({
                             )}
                           </td>
                           {/* Pending */}
-                          <td className="py-3 px-3 text-center">
+                          <td className={`py-3 px-3 text-center ${isDark ? "bg-amber-950/10" : "bg-amber-50/30"}`}>
                             {sm.pending > 0 ? (
                               <button
                                 type="button"
@@ -1986,7 +1983,7 @@ export default function ReportsPanel({
                                   handleOpenDrilldown(sm.name, sm.code, "Pending to Contact by Service Station", sm.pendingList, "amber");
                                 }}
                                 title={`Click to view ${sm.pending} pending to contact complaints for ${sm.name}`}
-                                className="font-black px-2 py-0.5 rounded-md text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
+                                className="font-black px-2.5 py-1 rounded-md text-xs text-amber-700 bg-amber-100 hover:bg-amber-200 dark:text-amber-300 dark:bg-amber-950/70 dark:border-amber-800/80 border border-amber-300 cursor-pointer hover:underline hover:scale-105 transition-all shadow-2xs"
                               >
                                 {sm.pending}
                               </button>
@@ -2144,7 +2141,7 @@ export default function ReportsPanel({
                         </button>
                       </td>
                       {/* Grand Pending */}
-                      <td className="py-3.5 px-3 text-center text-amber-400">
+                      <td className="py-3.5 px-3 text-center bg-amber-500/10 text-amber-400">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -2152,7 +2149,7 @@ export default function ReportsPanel({
                             handleOpenDrilldown("All Service Stations", "ALL", "Pending to Contact by Service Station", grandPendingList, "amber");
                           }}
                           title={`Click to view ${grandPending} pending complaints across all stations`}
-                          className="hover:underline font-black cursor-pointer"
+                          className="font-black px-2.5 py-1 rounded-md text-xs bg-amber-400 text-slate-950 hover:bg-amber-300 shadow-2xs hover:scale-105 transition-all cursor-pointer"
                         >
                           {grandPending}
                         </button>
