@@ -4,472 +4,1043 @@ import { calculateNonSundayMs, parseComplaintDate } from "./agingUtils";
 import { matchesStationCodeOrName } from "./stationUtils";
 
 /**
- * Checks if a complaint has been rejected by Call Center / returned to Service Station
- * and requires re-action by the station.
+ * Robust date parser supporting ISO strings, YYYY-MM-DD, DD/MM/YYYY, Excel serial numbers,
+ * timestamps with AM/PM, and JS Date instances.
+ * Returns a valid Date object or null if unparseable.
  */
-export function isComplaintRejected(c: Complaint | null | undefined): boolean {
+export function parseValidDate(val: any): Date | null {
+  if (val === null || val === undefined || val === "") return null;
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val;
+  }
+
+  // Handle Excel serial date numbers (e.g. 45500.5)
+  if (typeof val === "number" || (!isNaN(Number(val)) && !String(val).includes("-") && !String(val).includes("/"))) {
+    const num = Number(val);
+    if (num > 30000 && num < 70000) {
+      const excelEpoch = new Date(1899, 11, 30);
+      const ms = Math.round(num * 86400 * 1000);
+      const parsed = new Date(excelEpoch.getTime() + ms);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+  }
+
+  const str = String(val).trim();
+  if (!str) return null;
+
+  // Try standard parse
+  const direct = new Date(str);
+  if (!isNaN(direct.getTime())) {
+    return direct;
+  }
+
+  // Try parsing custom format strings e.g. "DD/MM/YYYY", "DD-MM-YYYY", "YYYY/MM/DD"
+  const dateMatch = str.match(/^(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})(.*)$/);
+  if (dateMatch) {
+    const p1 = parseInt(dateMatch[1], 10);
+    const p2 = parseInt(dateMatch[2], 10);
+    const p3 = parseInt(dateMatch[3], 10);
+    const rest = dateMatch[4] ? dateMatch[4].trim() : "";
+
+    let y = 0;
+    let m = 0;
+    let d = 0;
+
+    if (p1 > 1000) {
+      // YYYY-MM-DD
+      y = p1;
+      m = p2 - 1;
+      d = p3;
+    } else if (p3 > 1000) {
+      // DD-MM-YYYY
+      d = p1;
+      m = p2 - 1;
+      y = p3;
+    }
+
+    if (y > 1970 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+      let hours = 0;
+      let minutes = 0;
+      let seconds = 0;
+
+      if (rest) {
+        const timeMatch = rest.match(/(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*(AM|PM|am|pm)?/i);
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1], 10);
+          minutes = parseInt(timeMatch[2], 10);
+          seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+          const ampm = timeMatch[4] ? timeMatch[4].toUpperCase() : null;
+          if (ampm === "PM" && hours < 12) hours += 12;
+          if (ampm === "AM" && hours === 12) hours = 0;
+        }
+      }
+
+      const candidate = new Date(y, m, d, hours, minutes, seconds);
+      if (!isNaN(candidate.getTime())) return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Deduplicate complaints array by unique complaint ID before calculations.
+ * Merges any duplicate entries safely to avoid losing data or double-counting.
+ */
+export function deduplicateComplaints(complaints: Complaint[]): Complaint[] {
+  if (!Array.isArray(complaints)) return [];
+  const map = new Map<string, Complaint>();
+  
+  for (const c of complaints) {
+    if (!c) continue;
+    const id = String(c.id || "").trim();
+    if (!id) continue;
+    
+    if (!map.has(id)) {
+      map.set(id, { ...c });
+    } else {
+      const existing = map.get(id)!;
+      // Merge records, favoring non-empty latest values
+      map.set(id, {
+        ...existing,
+        ...c,
+        status: c.status || existing.status,
+        feedbackStatus: c.feedbackStatus || existing.feedbackStatus,
+        currentSatisfaction: c.currentSatisfaction || existing.currentSatisfaction,
+        stationContactedDate: c.stationContactedDate || existing.stationContactedDate,
+        callCenterContactedDate: c.callCenterContactedDate || existing.callCenterContactedDate,
+        solutionDate: c.solutionDate || existing.solutionDate,
+        date: c.date || existing.date,
+        receivedDateTime: c.receivedDateTime || existing.receivedDateTime
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Checks if a complaint is truly resolved in its current state.
+ * CRITICAL RECONCILIATION RULE:
+ * A historical rejection does NOT permanently prevent a complaint from being resolved.
+ * If the issue was solved and the customer is satisfied / case is closed, it is RESOLVED.
+ */
+export function isComplaintResolved(c: Complaint | null | undefined): boolean {
   if (!c) return false;
+
+  // 1. Explicit Customer Satisfaction Indicators
+  const isSatisfied = 
+    c.currentSatisfaction === "Satisfied" || 
+    c.currentSatisfaction === "Very Satisfied" || 
+    c.callCenterFinalSatisfaction === "Satisfied" ||
+    c.callCenterFinalSatisfaction === "Very Satisfied";
+
+  // 2. Explicit Workflow Resolution Statuses
+  const isResolvedStatus = 
+    c.status === "Resolved" || 
+    c.feedbackStatus === "Satisfied" || 
+    c.feedbackStatus === "Satisfied After Resolution";
+
+  // 3. Final Lifecycle Closed / Completed Statuses
+  const isFinalClosed = 
+    c.finalStatus === "Closed" || 
+    c.finalStatus === "Completed" || 
+    c.finalStatus === "Resolved";
+
+  // 4. Customer Unreachable verified closure
+  const isUnreachableClosed = 
+    c.finalStatus === "Unreachable" || 
+    (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable")) || 
+    c.feedbackStatus === "Customer Unreachable" || 
+    c.feedbackStatus === "Unreachable";
+
+  return !!(isSatisfied || isResolvedStatus || isFinalClosed || isUnreachableClosed);
+}
+
+/**
+ * Checks if a complaint is actively pending in the current workflow cycle.
+ * CRITICAL RECONCILIATION RULE:
+ * A complaint is EITHER Resolved OR Pending (Never both).
+ * Total Complaints = Resolved Complaints + Pending Complaints.
+ */
+export function isComplaintPending(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  return !isComplaintResolved(c);
+}
+
+/**
+ * Backward compatibility alias for isComplaintPending.
+ */
+export function isComplaintActivePending(c: Complaint | null | undefined): boolean {
+  return isComplaintPending(c);
+}
+
+/**
+ * Checks if a complaint is CURRENTLY in an active Call Center rejection / escalation state.
+ * CRITICAL RECONCILIATION RULES:
+ * 1. Resolved complaints can NEVER be counted as active rejected (Historical rejections are archived).
+ * 2. Only active pending complaints with an unresolved rejection/return status are counted.
+ */
+export function isActiveCCRejectionRequired(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  // If complaint is resolved, historical rejections do NOT make it an active rejection
+  if (isComplaintResolved(c)) return false;
+
   return !!(
     c.stationResponseStatus === "Rejected" ||
     c.stationResponseStatus === "Returned to Service Station" ||
     c.stationResponseStatus === "Rejected by Call Center" ||
     c.stationResponseStatus === "Returned to Call Center" ||
     c.feedbackStatus === "Returned to Service Station" ||
+    c.feedbackStatus === "Rejected Again to Service Station" ||
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Escalated" ||
     c.finalStatus === "Returned to Service Station" ||
     c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
-    c.finalStatus?.includes("Re-assigned") ||
-    c.finalStatus?.includes("Rejected") ||
-    (typeof c.stationResponseStatus === "string" && c.stationResponseStatus.toLowerCase().includes("reject")) ||
-    (typeof c.stationResponseStatus === "string" && c.stationResponseStatus.toLowerCase().includes("returned"))
+    c.finalStatus === "Escalated" ||
+    (typeof c.finalStatus === "string" && (c.finalStatus.includes("Re-assigned") || c.finalStatus.includes("Rejected"))) ||
+    (typeof c.stationResponseStatus === "string" && (c.stationResponseStatus.toLowerCase().includes("reject") || c.stationResponseStatus.toLowerCase().includes("returned")))
   );
 }
 
 /**
- * Checks if a complaint is truly resolved in the current cycle.
- * CRITICAL RULE: A rejected / returned complaint CANNOT be counted as resolved.
+ * Alias for isActiveCCRejectionRequired
  */
-export function isComplaintResolved(c: Complaint | null | undefined): boolean {
-  if (!c) return false;
-  // If actively rejected/returned to station, it cannot be considered resolved
-  if (isComplaintRejected(c)) return false;
-
-  return !!(
-    c.status === "Resolved" ||
-    c.feedbackStatus === "Satisfied" ||
-    c.feedbackStatus === "Satisfied After Resolution" ||
-    c.currentSatisfaction === "Satisfied" ||
-    c.currentSatisfaction === "Very Satisfied" ||
-    c.callCenterFinalSatisfaction === "Satisfied" ||
-    c.finalStatus === "Closed" ||
-    c.finalStatus === "Completed" ||
-    c.finalStatus === "Resolved" ||
-    c.finalStatus === "Unreachable" ||
-    c.finalStatus?.includes("Unreachable") ||
-    c.feedbackStatus === "Customer Unreachable" ||
-    c.feedbackStatus === "Unreachable"
-  );
+export function isComplaintRejected(c: Complaint | null | undefined): boolean {
+  return isActiveCCRejectionRequired(c);
 }
 
 /**
- * Checks if a complaint is actively pending action in the current workflow cycle.
+ * Gets the complaint's original received Date.
  */
-export function isComplaintActivePending(c: Complaint | null | undefined): boolean {
-  if (!c) return false;
-  return !isComplaintResolved(c);
+export function getComplaintReceivedDate(c: Complaint): Date {
+  if (!c) return new Date();
+  const d = parseValidDate(c.receivedDateTime) || parseValidDate(c.date) || parseValidDate((c as any).created_at);
+  return d || new Date();
 }
 
 /**
- * Determines operational contact status in the CURRENT workflow cycle.
- */
-export function getComplaintCycleContactStatus(
-  c: Complaint | null | undefined
-): "NOT_CONTACTED" | "CONTACTED" | "CONTACT_ATTEMPTED" | "CUSTOMER_UNREACHABLE" {
-  if (!c) return "NOT_CONTACTED";
-
-  const isRej = isComplaintRejected(c);
-
-  if (isRej) {
-    // If rejected, check if new contact occurred AFTER rejection date
-    const explicit = c.serviceStationContactStatus || (c as any).service_station_contact_status;
-    const contactTime = c.serviceStationContactedAt || (c as any).service_station_contacted_at || c.stationContactedDate;
-    const rejTime = c.stationResponseRejectedDate;
-
-    if (explicit === "CONTACTED" && contactTime && rejTime) {
-      const ct = new Date(contactTime).getTime();
-      const rt = new Date(rejTime).getTime();
-      if (!isNaN(ct) && !isNaN(rt) && ct > rt) {
-        return "CONTACTED";
-      }
-    }
-    if (explicit === "CONTACT_ATTEMPTED" || explicit === "CUSTOMER_UNREACHABLE") {
-      return explicit;
-    }
-    return "NOT_CONTACTED";
-  }
-
-  const explicit = c.serviceStationContactStatus || (c as any).service_station_contact_status;
-  if (explicit) {
-    const norm = String(explicit).toUpperCase().trim();
-    if (norm === "CONTACTED") return "CONTACTED";
-    if (norm === "CONTACT_ATTEMPTED" || norm === "ATTEMPTED") return "CONTACT_ATTEMPTED";
-    if (norm === "CUSTOMER_UNREACHABLE" || norm === "UNREACHABLE") return "CUSTOMER_UNREACHABLE";
-    if (norm === "NOT_CONTACTED") return "NOT_CONTACTED";
-  }
-
-  if (c.feedbackStatus === "Customer Unreachable" || c.firstAttemptCallStatus === "Customer Unreachable") {
-    return "CUSTOMER_UNREACHABLE";
-  }
-
-  const hasStationContactRecorded = !!(
-    (c.serviceStationContactedAt && String(c.serviceStationContactedAt).trim().length > 0) ||
-    (c.stationContactedDate && String(c.stationContactedDate).trim().length > 0) ||
-    (c.stationResolutionNotes && String(c.stationResolutionNotes).trim().length > 0) ||
-    c.stationResponseStatus === "Submitted to Call Center"
-  );
-
-  if (hasStationContactRecorded) {
-    return "CONTACTED";
-  }
-
-  if (c.contactAttemptCount && c.contactAttemptCount > 0) {
-    return "CONTACT_ATTEMPTED";
-  }
-
-  return "NOT_CONTACTED";
-}
-
-/**
- * Gets the starting date for SLA calculation in the CURRENT active cycle.
- * For newly assigned case: receivedDateTime / date / created_at.
- * For rejected / returned case: stationResponseRejectedDate.
+ * Gets the start timestamp for the active cycle SLA calculation.
+ * If the case has an active rejection starting a new action cycle, uses rejection timestamp.
+ * Otherwise uses the original complaint received timestamp.
  */
 export function getActiveCycleStartDate(c: Complaint): Date {
-  if (isComplaintRejected(c) && c.stationResponseRejectedDate) {
-    const rejDate = parseComplaintDate(c.stationResponseRejectedDate);
-    if (!isNaN(rejDate.getTime())) return rejDate;
+  if (isActiveCCRejectionRequired(c) && c.stationResponseRejectedDate) {
+    const rejDate = parseValidDate(c.stationResponseRejectedDate);
+    if (rejDate) return rejDate;
   }
-  return parseComplaintDate(c.date, c.receivedDateTime || (c as any).created_at);
-}
-
-export type SLABucket = "0-3 Days" | "3-5 Days" | "6-10 Days" | ">10 Days";
-
-export interface CycleAgingInfo {
-  workingDays: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
-  formattedTimeString: string;
-  bucket: SLABucket;
-  bucketLabel: string;
-  badgeColorClass: string;
-  textColorClass: string;
-  cycleStartDate: Date;
-  isResolved: boolean;
+  return getComplaintReceivedDate(c);
 }
 
 /**
- * Calculates SLA ageing information strictly for the active cycle.
+ * Calculates exact age in calendar days for a complaint relative to referenceDate (default now).
+ */
+export function getComplaintAgingDays(c: Complaint, referenceDate: Date = new Date()): number {
+  const startDate = getActiveCycleStartDate(c);
+  const diffMs = Math.max(0, referenceDate.getTime() - startDate.getTime());
+  return diffMs / (1000 * 60 * 60 * 24);
+}
+
+/**
+ * Full active cycle age information including working days and SLA bucket label.
  */
 export function getActiveCycleAgeInfo(
   c: Complaint,
   referenceDate: Date = new Date(),
   calendarDates?: WorkstationCalendarDate[]
-): CycleAgingInfo {
+): {
+  workingDays: number;
+  totalHours: number;
+  isBreached: boolean;
+  cycleStartDate: Date;
+  isReActionCycle: boolean;
+  bucketLabel: string;
+  bucketKey: "0_3" | "3_5" | "6_10" | "gt_10";
+} {
   const cycleStartDate = getActiveCycleStartDate(c);
-  const isResolved = isComplaintResolved(c);
+  const isReActionCycle = isActiveCCRejectionRequired(c);
 
-  let effectiveRef = referenceDate;
-  if (isResolved) {
-    const resDateStr = c.callCenterContactedDate || c.solutionDate || c.updatedAt || c.date;
-    const parsedRes = parseComplaintDate(resDateStr);
-    if (!isNaN(parsedRes.getTime()) && parsedRes.getTime() >= cycleStartDate.getTime()) {
-      effectiveRef = parsedRes;
-    }
-  }
+  const exactDays = getComplaintAgingDays(c, referenceDate);
+  const totalHours = Math.round(exactDays * 24);
 
-  const diffMs = calculateNonSundayMs(cycleStartDate, effectiveRef, c.station, calendarDates);
-  const workingDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
-
-  let bucket: SLABucket;
+  // Exact non-overlapping SLA buckets:
+  // 0-3 DAYS: age >= 0 AND age <= 3
+  // 3-5 DAYS: age > 3 AND age <= 5
+  // 6-10 DAYS: age > 5 AND age <= 10
+  // > 10 DAYS: age > 10
+  let bucketKey: "0_3" | "3_5" | "6_10" | "gt_10";
   let bucketLabel: string;
-  let badgeColorClass: string;
-  let textColorClass: string;
 
-  if (workingDays <= 3) {
-    bucket = "0-3 Days";
+  if (exactDays <= 3) {
+    bucketKey = "0_3";
     bucketLabel = "0-3 Days (New)";
-    badgeColorClass = "bg-emerald-50 text-emerald-800 border-emerald-300";
-    textColorClass = "text-emerald-700";
-  } else if (workingDays <= 5) {
-    bucket = "3-5 Days";
+  } else if (exactDays <= 5) {
+    bucketKey = "3_5";
     bucketLabel = "3-5 Days (Pending)";
-    badgeColorClass = "bg-amber-50 text-amber-800 border-amber-300";
-    textColorClass = "text-amber-700";
-  } else if (workingDays <= 10) {
-    bucket = "6-10 Days";
+  } else if (exactDays <= 10) {
+    bucketKey = "6_10";
     bucketLabel = "6-10 Days (Escalated)";
-    badgeColorClass = "bg-orange-50 text-orange-800 border-orange-300";
-    textColorClass = "text-orange-700";
   } else {
-    bucket = ">10 Days";
+    bucketKey = "gt_10";
     bucketLabel = ">10 Days (Critical)";
-    badgeColorClass = "bg-rose-50 text-rose-800 border-rose-300";
-    textColorClass = "text-rose-700";
   }
 
   return {
-    workingDays,
-    hours,
-    minutes,
-    seconds,
-    formattedTimeString: `${workingDays}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`,
-    bucket,
-    bucketLabel,
-    badgeColorClass,
-    textColorClass,
+    workingDays: Math.round(exactDays * 10) / 10,
+    totalHours,
+    isBreached: exactDays > 3,
     cycleStartDate,
-    isResolved,
+    isReActionCycle,
+    bucketLabel,
+    bucketKey
   };
-}
-
-export interface StationPerformanceMetrics {
-  stationCode: string;
-  stationName: string;
-  total: number;
-  pending: number;
-  resolved: number;
-  notContacted: number;
-  contacted: number;
-  attempted: number;
-  unreachable: number;
-  rejectedReAction: number;
-  recoveryRate: number; // 0.0 to 100.0
-  sla_0_3: number;
-  sla_3_5: number;
-  sla_6_10: number;
-  sla_gt_10: number;
-  slaTotal: number; // STRICT IDENTITY: must equal pending
-  isReconciled: boolean;
-  reconciliationErrors: string[];
-  activeCases: Complaint[];
-  resolvedCases: Complaint[];
-  allCases: Complaint[];
 }
 
 /**
- * Calculates complete, verified metrics for a single service station.
- * All metrics are calculated dynamically from actual complaint records.
+ * Returns the FIRST valid Call Center contact/action Date.
+ * Missing contact dates return null.
  */
-export function calculateStationMetrics(
-  complaints: Complaint[],
-  stationIdentifier: string,
-  referenceDate: Date = new Date(),
-  calendarDates?: WorkstationCalendarDate[]
-): StationPerformanceMetrics {
-  // Find station info or fallback
-  const matchedStationInfo = STATIONS.find(
-    (st) =>
-      st.code.toLowerCase() === stationIdentifier.toLowerCase() ||
-      st.name.toLowerCase() === stationIdentifier.toLowerCase()
-  );
-  const stationCode = matchedStationInfo ? matchedStationInfo.code : stationIdentifier;
-  const stationName = matchedStationInfo ? matchedStationInfo.name : stationIdentifier;
+export function getFirstCallCenterContactDate(c: Complaint): Date | null {
+  if (!c) return null;
+  const dates: Date[] = [];
 
-  // Filter complaints strictly belonging to this station
-  const stationComplaints = complaints.filter((c) =>
-    matchesStationCodeOrName(c.station, stationCode)
-  );
+  const d1 = parseValidDate(c.callCenterContactedDate);
+  if (d1) dates.push(d1);
 
-  const total = stationComplaints.length;
-  let resolved = 0;
-  let pending = 0;
+  const d2 = parseValidDate(c.firstAttemptDate);
+  if (d2) dates.push(d2);
 
-  let notContacted = 0;
-  let contacted = 0;
-  let attempted = 0;
-  let unreachable = 0;
-  let rejectedReAction = 0;
+  const d3 = parseValidDate(c.followUpDate);
+  if (d3) dates.push(d3);
 
-  let sla_0_3 = 0;
-  let sla_3_5 = 0;
-  let sla_6_10 = 0;
-  let sla_gt_10 = 0;
-
-  const activeCases: Complaint[] = [];
-  const resolvedCases: Complaint[] = [];
-
-  stationComplaints.forEach((c) => {
-    const isRes = isComplaintResolved(c);
-    const isRej = isComplaintRejected(c);
-
-    if (isRej) {
-      rejectedReAction++;
-    }
-
-    if (isRes) {
-      resolved++;
-      resolvedCases.push(c);
-    } else {
-      pending++;
-      activeCases.push(c);
-
-      // Contact status in current cycle
-      const cycleStatus = getComplaintCycleContactStatus(c);
-      if (cycleStatus === "NOT_CONTACTED") notContacted++;
-      else if (cycleStatus === "CONTACTED") contacted++;
-      else if (cycleStatus === "CONTACT_ATTEMPTED") attempted++;
-      else if (cycleStatus === "CUSTOMER_UNREACHABLE") unreachable++;
-
-      // SLA Ageing for ACTIVE PENDING case
-      const ageInfo = getActiveCycleAgeInfo(c, referenceDate, calendarDates);
-      if (ageInfo.bucket === "0-3 Days") sla_0_3++;
-      else if (ageInfo.bucket === "3-5 Days") sla_3_5++;
-      else if (ageInfo.bucket === "6-10 Days") sla_6_10++;
-      else if (ageInfo.bucket === ">10 Days") sla_gt_10++;
-    }
-  });
-
-  const slaTotal = sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10;
-  const recoveryRate = total > 0 ? parseFloat(((resolved / total) * 100).toFixed(1)) : 0.0;
-
-  // Reconciliation checks
-  const errors: string[] = [];
-  if (total !== pending + resolved) {
-    errors.push(`Total (${total}) ≠ Pending (${pending}) + Resolved (${resolved})`);
-  }
-  if (pending !== slaTotal) {
-    errors.push(`Pending (${pending}) ≠ SLA Total (${slaTotal})`);
-  }
-  const pendingContactTotal = notContacted + contacted + attempted + unreachable;
-  if (pending !== pendingContactTotal) {
-    errors.push(`Pending (${pending}) ≠ Contact breakdown sum (${pendingContactTotal})`);
+  if (Array.isArray(c.contactAttempts)) {
+    c.contactAttempts.forEach((att) => {
+      if (att && att.timestamp && att.actorRole === "callcenter") {
+        const dAtt = parseValidDate(att.timestamp);
+        if (dAtt) dates.push(dAtt);
+      }
+    });
   }
 
-  return {
-    stationCode,
-    stationName,
-    total,
-    pending,
-    resolved,
-    notContacted,
-    contacted,
-    attempted,
-    unreachable,
-    rejectedReAction,
-    recoveryRate,
-    sla_0_3,
-    sla_3_5,
-    sla_6_10,
-    sla_gt_10,
-    slaTotal,
-    isReconciled: errors.length === 0,
-    reconciliationErrors: errors,
-    activeCases,
-    resolvedCases,
-    allCases: stationComplaints,
-  };
+  if (dates.length === 0) return null;
+  return new Date(Math.min(...dates.map((d) => d.getTime())));
 }
 
-export interface NationalPerformanceSummary {
+/**
+ * Returns the FIRST valid Service Station contact/action Date.
+ * Missing contact dates return null.
+ */
+export function getFirstStationContactDate(c: Complaint): Date | null {
+  if (!c) return null;
+  const dates: Date[] = [];
+
+  const d1 = parseValidDate(c.serviceStationContactedAt);
+  if (d1) dates.push(d1);
+
+  const d2 = parseValidDate((c as any).service_station_contacted_at);
+  if (d2) dates.push(d2);
+
+  const d3 = parseValidDate(c.stationContactedDate);
+  if (d3) dates.push(d3);
+
+  if (Array.isArray(c.contactAttempts)) {
+    c.contactAttempts.forEach((att) => {
+      if (att && att.timestamp) {
+        const isStationActor =
+          att.actorRole === "agent" ||
+          !att.actorRole ||
+          att.outcome === "CONTACTED" ||
+          att.outcome === "CONTACT_ATTEMPTED";
+        if (isStationActor) {
+          const dAtt = parseValidDate(att.timestamp);
+          if (dAtt) dates.push(dAtt);
+        }
+      }
+    });
+  }
+
+  if (dates.length === 0) return null;
+  return new Date(Math.min(...dates.map((d) => d.getTime())));
+}
+
+/**
+ * Returns the final resolution Date for a resolved complaint.
+ * Unresolved complaints or missing dates return null.
+ */
+export function getComplaintResolutionDate(c: Complaint): Date | null {
+  if (!c || !isComplaintResolved(c)) return null;
+  const dates: Date[] = [];
+
+  const d1 = parseValidDate(c.solutionDate);
+  if (d1) dates.push(d1);
+
+  const d2 = parseValidDate(c.finishDate);
+  if (d2) dates.push(d2);
+
+  const d3 = parseValidDate(c.updatedAt);
+  if (d3) dates.push(d3);
+
+  const d4 = parseValidDate(c.callCenterContactedDate);
+  if (d4 && (c.feedbackStatus === "Satisfied" || c.callCenterFinalSatisfaction === "Satisfied")) {
+    dates.push(d4);
+  }
+
+  if (dates.length === 0) {
+    const dFallback = parseValidDate(c.stationContactedDate) || parseValidDate(c.date);
+    return dFallback || null;
+  }
+
+  return new Date(Math.min(...dates.map((d) => d.getTime())));
+}
+
+/**
+ * Calculates exact date difference in days between two Date objects.
+ */
+export function getDaysDifference(startDate: Date | null, endDate: Date | null): number | null {
+  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    return null;
+  }
+  const diffMs = endDate.getTime() - startDate.getTime();
+  return Math.max(0, diffMs / (1000 * 60 * 60 * 24));
+}
+
+export interface StationReportMetrics {
+  code: string;
+  name: string;
+  stationCode: string;
+  stationName: string;
+  total: number;
+  totalList: Complaint[];
+  resolved: number;
+  resolvedList: Complaint[];
+  pending: number;
+  pendingList: Complaint[];
+  rejectedByCC: number; // Current active rejected count
+  rejectedByCCList: Complaint[];
+
+  // SLA Aging Buckets (Active Pending Only)
+  sla_0_3: number;
+  sla_0_3List: Complaint[];
+  sla_3_5: number;
+  sla_3_5List: Complaint[];
+  sla_6_10: number;
+  sla_6_10List: Complaint[];
+  sla_gt_10: number;
+  sla_gt_10List: Complaint[];
+
+  // Compatibility aliases
+  days0_3: number;
+  days0_3List: Complaint[];
+  days3_5: number;
+  days3_5List: Complaint[];
+  days6_10: number;
+  days6_10List: Complaint[];
+  days10Plus: number;
+  days10PlusList: Complaint[];
+  escalated: number;
+  escalatedList: Complaint[];
+  unclassified: number;
+  unclassifiedList: Complaint[];
+  notContacted: number;
+  contacted: number;
+  attempted: number;
+  rejectedReAction: number;
+  recoveryRate: number;
+  slaTotal: number;
+
+  // Service Station Contact Days
+  stationContactCount: number;
+  stationContactTotalDays: number;
+  avgDaysStationContact: number;
+
+  // Call Center Contact Days
+  ccContactCount: number;
+  ccContactTotalDays: number;
+  avgDaysCallCenterContact: number;
+
+  // Days to Solve Case
+  solveCount: number;
+  solveTotalDays: number;
+  avgDaysToSolveCase: number;
+
+  resolutionRate: string;
+  rate: number;
+
+  // Operational breakdown
+  scContactedCount: number;
+  scContactedList: Complaint[];
+  scContactedPercent: number;
+
+  ccEligibleCount: number;
+  ccEligibleList: Complaint[];
+  ccExcludedCount: number;
+  ccContactedCount: number;
+  ccContactedList: Complaint[];
+  ccContactedPercent: number;
+
+  ccSlaMetCount: number;
+  ccSlaBreachedCount: number;
+  ccSlaAchievementRate: number;
+
+  avgAging: number;
+  avgAgingColor?: string;
+
+  isReconciled: boolean;
+  reconciliationErrors: string[];
+}
+
+export interface NationalReportSummary {
+  total: number;
+  totalList: Complaint[];
+  resolved: number;
+  resolvedList: Complaint[];
+  pending: number;
+  pendingList: Complaint[];
+  rejectedByCC: number;
+  rejectedByCCList: Complaint[];
+
+  // Compatibility aliases for overview
   totalComplaints: number;
   totalPending: number;
   totalResolved: number;
   totalNotContacted: number;
   totalContacted: number;
-  totalAttempted: number;
-  totalUnreachable: number;
   totalRejectedReAction: number;
   overallRecoveryRate: number;
-  totalSLA_0_3: number;
-  totalSLA_3_5: number;
-  totalSLA_6_10: number;
-  totalSLA_gt_10: number;
-  totalSLACases: number;
-  stationMetrics: StationPerformanceMetrics[];
+
+  sla_0_3: number;
+  sla_0_3List: Complaint[];
+  sla_3_5: number;
+  sla_3_5List: Complaint[];
+  sla_6_10: number;
+  sla_6_10List: Complaint[];
+  sla_gt_10: number;
+  sla_gt_10List: Complaint[];
+
+  // National Averages (calculated directly from underlying records)
+  stationContactCount: number;
+  stationContactTotalDays: number;
+  avgDaysStationContact: number;
+
+  ccContactCount: number;
+  ccContactTotalDays: number;
+  avgDaysCallCenterContact: number;
+
+  solveCount: number;
+  solveTotalDays: number;
+  avgDaysToSolveCase: number;
+
+  resolutionRate: string;
+  rate: number;
+
+  scContactedCount: number;
+  scContactedList: Complaint[];
+  scContactedPercent: number;
+
+  ccEligibleCount: number;
+  ccEligibleList: Complaint[];
+  ccExcludedCount: number;
+  ccContactedCount: number;
+  ccContactedList: Complaint[];
+  ccContactedPercent: number;
+
+  ccSlaMetCount: number;
+  ccSlaBreachedCount: number;
+  ccSlaAchievementRate: number;
+
+  stationMetrics: StationReportMetrics[];
   isFullyReconciled: boolean;
-  unassignedCasesCount: number;
+  reconciliationErrors: string[];
 }
 
 /**
- * Calculates national overall summary and station breakdown across all database records.
- * Supports dynamically discovering any station present in the database.
+ * Calculates complete, reconciled report metrics for a single station.
  */
-export function calculateNationalSummary(
-  complaints: Complaint[],
-  referenceDate: Date = new Date(),
-  calendarDates?: WorkstationCalendarDate[]
-): NationalPerformanceSummary {
-  // Discover all distinct stations from predefined STATIONS + any stations in complaints
-  const stationCodesSet = new Set<string>();
-  STATIONS.forEach((st) => stationCodesSet.add(st.code));
+export function calculateStationReportMetrics(
+  stationComplaints: Complaint[],
+  stationCode: string,
+  stationName: string,
+  referenceDate: Date = new Date()
+): StationReportMetrics {
+  // Deduplicate before calculating
+  const complaints = deduplicateComplaints(stationComplaints);
 
-  complaints.forEach((c) => {
-    if (c.station && c.station.trim().length > 0) {
-      // Find matching code if any
-      const match = STATIONS.find(
-        (st) =>
-          st.code.toLowerCase() === c.station.trim().toLowerCase() ||
-          st.name.toLowerCase() === c.station.trim().toLowerCase()
-      );
-      if (match) {
-        stationCodesSet.add(match.code);
-      } else {
-        stationCodesSet.add(c.station.trim());
+  const total = complaints.length;
+  const totalList = complaints;
+
+  const resolvedList: Complaint[] = [];
+  const pendingList: Complaint[] = [];
+  const rejectedByCCList: Complaint[] = [];
+
+  const sla_0_3List: Complaint[] = [];
+  const sla_3_5List: Complaint[] = [];
+  const sla_6_10List: Complaint[] = [];
+  const sla_gt_10List: Complaint[] = [];
+
+  let stationContactCount = 0;
+  let stationContactTotalDays = 0;
+
+  let ccContactCount = 0;
+  let ccContactTotalDays = 0;
+
+  let solveCount = 0;
+  let solveTotalDays = 0;
+
+  const scContactedList: Complaint[] = [];
+  const ccContactedList: Complaint[] = [];
+  const ccEligibleList: Complaint[] = [];
+
+  let ccSlaMetCount = 0;
+  let ccSlaBreachedCount = 0;
+  let totalPendingAgingDays = 0;
+
+  for (const c of complaints) {
+    const receivedDate = getComplaintReceivedDate(c);
+
+    // 1. Station Contact Calculation
+    const firstStationDate = getFirstStationContactDate(c);
+    if (firstStationDate) {
+      const diffDays = getDaysDifference(receivedDate, firstStationDate);
+      if (diffDays !== null) {
+        stationContactCount++;
+        stationContactTotalDays += diffDays;
+        scContactedList.push(c);
       }
     }
-  });
 
-  const stationList = Array.from(stationCodesSet);
-  const stationMetrics = stationList.map((stCode) =>
-    calculateStationMetrics(complaints, stCode, referenceDate, calendarDates)
-  );
+    // 2. Call Center Contact Calculation
+    const firstCCDate = getFirstCallCenterContactDate(c);
+    if (firstCCDate) {
+      const diffDays = getDaysDifference(receivedDate, firstCCDate);
+      if (diffDays !== null) {
+        ccContactCount++;
+        ccContactTotalDays += diffDays;
+        ccContactedList.push(c);
+      }
+    }
 
-  let totalComplaints = 0;
-  let totalPending = 0;
-  let totalResolved = 0;
-  let totalNotContacted = 0;
-  let totalContacted = 0;
-  let totalAttempted = 0;
-  let totalUnreachable = 0;
-  let totalRejectedReAction = 0;
+    // 3. CC SLA Eligibility (Service Center Contacted = YES)
+    const isSCEligible = !!firstStationDate || !!c.stationContactedDate || c.status === "Contacted" || c.stationResponseStatus === "Submitted to Call Center";
+    if (isSCEligible) {
+      ccEligibleList.push(c);
+      if (firstCCDate && firstStationDate) {
+        const ccDelayDays = getDaysDifference(firstStationDate, firstCCDate);
+        if (ccDelayDays !== null && ccDelayDays <= 1) {
+          ccSlaMetCount++;
+        } else {
+          ccSlaBreachedCount++;
+        }
+      }
+    }
 
-  let totalSLA_0_3 = 0;
-  let totalSLA_3_5 = 0;
-  let totalSLA_6_10 = 0;
-  let totalSLA_gt_10 = 0;
+    // 4. Resolution vs Pending Classification
+    if (isComplaintResolved(c)) {
+      resolvedList.push(c);
 
-  stationMetrics.forEach((sm) => {
-    totalComplaints += sm.total;
-    totalPending += sm.pending;
-    totalResolved += sm.resolved;
-    totalNotContacted += sm.notContacted;
-    totalContacted += sm.contacted;
-    totalAttempted += sm.attempted;
-    totalUnreachable += sm.unreachable;
-    totalRejectedReAction += sm.rejectedReAction;
+      // Solve Lifecycle Days for Resolved Cases
+      const resDate = getComplaintResolutionDate(c);
+      if (resDate) {
+        const diffDays = getDaysDifference(receivedDate, resDate);
+        if (diffDays !== null) {
+          solveCount++;
+          solveTotalDays += diffDays;
+        }
+      }
+    } else {
+      // Active Pending Case
+      pendingList.push(c);
 
-    totalSLA_0_3 += sm.sla_0_3;
-    totalSLA_3_5 += sm.sla_3_5;
-    totalSLA_6_10 += sm.sla_6_10;
-    totalSLA_gt_10 += sm.sla_gt_10;
-  });
+      // Active CC Rejection / Escalation
+      if (isActiveCCRejectionRequired(c)) {
+        rejectedByCCList.push(c);
+      }
 
-  const totalSLACases = totalSLA_0_3 + totalSLA_3_5 + totalSLA_6_10 + totalSLA_gt_10;
-  const overallRecoveryRate =
-    totalComplaints > 0 ? parseFloat(((totalResolved / totalComplaints) * 100).toFixed(1)) : 0.0;
+      // SLA Aging for Pending Case
+      const ageDays = getComplaintAgingDays(c, referenceDate);
+      totalPendingAgingDays += ageDays;
 
-  // Check if any complaints have no station assigned
-  const unassigned = complaints.filter(
-    (c) => !c.station || c.station.trim().length === 0 || c.station === "Unassigned"
-  );
+      if (ageDays <= 3) {
+        sla_0_3List.push(c);
+      } else if (ageDays <= 5) {
+        sla_3_5List.push(c);
+      } else if (ageDays <= 10) {
+        sla_6_10List.push(c);
+      } else {
+        sla_gt_10List.push(c);
+      }
+    }
+  }
 
-  const isFullyReconciled =
-    totalComplaints === complaints.length &&
-    totalComplaints === totalPending + totalResolved &&
-    totalPending === totalSLACases &&
-    stationMetrics.every((sm) => sm.isReconciled);
+  const resolved = resolvedList.length;
+  const pending = pendingList.length;
+  const rejectedByCC = rejectedByCCList.length;
+
+  const sla_0_3 = sla_0_3List.length;
+  const sla_3_5 = sla_3_5List.length;
+  const sla_6_10 = sla_6_10List.length;
+  const sla_gt_10 = sla_gt_10List.length;
+
+  // Averages (rounded to 1 decimal place, 0 if no eligible records)
+  const avgDaysStationContact = stationContactCount > 0 ? Math.round((stationContactTotalDays / stationContactCount) * 10) / 10 : 0;
+  const avgDaysCallCenterContact = ccContactCount > 0 ? Math.round((ccContactTotalDays / ccContactCount) * 10) / 10 : 0;
+  const avgDaysToSolveCase = solveCount > 0 ? Math.round((solveTotalDays / solveCount) * 10) / 10 : 0;
+
+  const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+  const resolutionRate = `${rate}%`;
+
+  const scContactedCount = scContactedList.length;
+  const scContactedPercent = total > 0 ? Math.round((scContactedCount / total) * 100) : 0;
+
+  const ccEligibleCount = ccEligibleList.length;
+  const ccExcludedCount = total - ccEligibleCount;
+  const ccContactedCount_val = ccContactedList.length;
+  const ccContactedPercent = total > 0 ? Math.round((ccContactedCount_val / total) * 100) : 0;
+
+  const ccSlaAchievementRate = ccEligibleCount > 0 ? Math.round((ccSlaMetCount / ccEligibleCount) * 100) : 100;
+
+  const avgAging = pending > 0 ? Math.round((totalPendingAgingDays / pending) * 10) / 10 : 0;
+  let avgAgingColor = "text-slate-700 dark:text-slate-300";
+  if (avgAging > 10) avgAgingColor = "text-rose-600 dark:text-rose-400 font-extrabold";
+  else if (avgAging > 5) avgAgingColor = "text-orange-600 dark:text-orange-400 font-bold";
+  else if (avgAging > 3) avgAgingColor = "text-amber-600 dark:text-amber-400 font-medium";
+  else if (avgAging > 0) avgAgingColor = "text-emerald-600 dark:text-emerald-400";
+
+  // Reconciliation Audit
+  const reconciliationErrors: string[] = [];
+  if (total !== resolved + pending) {
+    reconciliationErrors.push(`Total (${total}) != Resolved (${resolved}) + Pending (${pending})`);
+  }
+  if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
+    reconciliationErrors.push(`Pending (${pending}) != Sum of SLA Buckets (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`);
+  }
 
   return {
-    totalComplaints,
-    totalPending,
-    totalResolved,
-    totalNotContacted,
-    totalContacted,
-    totalAttempted,
-    totalUnreachable,
-    totalRejectedReAction,
-    overallRecoveryRate,
-    totalSLA_0_3,
-    totalSLA_3_5,
-    totalSLA_6_10,
-    totalSLA_gt_10,
-    totalSLACases,
+    code: stationCode,
+    name: stationName,
+    stationCode,
+    stationName,
+    total,
+    totalList,
+    resolved,
+    resolvedList,
+    pending,
+    pendingList,
+    rejectedByCC,
+    rejectedByCCList,
+    sla_0_3,
+    sla_0_3List,
+    sla_3_5,
+    sla_3_5List,
+    sla_6_10,
+    sla_6_10List,
+    sla_gt_10,
+    sla_gt_10List,
+    days0_3: sla_0_3,
+    days0_3List: sla_0_3List,
+    days3_5: sla_3_5,
+    days3_5List: sla_3_5List,
+    days6_10: sla_6_10,
+    days6_10List: sla_6_10List,
+    days10Plus: sla_gt_10,
+    days10PlusList: sla_gt_10List,
+    escalated: rejectedByCC,
+    escalatedList: rejectedByCCList,
+    unclassified: 0,
+    unclassifiedList: [],
+    notContacted: Math.max(0, total - scContactedCount),
+    contacted: scContactedCount,
+    attempted: 0,
+    rejectedReAction: rejectedByCC,
+    recoveryRate: rate,
+    slaTotal: pending,
+    stationContactCount,
+    stationContactTotalDays,
+    avgDaysStationContact,
+    ccContactCount,
+    ccContactTotalDays,
+    avgDaysCallCenterContact,
+    solveCount,
+    solveTotalDays,
+    avgDaysToSolveCase,
+    resolutionRate,
+    rate,
+    scContactedCount,
+    scContactedList,
+    scContactedPercent,
+    ccEligibleCount,
+    ccEligibleList,
+    ccExcludedCount,
+    ccContactedCount: ccContactedCount_val,
+    ccContactedList,
+    ccContactedPercent,
+    ccSlaMetCount,
+    ccSlaBreachedCount,
+    ccSlaAchievementRate,
+    avgAging,
+    avgAgingColor,
+    isReconciled: reconciliationErrors.length === 0,
+    reconciliationErrors
+  };
+}
+
+/**
+ * Calculates complete, dynamically reconciled National Report Summary across all service stations.
+ */
+export function calculateNationalReportSummary(
+  allComplaints: Complaint[],
+  referenceDate: Date = new Date()
+): NationalReportSummary {
+  // Deduplicate before calculation
+  const complaints = deduplicateComplaints(allComplaints);
+
+  // Discover all distinct stations
+  const stationMap = new Map<string, { code: string; name: string }>();
+
+  // 1. Add predefined stations
+  for (const st of STATIONS) {
+    stationMap.set(st.code.toLowerCase(), { code: st.code, name: st.name });
+  }
+
+  // 2. Discover any additional station names from complaints
+  for (const c of complaints) {
+    if (c && c.station) {
+      const trimmed = c.station.trim();
+      const lower = trimmed.toLowerCase();
+      if (!stationMap.has(lower)) {
+        // Find match in STATIONS or use as new station
+        const matched = STATIONS.find((s) => matchesStationCodeOrName(trimmed, s.code));
+        if (matched) {
+          stationMap.set(lower, { code: matched.code, name: matched.name });
+        } else {
+          stationMap.set(lower, { code: trimmed, name: trimmed });
+        }
+      }
+    }
+  }
+
+  // Group complaints by station
+  const stationBuckets = new Map<string, Complaint[]>();
+  for (const st of STATIONS) {
+    stationBuckets.set(st.code, []);
+  }
+
+  const unassigned: Complaint[] = [];
+
+  for (const c of complaints) {
+    let matchedStationCode: string | null = null;
+    for (const st of STATIONS) {
+      if (matchesStationCodeOrName(c.station, st.code)) {
+        matchedStationCode = st.code;
+        break;
+      }
+    }
+
+    if (matchedStationCode) {
+      stationBuckets.get(matchedStationCode)!.push(c);
+    } else if (c.station && c.station.trim()) {
+      const customCode = c.station.trim();
+      if (!stationBuckets.has(customCode)) {
+        stationBuckets.set(customCode, []);
+      }
+      stationBuckets.get(customCode)!.push(c);
+    } else {
+      unassigned.push(c);
+    }
+  }
+
+  if (unassigned.length > 0) {
+    stationBuckets.set("Other / Unassigned", unassigned);
+  }
+
+  // Calculate metrics for each station
+  const stationMetrics: StationReportMetrics[] = [];
+
+  stationBuckets.forEach((cList, sCode) => {
+    const stObj = STATIONS.find((s) => s.code === sCode);
+    const sName = stObj ? stObj.name : sCode;
+    const metrics = calculateStationReportMetrics(cList, sCode, sName, referenceDate);
+    stationMetrics.push(metrics);
+  });
+
+  // Aggregate National Totals
+  let total = 0;
+  const totalList: Complaint[] = [];
+
+  let resolved = 0;
+  const resolvedList: Complaint[] = [];
+
+  let pending = 0;
+  const pendingList: Complaint[] = [];
+
+  let rejectedByCC = 0;
+  const rejectedByCCList: Complaint[] = [];
+
+  let sla_0_3 = 0;
+  const sla_0_3List: Complaint[] = [];
+
+  let sla_3_5 = 0;
+  const sla_3_5List: Complaint[] = [];
+
+  let sla_6_10 = 0;
+  const sla_6_10List: Complaint[] = [];
+
+  let sla_gt_10 = 0;
+  const sla_gt_10List: Complaint[] = [];
+
+  let nationalStationContactCount = 0;
+  let nationalStationContactTotalDays = 0;
+
+  let nationalCCContactCount = 0;
+  let nationalCCContactTotalDays = 0;
+
+  let nationalSolveCount = 0;
+  let nationalSolveTotalDays = 0;
+
+  let scContactedCount = 0;
+  const scContactedList: Complaint[] = [];
+
+  let ccEligibleCount = 0;
+  const ccEligibleList: Complaint[] = [];
+
+  let ccContactedCount = 0;
+  const ccContactedList: Complaint[] = [];
+
+  let ccSlaMetCount = 0;
+  let ccSlaBreachedCount = 0;
+
+  for (const sm of stationMetrics) {
+    total += sm.total;
+    totalList.push(...sm.totalList);
+
+    resolved += sm.resolved;
+    resolvedList.push(...sm.resolvedList);
+
+    pending += sm.pending;
+    pendingList.push(...sm.pendingList);
+
+    rejectedByCC += sm.rejectedByCC;
+    rejectedByCCList.push(...sm.rejectedByCCList);
+
+    sla_0_3 += sm.sla_0_3;
+    sla_0_3List.push(...sm.sla_0_3List);
+
+    sla_3_5 += sm.sla_3_5;
+    sla_3_5List.push(...sm.sla_3_5List);
+
+    sla_6_10 += sm.sla_6_10;
+    sla_6_10List.push(...sm.sla_6_10List);
+
+    sla_gt_10 += sm.sla_gt_10;
+    sla_gt_10List.push(...sm.sla_gt_10List);
+
+    // Sum up contact days directly from records for national averages
+    nationalStationContactCount += sm.stationContactCount;
+    nationalStationContactTotalDays += sm.stationContactTotalDays;
+
+    nationalCCContactCount += sm.ccContactCount;
+    nationalCCContactTotalDays += sm.ccContactTotalDays;
+
+    nationalSolveCount += sm.solveCount;
+    nationalSolveTotalDays += sm.solveTotalDays;
+
+    scContactedCount += sm.scContactedCount;
+    scContactedList.push(...sm.scContactedList);
+
+    ccEligibleCount += sm.ccEligibleCount;
+    ccEligibleList.push(...sm.ccEligibleList);
+
+    ccContactedCount += sm.ccContactedCount;
+    ccContactedList.push(...sm.ccContactedList);
+
+    ccSlaMetCount += sm.ccSlaMetCount;
+    ccSlaBreachedCount += sm.ccSlaBreachedCount;
+  }
+
+  // National averages calculated directly from eligible records across all stations
+  const avgDaysStationContact =
+    nationalStationContactCount > 0
+      ? Math.round((nationalStationContactTotalDays / nationalStationContactCount) * 10) / 10
+      : 0;
+
+  const avgDaysCallCenterContact =
+    nationalCCContactCount > 0
+      ? Math.round((nationalCCContactTotalDays / nationalCCContactCount) * 10) / 10
+      : 0;
+
+  const avgDaysToSolveCase =
+    nationalSolveCount > 0
+      ? Math.round((nationalSolveTotalDays / nationalSolveCount) * 10) / 10
+      : 0;
+
+  const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+  const resolutionRate = `${rate}%`;
+
+  const scContactedPercent = total > 0 ? Math.round((scContactedCount / total) * 100) : 0;
+  const ccExcludedCount = total - ccEligibleCount;
+  const ccContactedPercent = total > 0 ? Math.round((ccContactedCount / total) * 100) : 0;
+  const ccSlaAchievementRate = ccEligibleCount > 0 ? Math.round((ccSlaMetCount / ccEligibleCount) * 100) : 100;
+
+  // Global Reconciliation Checks
+  const reconciliationErrors: string[] = [];
+  if (total !== resolved + pending) {
+    reconciliationErrors.push(`National Total (${total}) != Resolved (${resolved}) + Pending (${pending})`);
+  }
+  if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
+    reconciliationErrors.push(
+      `National Pending (${pending}) != SLA Buckets Sum (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`
+    );
+  }
+
+  return {
+    total,
+    totalList,
+    resolved,
+    resolvedList,
+    pending,
+    pendingList,
+    rejectedByCC,
+    rejectedByCCList,
+    totalComplaints: total,
+    totalPending: pending,
+    totalResolved: resolved,
+    totalNotContacted: Math.max(0, total - scContactedCount),
+    totalContacted: scContactedCount,
+    totalRejectedReAction: rejectedByCC,
+    overallRecoveryRate: rate,
+    sla_0_3,
+    sla_0_3List,
+    sla_3_5,
+    sla_3_5List,
+    sla_6_10,
+    sla_6_10List,
+    sla_gt_10,
+    sla_gt_10List,
+    stationContactCount: nationalStationContactCount,
+    stationContactTotalDays: nationalStationContactTotalDays,
+    avgDaysStationContact,
+    ccContactCount: nationalCCContactCount,
+    ccContactTotalDays: nationalCCContactTotalDays,
+    avgDaysCallCenterContact,
+    solveCount: nationalSolveCount,
+    solveTotalDays: nationalSolveTotalDays,
+    avgDaysToSolveCase,
+    resolutionRate,
+    rate,
+    scContactedCount,
+    scContactedList,
+    scContactedPercent,
+    ccEligibleCount,
+    ccEligibleList,
+    ccExcludedCount,
+    ccContactedCount,
+    ccContactedList,
+    ccContactedPercent,
+    ccSlaMetCount,
+    ccSlaBreachedCount,
+    ccSlaAchievementRate,
     stationMetrics,
-    isFullyReconciled,
-    unassignedCasesCount: unassigned.length,
+    isFullyReconciled: reconciliationErrors.length === 0,
+    reconciliationErrors
   };
 }
 
@@ -478,81 +1049,145 @@ export interface DiagnosticAuditItem {
   customerName: string;
   station: string;
   status: string;
-  feedbackStatus?: string | null;
-  stationResponseStatus?: string | null;
   isResolved: boolean;
-  isActivePending: boolean;
+  isPending: boolean;
   isRejected: boolean;
+  stationContacted: boolean;
+  agingDays: number;
   cycleContactStatus: string;
-  activeCycleStartDate: string;
   slaWorkingDays: number;
   slaBucket: string;
   issues: string[];
 }
 
-/**
- * Diagnostic reconciliation auditor to verify every record in the database
- * and expose any inconsistencies or edge cases with exact IDs.
- */
-export function getReconciliationAudit(
-  complaints: Complaint[],
-  referenceDate: Date = new Date(),
-  calendarDates?: WorkstationCalendarDate[]
-): {
+export interface ReconciliationAuditResult {
   totalAudited: number;
   cleanCasesCount: number;
   issueCasesCount: number;
   auditItems: DiagnosticAuditItem[];
-} {
-  const auditItems: DiagnosticAuditItem[] = complaints.map((c) => {
-    const isRes = isComplaintResolved(c);
-    const isPending = isComplaintActivePending(c);
-    const isRej = isComplaintRejected(c);
-    const cycleStatus = getComplaintCycleContactStatus(c);
-    const ageInfo = getActiveCycleAgeInfo(c, referenceDate, calendarDates);
-    const cycleStartDateStr = ageInfo.cycleStartDate.toISOString().split("T")[0];
+}
 
+export function getReconciliationAudit(
+  complaints: Complaint[],
+  referenceDate: Date = new Date(),
+  calendarDates?: WorkstationCalendarDate[]
+): ReconciliationAuditResult {
+  const deduplicated = deduplicateComplaints(complaints);
+  const auditItems: DiagnosticAuditItem[] = [];
+  let issueCasesCount = 0;
+
+  for (const c of deduplicated) {
+    const isRes = isComplaintResolved(c);
+    const isPend = isComplaintPending(c);
+    const isRej = isActiveCCRejectionRequired(c);
+    const aging = Math.round(getComplaintAgingDays(c, referenceDate) * 10) / 10;
+    const ageInfo = getActiveCycleAgeInfo(c, referenceDate, calendarDates);
+    const contactStatus = getComplaintCycleContactStatus(c);
     const issues: string[] = [];
 
-    // Rule: Cannot be both resolved and rejected
-    if (isRes && isRej) {
-      issues.push("Conflict: Case marked resolved but stationResponseStatus is Rejected/Returned");
+    if (isRes && isPend) {
+      issues.push("Conflict: Marked both Resolved and Pending");
+    }
+    if (!isRes && !isPend) {
+      issues.push("Conflict: Marked neither Resolved nor Pending");
     }
 
-    // Rule: Missing station
-    if (!c.station || c.station.trim().length === 0) {
-      issues.push("Warning: Station is empty or unassigned");
+    if (issues.length > 0) {
+      issueCasesCount++;
     }
 
-    // Rule: Active pending must have valid SLA bucket
-    if (isPending && !ageInfo.bucket) {
-      issues.push("Error: Active pending case failed SLA bucket assignment");
-    }
-
-    return {
-      complaintId: c.id,
-      customerName: c.customerName || "Unknown Customer",
+    auditItems.push({
+      complaintId: c.id || "N/A",
+      customerName: c.customerName || "N/A",
       station: c.station || "Unassigned",
-      status: c.status,
-      feedbackStatus: c.feedbackStatus,
-      stationResponseStatus: c.stationResponseStatus,
+      status: c.status || "Unknown",
       isResolved: isRes,
-      isActivePending: isPending,
+      isPending: isPend,
       isRejected: isRej,
-      cycleContactStatus: cycleStatus,
-      activeCycleStartDate: cycleStartDateStr,
+      stationContacted: contactStatus.isContacted,
+      agingDays: aging,
+      cycleContactStatus: contactStatus.statusLabel,
       slaWorkingDays: ageInfo.workingDays,
-      slaBucket: ageInfo.bucket,
-      issues,
-    };
-  });
-
-  const issueCases = auditItems.filter((i) => i.issues.length > 0);
+      slaBucket: ageInfo.bucketLabel,
+      issues
+    });
+  }
 
   return {
-    totalAudited: complaints.length,
-    cleanCasesCount: auditItems.length - issueCases.length,
-    issueCasesCount: issueCases.length,
-    auditItems,
+    totalAudited: deduplicated.length,
+    cleanCasesCount: deduplicated.length - issueCasesCount,
+    issueCasesCount,
+    auditItems
+  };
+}
+
+/**
+ * Backward compatibility wrappers for StationOverview and ServiceStationContactMonitor
+ */
+export function calculateStationMetrics(
+  stationComplaints: Complaint[],
+  stationCode: string,
+  stationName: string,
+  calendarDates?: WorkstationCalendarDate[],
+  referenceDate: Date = new Date()
+): StationReportMetrics {
+  return calculateStationReportMetrics(stationComplaints, stationCode, stationName, referenceDate);
+}
+
+export function calculateNationalSummary(
+  allComplaints: Complaint[],
+  referenceDate?: Date | WorkstationCalendarDate[],
+  calendarDates?: WorkstationCalendarDate[]
+): NationalReportSummary {
+  const refDate = referenceDate instanceof Date ? referenceDate : new Date();
+  return calculateNationalReportSummary(allComplaints, refDate);
+}
+
+/**
+ * Helper to determine cycle contact status
+ */
+export function getComplaintCycleContactStatus(c: Complaint): {
+  isContacted: boolean;
+  contactDate: string | null;
+  statusLabel: string;
+  isActionRequired: boolean;
+} {
+  const isResolved = isComplaintResolved(c);
+  const isRejected = isActiveCCRejectionRequired(c);
+  const contactDate = c.stationContactedDate || c.serviceStationContactedAt || null;
+  const isContacted = !!(contactDate && contactDate.trim().length > 0);
+
+  if (isResolved) {
+    return {
+      isContacted: true,
+      contactDate,
+      statusLabel: "Resolved / Satisfied",
+      isActionRequired: false
+    };
+  }
+
+  if (isRejected) {
+    return {
+      isContacted: false,
+      contactDate: null,
+      statusLabel: "Re-action Required (Returned to Station)",
+      isActionRequired: true
+    };
+  }
+
+  if (isContacted) {
+    return {
+      isContacted: true,
+      contactDate,
+      statusLabel: "Contacted by Station",
+      isActionRequired: false
+    };
+  }
+
+  return {
+    isContacted: false,
+    contactDate: null,
+    statusLabel: "Not Contacted",
+    isActionRequired: true
   };
 }

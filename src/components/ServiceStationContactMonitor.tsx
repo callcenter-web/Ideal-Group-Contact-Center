@@ -67,8 +67,24 @@ export default function ServiceStationContactMonitor({
     const now = new Date();
     const todayStr = now.toISOString().split("T")[0];
 
+    const getContactCategory = (c: Complaint): "NOT_CONTACTED" | "CONTACTED" | "CONTACT_ATTEMPTED" | "CUSTOMER_UNREACHABLE" => {
+      const isRes = isComplaintResolved(c);
+      const isRej = isComplaintRejected(c);
+      const hasContact = !!(c.stationContactedDate || c.serviceStationContactedAt);
+      const isUnreachable = 
+        c.feedbackStatus === "Customer Unreachable" || 
+        c.finalStatus === "Unreachable" || 
+        (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable"));
+      
+      if (isUnreachable) return "CUSTOMER_UNREACHABLE";
+      if (isRej) return "NOT_CONTACTED";
+      if (hasContact || isRes) return "CONTACTED";
+      if (Array.isArray(c.contactAttempts) && c.contactAttempts.length > 0) return "CONTACT_ATTEMPTED";
+      return "NOT_CONTACTED";
+    };
+
     targetComplaints.forEach((c) => {
-      const status = getComplaintCycleContactStatus(c);
+      const statusCat = getContactCategory(c);
       const isRej = isComplaintRejected(c);
       const isRes = isComplaintResolved(c);
 
@@ -76,26 +92,26 @@ export default function ServiceStationContactMonitor({
         rejectedCount++;
       }
 
-      if (status === "NOT_CONTACTED") {
+      if (statusCat === "NOT_CONTACTED") {
         notContacted++;
-      } else if (status === "CONTACTED") {
+      } else if (statusCat === "CONTACTED") {
         contacted++;
-      } else if (status === "CONTACT_ATTEMPTED") {
+      } else if (statusCat === "CONTACT_ATTEMPTED") {
         contactAttempted++;
-      } else if (status === "CUSTOMER_UNREACHABLE") {
+      } else if (statusCat === "CUSTOMER_UNREACHABLE") {
         customerUnreachable++;
       }
 
       // SLA Breach check (> 24h / > 1 working day without contact in active cycle)
       const ageInfo = getActiveCycleAgeInfo(c, now, calendarDates);
-      if (ageInfo.workingDays >= 1 && status !== "CONTACTED" && !isRes) {
+      if (ageInfo.workingDays >= 1 && statusCat !== "CONTACTED" && !isRes) {
         slaBreached++;
       }
 
       // Follow up due check
       if (c.nextFollowUpDate && c.nextFollowUpDate <= todayStr && !isRes) {
         followUpDue++;
-      } else if ((status === "CONTACT_ATTEMPTED" || status === "CUSTOMER_UNREACHABLE") && !isRes) {
+      } else if ((statusCat === "CONTACT_ATTEMPTED" || statusCat === "CUSTOMER_UNREACHABLE") && !isRes) {
         followUpDue++;
       }
     });
@@ -115,6 +131,22 @@ export default function ServiceStationContactMonitor({
 
   // Compute Station-Wise Summary Table
   const stationSummary = useMemo(() => {
+    const getContactCategory = (c: Complaint): "NOT_CONTACTED" | "CONTACTED" | "CONTACT_ATTEMPTED" | "CUSTOMER_UNREACHABLE" => {
+      const isRes = isComplaintResolved(c);
+      const isRej = isComplaintRejected(c);
+      const hasContact = !!(c.stationContactedDate || c.serviceStationContactedAt);
+      const isUnreachable = 
+        c.feedbackStatus === "Customer Unreachable" || 
+        c.finalStatus === "Unreachable" || 
+        (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable"));
+      
+      if (isUnreachable) return "CUSTOMER_UNREACHABLE";
+      if (isRej) return "NOT_CONTACTED";
+      if (hasContact || isRes) return "CONTACTED";
+      if (Array.isArray(c.contactAttempts) && c.contactAttempts.length > 0) return "CONTACT_ATTEMPTED";
+      return "NOT_CONTACTED";
+    };
+
     return STATIONS.map((station) => {
       const stationComplaints = complaints.filter((c) => matchesStationCodeOrName(c.station, station.code));
       const total = stationComplaints.length;
@@ -128,19 +160,19 @@ export default function ServiceStationContactMonitor({
       const now = new Date();
 
       stationComplaints.forEach((c) => {
-        const status = getComplaintCycleContactStatus(c);
+        const statusCat = getContactCategory(c);
         const isRej = isComplaintRejected(c);
         const isRes = isComplaintResolved(c);
 
         if (isRej) rejected++;
 
-        if (status === "NOT_CONTACTED") notContacted++;
-        else if (status === "CONTACTED") contacted++;
-        else if (status === "CONTACT_ATTEMPTED") attempted++;
-        else if (status === "CUSTOMER_UNREACHABLE") unreachable++;
+        if (statusCat === "NOT_CONTACTED") notContacted++;
+        else if (statusCat === "CONTACTED") contacted++;
+        else if (statusCat === "CONTACT_ATTEMPTED") attempted++;
+        else if (statusCat === "CUSTOMER_UNREACHABLE") unreachable++;
 
         const ageInfo = getActiveCycleAgeInfo(c, now, calendarDates);
-        if (ageInfo.workingDays >= 1 && status !== "CONTACTED" && !isRes) {
+        if (ageInfo.workingDays >= 1 && statusCat !== "CONTACTED" && !isRes) {
           slaBreached++;
         }
       });

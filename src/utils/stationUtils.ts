@@ -1,5 +1,6 @@
 import { STATIONS } from "../demoData";
 import { Complaint } from "../types";
+import { isComplaintResolved as isResolvedCheck } from "./workflowTallyUtils";
 
 /**
  * Robustly checks if a complaint's station matches a station code or name filter.
@@ -31,17 +32,25 @@ export function matchesStationCodeOrName(complaintStation: string | undefined | 
 }
 
 /**
- * Robustly checks if a complaint has been returned/rejected to the Service Station or Call Center.
+ * Robustly checks if a complaint has an active unresolved rejection/return to the Service Station.
+ * Historical rejections on resolved complaints are not considered active rejections.
  */
 export function isComplaintRejected(c: Complaint | null | undefined): boolean {
   if (!c) return false;
+  if (isResolvedCheck(c)) return false;
+
   return !!(
     c.stationResponseStatus === "Rejected" ||
     c.stationResponseStatus === "Returned to Service Station" ||
     c.stationResponseStatus === "Rejected by Call Center" ||
     c.stationResponseStatus === "Returned to Call Center" ||
     c.feedbackStatus === "Returned to Service Station" ||
+    c.feedbackStatus === "Rejected Again to Service Station" ||
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Escalated" ||
     c.finalStatus === "Returned to Service Station" ||
+    c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
+    c.finalStatus === "Escalated" ||
     c.finalStatus?.includes("Re-assigned") ||
     c.finalStatus?.includes("Rejected") ||
     (typeof c.stationResponseStatus === "string" && c.stationResponseStatus.toLowerCase().includes("reject")) ||

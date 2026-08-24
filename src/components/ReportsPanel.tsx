@@ -42,7 +42,7 @@ import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible, isComplaintRejected } from "../utils/stationUtils";
 import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
-import { getActiveCycleAgeInfo, isComplaintResolved as isComplaintResolvedUtil } from "../utils/workflowTallyUtils";
+import { getActiveCycleAgeInfo, isComplaintResolved as isComplaintResolvedUtil, calculateNationalReportSummary } from "../utils/workflowTallyUtils";
 
 interface ReportsPanelProps {
   complaints: Complaint[];
@@ -383,230 +383,66 @@ export default function ReportsPanel({
   };
 
   // Dynamically calculate CX Recovery & Service Station Performance Metrics from raw database records
-  const stationMetrics = dynamicStations.map((station) => {
-    const stationComplaints = filteredComplaints.filter(c => {
-      if (station.code === "Other") {
-        return (
-          !c.station ||
-          c.station.trim().length === 0 ||
-          c.station === "Unassigned" ||
-          c.station === "Other" ||
-          !STATIONS.some(s => matchesStationCodeOrName(c.station, s.code))
-        );
-      }
-      return matchesStationCodeOrName(c.station, station.code);
-    });
+  // Single source of truth calculation engine from workflowTallyUtils
+  const nationalSummary = useMemo(() => {
+    return calculateNationalReportSummary(filteredComplaints);
+  }, [filteredComplaints]);
 
-    const total = stationComplaints.length;
-    const totalList = stationComplaints;
-
-    // 1. Resolved Complaints: Contacted & customer verified satisfied / closed / completed / unreachable-closed, and not active in rejection
-    const resolvedList = stationComplaints.filter(c => {
-      const isSatisfiedOrClosed = 
-        c.status === "Resolved" || 
-        c.feedbackStatus === "Satisfied" || 
-        c.feedbackStatus === "Satisfied After Resolution" ||
-        c.currentSatisfaction === "Satisfied" ||
-        c.currentSatisfaction === "Very Satisfied" ||
-        c.callCenterFinalSatisfaction === "Satisfied" ||
-        c.finalStatus === "Closed" ||
-        c.finalStatus === "Resolved" ||
-        c.finalStatus === "Completed" ||
-        c.finalStatus === "Unreachable" ||
-        c.finalStatus?.includes("Unreachable") ||
-        c.feedbackStatus === "Customer Unreachable" ||
-        c.feedbackStatus === "Unreachable";
-
-      const isNotRejected = 
-        !isComplaintRejected(c) && 
-        c.stationResponseStatus !== "Rejected" && 
-        c.feedbackStatus !== "Rejected Again to Service Station";
-
-      return isSatisfiedOrClosed && isNotRejected;
-    });
-    const resolved = resolvedList.length;
-
-    // 2. Rejected by Call Center / Escalated: Case response rejected/returned by CC
-    const escalatedList = stationComplaints.filter(c => {
-      const isAlreadyResolved = resolvedList.some(r => r.id === c.id);
-      if (isAlreadyResolved) return false;
-      return (
-        isComplaintRejected(c) || 
-        c.stationResponseStatus === "Rejected" || 
-        c.feedbackStatus === "Rejected Again to Service Station" || 
-        c.feedbackStatus === "Still Dissatisfied" || 
-        c.finalStatus?.includes("Re-assigned") ||
-        c.feedbackStatus === "Escalated" || 
-        c.finalStatus === "Escalated"
-      );
-    });
-    const escalated = escalatedList.length;
-
-    // 3. Pending / In-Progress Complaints: Still waiting for initial service station contact/action (excludes unreachable cases)
-    const pendingList = stationComplaints.filter(c => 
-      !resolvedList.some(r => r.id === c.id) && 
-      !escalatedList.some(e => e.id === c.id)
-    );
-    const pending = pendingList.length;
-
-    // 4. Unclassified records (strictly 0 by complete partition)
-    const unclassifiedList = stationComplaints.filter(c => 
-      !resolvedList.some(r => r.id === c.id) && 
-      !escalatedList.some(e => e.id === c.id) &&
-      !pendingList.some(p => p.id === c.id)
-    );
-    const unclassified = unclassifiedList.length;
-
-    // 5. Aging Buckets: Calculated EXCLUSIVELY for pending complaints waiting for station action
-    const days0_3List = pendingList.filter(c => getComplaintAging(c).days <= 3);
-    const days3_5List = pendingList.filter(c => { const d = getComplaintAging(c).days; return d > 3 && d <= 5; });
-    const days6_10List = pendingList.filter(c => { const d = getComplaintAging(c).days; return d > 5 && d <= 10; });
-    const days10PlusList = pendingList.filter(c => getComplaintAging(c).days > 10);
-
-    const days0_3 = days0_3List.length;
-    const days3_5 = days3_5List.length;
-    const days6_10 = days6_10List.length;
-    const days10Plus = days10PlusList.length;
-
-    // Service Station Contact Status
-    const scContactedList = stationComplaints.filter(c => isStationContacted(c));
-    const scContactedCount = scContactedList.length;
-    const scContactedPercent = total > 0 ? Math.round((scContactedCount / total) * 100) : 0;
-
-    // Call Center SLA Eligibility & Metrics
-    const ccEligibleList = scContactedList;
-    const ccEligibleCount = scContactedCount;
-    const ccExcludedCount = total - ccEligibleCount;
-    const ccContactedList = stationComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate);
-    const ccContactedCount = ccContactedList.length;
-    const ccContactedPercent = ccEligibleCount > 0 ? Math.round((ccContactedCount / ccEligibleCount) * 100) : 0;
-
-    const ccSlaMetCount = stationComplaints.filter(c => isStationContacted(c) && !getCallCenterSLAStatus(c).isBreached).length;
-    const ccSlaBreachedCount = stationComplaints.filter(c => isStationContacted(c) && getCallCenterSLAStatus(c).isBreached).length;
-    const ccSlaAchievementRate = ccEligibleCount > 0 ? Math.round((ccSlaMetCount / ccEligibleCount) * 100) : 100;
-
-    const resolutionRate = total > 0 ? `${Math.round((resolved / total) * 100)}%` : "0%";
-    const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
-
-    const stationAging = getStationMetricsCalculations(stationComplaints);
-    const avgDaysStationContact = stationAging.avgDaysStationContact;
-    const avgDaysCallCenterContact = stationAging.avgDaysCallCenterContact;
-    const avgDaysToSolveCase = stationAging.avgDaysToSolveCase;
-
-    // Overall Average aging of pending complaints
-    let totalPendingAgingDays = 0;
-    pendingList.forEach((c) => {
-      totalPendingAgingDays += getComplaintAging(c).days;
-    });
-    const avgAging = pending > 0 ? Math.round(totalPendingAgingDays / pending) : 0;
-
-    let avgAgingColor = isDark 
-      ? "text-emerald-300 font-bold bg-emerald-950/40 border border-emerald-900/30 px-2 py-0.5 rounded text-[10px]"
-      : "text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded text-[10px]";
-    if (avgAging > 3 && avgAging <= 5) {
-      avgAgingColor = isDark
-        ? "text-amber-300 font-bold bg-amber-950/40 border border-amber-900/30 px-2 py-0.5 rounded text-[10px]"
-        : "text-amber-600 font-bold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded text-[10px]";
-    } else if (avgAging > 5 && avgAging <= 10) {
-      avgAgingColor = isDark
-        ? "text-orange-300 font-bold bg-orange-950/40 border border-orange-900/30 px-2 py-0.5 rounded text-[10px]"
-        : "text-orange-600 font-bold bg-orange-50 border border-orange-100 px-2 py-0.5 rounded text-[10px]";
-    } else if (avgAging > 10) {
-      avgAgingColor = isDark
-        ? "text-rose-300 font-bold bg-rose-950/40 border border-rose-900/30 px-2 py-0.5 rounded text-[10px]"
-        : "text-rose-600 font-bold bg-rose-50 border border-rose-100 px-2 py-0.5 rounded text-[10px]";
-    }
-
-    return {
-      code: station.code,
-      name: station.name,
-      total,
-      totalList,
-      resolved,
-      resolvedList,
-      pending,
-      pendingList,
-      escalated,
-      escalatedList,
-      unclassified,
-      unclassifiedList,
-      days0_3,
-      days0_3List,
-      days3_5,
-      days3_5List,
-      days6_10,
-      days6_10List,
-      days10Plus,
-      days10PlusList,
-      resolutionRate,
-      rate,
-      scContactedCount,
-      scContactedList,
-      scContactedPercent,
-      ccEligibleCount,
-      ccEligibleList,
-      ccExcludedCount,
-      ccContactedCount,
-      ccContactedList,
-      ccContactedPercent,
-      ccSlaMetCount,
-      ccSlaBreachedCount,
-      ccSlaAchievementRate,
-      avgDaysStationContact,
-      avgDaysCallCenterContact,
-      avgDaysToSolveCase,
-      avgAging,
-      avgAgingColor
-    };
-  });
+  const stationMetrics = nationalSummary.stationMetrics;
 
   // Grand summary totals strictly aggregated from stationMetrics (guaranteed 100% tally)
-  const grandTotal = stationMetrics.reduce((acc, sm) => acc + sm.total, 0);
-  const grandTotalList = stationMetrics.flatMap(sm => sm.totalList);
+  const grandTotal = nationalSummary.total;
+  const grandTotalList = nationalSummary.totalList;
 
-  const grandResolved = stationMetrics.reduce((acc, sm) => acc + sm.resolved, 0);
-  const grandResolvedList = stationMetrics.flatMap(sm => sm.resolvedList);
+  const grandResolved = nationalSummary.resolved;
+  const grandResolvedList = nationalSummary.resolvedList;
 
-  const grandEscalated = stationMetrics.reduce((acc, sm) => acc + sm.escalated, 0);
-  const grandEscalatedList = stationMetrics.flatMap(sm => sm.escalatedList);
+  const grandEscalated = nationalSummary.rejectedByCC;
+  const grandEscalatedList = nationalSummary.rejectedByCCList;
+  const grandRejectedByCC = nationalSummary.rejectedByCC;
+  const grandRejectedByCCList = nationalSummary.rejectedByCCList;
 
-  const grandPending = stationMetrics.reduce((acc, sm) => acc + sm.pending, 0);
-  const grandPendingList = stationMetrics.flatMap(sm => sm.pendingList);
+  const grandPending = nationalSummary.pending;
+  const grandPendingList = nationalSummary.pendingList;
 
-  const grandUnclassified = stationMetrics.reduce((acc, sm) => acc + sm.unclassified, 0);
-  const grandUnclassifiedList = stationMetrics.flatMap(sm => sm.unclassifiedList);
+  const grandUnclassified = 0;
+  const grandUnclassifiedList: Complaint[] = [];
 
   // Grand Aging calculated exclusively from pending complaints
-  const grandDays0_3 = stationMetrics.reduce((acc, sm) => acc + sm.days0_3, 0);
-  const grandDays0_3List = stationMetrics.flatMap(sm => sm.days0_3List);
+  const grandDays0_3 = nationalSummary.sla_0_3;
+  const grandDays0_3List = nationalSummary.sla_0_3List;
 
-  const grandDays3_5 = stationMetrics.reduce((acc, sm) => acc + sm.days3_5, 0);
-  const grandDays3_5List = stationMetrics.flatMap(sm => sm.days3_5List);
+  const grandDays3_5 = nationalSummary.sla_3_5;
+  const grandDays3_5List = nationalSummary.sla_3_5List;
 
-  const grandDays6_10 = stationMetrics.reduce((acc, sm) => acc + sm.days6_10, 0);
-  const grandDays6_10List = stationMetrics.flatMap(sm => sm.days6_10List);
+  const grandDays6_10 = nationalSummary.sla_6_10;
+  const grandDays6_10List = nationalSummary.sla_6_10List;
 
-  const grandDays10Plus = stationMetrics.reduce((acc, sm) => acc + sm.days10Plus, 0);
-  const grandDays10PlusList = stationMetrics.flatMap(sm => sm.days10PlusList);
+  const grandDays10Plus = nationalSummary.sla_gt_10;
+  const grandDays10PlusList = nationalSummary.sla_gt_10List;
 
-  const grandScContactedList = filteredComplaints.filter(c => isStationContacted(c));
-  const grandScContacted = grandScContactedList.length;
-  const grandScContactedRate = grandTotal > 0 ? Math.round((grandScContacted / grandTotal) * 100) : 0;
+  const grandScContactedList = nationalSummary.scContactedList;
+  const grandScContacted = nationalSummary.scContactedCount;
+  const grandScContactedRate = nationalSummary.scContactedPercent;
 
-  const grandCcEligibleList = grandScContactedList;
-  const grandCcEligible = grandScContacted;
-  const grandCcExcluded = grandTotal - grandCcEligible;
+  const grandCcEligibleList = nationalSummary.ccEligibleList;
+  const grandCcEligible = nationalSummary.ccEligibleCount;
+  const grandCcExcluded = nationalSummary.ccExcludedCount;
 
-  const grandCcContactedList = filteredComplaints.filter(c => isStationContacted(c) && !!c.callCenterContactedDate);
-  const grandCcContacted = grandCcContactedList.length;
-  const grandCcContactedRate = grandCcEligible > 0 ? Math.round((grandCcContacted / grandCcEligible) * 100) : 0;
+  const grandCcContactedList = nationalSummary.ccContactedList;
+  const grandCcContacted = nationalSummary.ccContactedCount;
+  const grandCcContactedRate = nationalSummary.ccContactedPercent;
 
-  const grandCcSlaMet = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaMetCount, 0);
-  const grandCcSlaBreached = stationMetrics.reduce((acc, sm) => acc + sm.ccSlaBreachedCount, 0);
-  const grandCcSlaRate = grandCcEligible > 0 ? Math.round((grandCcSlaMet / grandCcEligible) * 100) : 100;
-  const grandResolutionRate = grandTotal > 0 ? `${Math.round((grandResolved / grandTotal) * 100)}%` : "0%";
+  const grandCcSlaMet = nationalSummary.ccSlaMetCount;
+  const grandCcSlaBreached = nationalSummary.ccSlaBreachedCount;
+  const grandCcSlaRate = nationalSummary.ccSlaAchievementRate;
+  const grandResolutionRate = nationalSummary.resolutionRate;
 
-  const overallReportAging = getStationMetricsCalculations(filteredComplaints);
+  const overallReportAging = {
+    avgDaysStationContact: nationalSummary.avgDaysStationContact,
+    avgDaysCallCenterContact: nationalSummary.avgDaysCallCenterContact,
+    avgDaysToSolveCase: nationalSummary.avgDaysToSolveCase,
+  };
 
   // CSV Export: Detailed Aging Report
   const handleDownloadDetailedReport = () => {
@@ -1854,14 +1690,14 @@ export default function ReportsPanel({
                     Aging: {grandPending} Pending = {grandDays0_3} (0-3d) + {grandDays3_5} (3-5d) + {grandDays6_10} (6-10d) + {grandDays10Plus} (&gt;10d)
                   </span>
 
-                  {grandUnclassified > 0 && (
+                  {Number(grandUnclassified) > 0 && (
                     <button
                       type="button"
                       onClick={() => handleOpenDrilldown("All Service Stations", "ALL", "Unclassified / Other Complaints", grandUnclassifiedList, "purple")}
                       className="px-2 py-0.5 rounded-md font-black bg-purple-600 hover:bg-purple-700 text-white cursor-pointer transition-all flex items-center gap-1 shadow-2xs"
                     >
                       <AlertTriangle className="h-3 w-3" />
-                      {grandUnclassified} Unclassified Record{grandUnclassified === 1 ? "" : "s"}
+                      {grandUnclassified} Unclassified Record{Number(grandUnclassified) === 1 ? "" : "s"}
                     </button>
                   )}
                 </div>
@@ -1885,7 +1721,7 @@ export default function ReportsPanel({
                       </th>
                       <th className={`py-3.5 px-3 text-center text-amber-600 dark:text-amber-400 ${isDark ? "bg-amber-950/20" : "bg-amber-50/50"}`}>
                         <div>Pending / In-Progress</div>
-                        <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(pending sc contact)</div>
+                        <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(pending contact + unreachable + rejected)</div>
                       </th>
                       <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">
                         <div>Rejected by CC</div>
@@ -1980,9 +1816,9 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "Pending to Contact by Service Station", sm.pendingList, "amber");
+                                  handleOpenDrilldown(sm.name, sm.code, "Pending / In-Progress Workload (Pending Contact + Unreachable + Rejected by CC)", sm.pendingList, "amber");
                                 }}
-                                title={`Click to view ${sm.pending} pending to contact complaints for ${sm.name}`}
+                                title={`Click to view ${sm.pending} pending / in-progress complaints (pending contact, unreachable & rejected) for ${sm.name}`}
                                 className="font-black px-2.5 py-1 rounded-md text-xs text-amber-700 bg-amber-100 hover:bg-amber-200 dark:text-amber-300 dark:bg-amber-950/70 dark:border-amber-800/80 border border-amber-300 cursor-pointer hover:underline hover:scale-105 transition-all shadow-2xs"
                               >
                                 {sm.pending}
@@ -2146,7 +1982,7 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "Pending to Contact by Service Station", grandPendingList, "amber");
+                            handleOpenDrilldown("All Service Stations", "ALL", "Pending / In-Progress Workload (Pending Contact + Unreachable + Rejected by CC)", grandPendingList, "amber");
                           }}
                           title={`Click to view ${grandPending} pending complaints across all stations`}
                           className="font-black px-2.5 py-1 rounded-md text-xs bg-amber-400 text-slate-950 hover:bg-amber-300 shadow-2xs hover:scale-105 transition-all cursor-pointer"

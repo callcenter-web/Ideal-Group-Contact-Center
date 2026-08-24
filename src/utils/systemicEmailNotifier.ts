@@ -2,6 +2,7 @@ import { Complaint, StationProfile, SystemicEmailLog } from "../types";
 import { STATIONS } from "../demoData";
 import { saveEmailLogsCentral } from "./centralDbSync";
 import { isStationContacted, isComplaintRejected } from "./stationUtils";
+import { isComplaintPending, isComplaintResolved, isActiveCCRejectionRequired } from "./workflowTallyUtils";
 
 // Web Audio API synth chime for real-time Call Center audio alerts
 export function playCallCenterNotificationSound() {
@@ -60,11 +61,7 @@ export function findStationProfile(stationIdentifier: string): StationProfile | 
 
 // Helper to filter strictly the pending cases that a service station has to contact
 export function getPendingCasesToContact(assignedComplaints: Complaint[]): Complaint[] {
-  return assignedComplaints.filter(
-    (c) =>
-      c.status !== "Resolved" &&
-      (!isStationContacted(c) || isComplaintRejected(c) || !c.stationContactedDate || c.status === "Pending")
-  );
+  return assignedComplaints.filter((c) => isComplaintPending(c));
 }
 
 // Generate structured systemic email from callcenter@idealgroup.lk to workstation personnel
