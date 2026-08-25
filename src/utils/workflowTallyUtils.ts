@@ -225,15 +225,12 @@ export function getComplaintReceivedDate(c: Complaint): Date {
 }
 
 /**
- * Gets the start timestamp for the active cycle SLA calculation.
- * If the case has an active rejection starting a new action cycle, uses rejection timestamp.
- * Otherwise uses the original complaint received timestamp.
+ * Gets the start timestamp for SLA calculation.
+ * CRITICAL SLA RULE:
+ * Calculate complaint ageing from the original Complaint Received Date.
+ * Do NOT reset the ageing clock when assigned, contacted, rejected, reopened, escalated, or followed up.
  */
 export function getActiveCycleStartDate(c: Complaint): Date {
-  if (isActiveCCRejectionRequired(c) && c.stationResponseRejectedDate) {
-    const rejDate = parseValidDate(c.stationResponseRejectedDate);
-    if (rejDate) return rejDate;
-  }
   return getComplaintReceivedDate(c);
 }
 
