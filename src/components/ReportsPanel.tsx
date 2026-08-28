@@ -697,7 +697,7 @@ export default function ReportsPanel({
   }, {} as Record<string, number>);
 
   // Status Breakdown
-  const statusLevels = ["Pending", "In Progress", "Contacted", "Resolved"];
+  const statusLevels = ["Pending", "In Progress", "Contacted", "Contacted — Still Dissatisfied", "Resolved"];
   const statusCounts = statusLevels.reduce((acc, level) => {
     acc[level] = activeScopeComplaints.filter(c => c.status === level).length;
     return acc;
@@ -1431,6 +1431,7 @@ export default function ReportsPanel({
               <option value="Pending" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Pending</option>
               <option value="In Progress" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>In Progress</option>
               <option value="Contacted" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Contacted</option>
+              <option value="Contacted — Still Dissatisfied" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Contacted — Still Dissatisfied</option>
               <option value="Resolved" className={isDark ? "bg-slate-950 text-slate-100" : "bg-white text-slate-700"}>Resolved</option>
             </select>
           </div>

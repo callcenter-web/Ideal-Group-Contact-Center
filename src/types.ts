@@ -1,5 +1,5 @@
 export type SatisfactionLevel = "Very Dissatisfied" | "Dissatisfied" | "Neutral" | "Satisfied" | "Very Satisfied";
-export type FollowUpStatus = "Pending" | "In Progress" | "Contacted" | "Resolved";
+export type FollowUpStatus = "Pending" | "In Progress" | "Contacted" | "Contacted — Still Dissatisfied" | "Contacted - Still Dissatisfied" | "Resolved";
 
 export type ServiceStationContactStatus = 
   | "PENDING_CONTACT" 

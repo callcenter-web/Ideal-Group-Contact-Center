@@ -102,8 +102,11 @@ export default function CallCenterSLAReportModal({
     return !!(
       (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
       (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+      c.serviceStationContactStatus === "CONTACTED" ||
+      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
       c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center"
+      c.stationResponseStatus === "Submitted to Call Center" ||
+      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
     );
   };
 

@@ -194,6 +194,39 @@ export const addWorkingDaysExcludingSundays = (
   return result;
 };
 
+export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
+  if (!c) return false;
+  const isResolved = 
+    c.status === "Resolved" || 
+    c.status === "Contacted — Still Dissatisfied" ||
+    c.status === "Contacted - Still Dissatisfied" ||
+    c.finalStatus === "Closed" || 
+    c.feedbackStatus === "Satisfied" || 
+    c.callCenterFinalSatisfaction === "Satisfied" || 
+    c.callCenterFinalSatisfaction === "Very Satisfied";
+
+  const isUnreachable = 
+    c.feedbackStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Busy" || 
+    c.firstAttemptCallStatus === "No Answer" ||
+    c.firstAttemptCallStatus === "Invalid Details" ||
+    c.firstAttemptCallStatus === "Invalid Number" ||
+    c.secondAttemptCallStatus === "Customer Unreachable" ||
+    c.secondAttemptCallStatus === "Customer Busy" ||
+    c.secondAttemptCallStatus === "No Answer" ||
+    c.secondAttemptCallStatus === "Invalid Details" ||
+    c.secondAttemptCallStatus === "Invalid Number" ||
+    c.finalStatus === "Unreachable" ||
+    (c.finalStatus && c.finalStatus.includes("Unreachable"));
+
+  const isCallCenterContactedNoUnreachable = 
+    !!(c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) &&
+    !isUnreachable;
+
+  return isResolved || isCallCenterContactedNoUnreachable;
+};
+
 export const getComplaintAgeInfo = (
   c: Complaint, 
   referenceDate: Date = new Date(), 
@@ -218,11 +251,21 @@ export const getComplaintAgeInfo = (
 
   const compDate = parseComplaintDate(c.date, c.receivedDateTime);
 
-  // Freeze time calculation if complaint is Resolved or Closed
-  const isResolved = c.status === "Resolved" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied";
+  // Check if time calculation should be frozen:
+  // 1) Resolved / Closed / Satisfied
+  // 2) Call Center Contacted without unreachable
+  const isResolved = 
+    c.status === "Resolved" || 
+    c.finalStatus === "Closed" || 
+    c.feedbackStatus === "Satisfied" || 
+    c.callCenterFinalSatisfaction === "Satisfied" || 
+    c.callCenterFinalSatisfaction === "Very Satisfied";
+
+  const isTimeFrozen = isComplaintTimeFrozen(c);
+
   let effectiveRefDate = referenceDate;
-  if (isResolved) {
-    const resDateStr = c.callCenterContactedDate || c.solutionDate || c.updatedAt || c.date;
+  if (isTimeFrozen) {
+    const resDateStr = c.callCenterContactedDate || c.secondAttemptDate || c.firstAttemptDate || c.solutionDate || c.stationContactedDate || c.updatedAt || c.date;
     let parsedResDate = parseComplaintDate(resDateStr);
     if (isNaN(parsedResDate.getTime()) || parsedResDate.getTime() <= compDate.getTime()) {
       // Default to 4 hours after creation date if resolution time was date-only
@@ -247,13 +290,19 @@ export const getComplaintAgeInfo = (
   let deadlineStatus = "";
   let nextMilestoneText = "";
 
-  if (isResolved) {
+  if (isTimeFrozen) {
     category = days <= 3 ? "0-3 Days (New)" : days <= 5 ? "3-5 Days (Pending)" : days <= 10 ? "6-10 Days (Escalated)" : ">10 Days (Critical)";
-    badgeColorClass = "bg-emerald-100 text-emerald-900 border-emerald-400 font-extrabold";
-    textColorClass = "text-emerald-700";
-    bgColorClass = "bg-emerald-600";
-    deadlineStatus = "COMPLETED & RESOLVED (Floating Time Frozen)";
-    nextMilestoneText = `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`;
+    badgeColorClass = isResolved 
+      ? "bg-emerald-100 text-emerald-900 border-emerald-400 font-extrabold"
+      : "bg-blue-100 text-blue-900 border-blue-400 font-extrabold";
+    textColorClass = isResolved ? "text-emerald-700" : "text-blue-700";
+    bgColorClass = isResolved ? "bg-emerald-600" : "bg-blue-600";
+    deadlineStatus = isResolved 
+      ? "COMPLETED & RESOLVED (Time Frozen)" 
+      : "CALL CENTER CONTACTED (Time Frozen at Contact)";
+    nextMilestoneText = isResolved
+      ? `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`
+      : `Call Center Contacted in ${formattedTimeString} duration • Timer Frozen on ${c.callCenterContactedDate}`;
     return { days, hours, minutes, seconds, workingDaysPassed: days, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
   }
 

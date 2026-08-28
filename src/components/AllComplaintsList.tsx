@@ -30,7 +30,7 @@ import {
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { matchesStationCodeOrName } from "../utils/stationUtils";
-import { getComplaintAgeInfo, getAgeFormulaBreakdown, parseComplaintDate } from "../utils/agingUtils";
+import { getComplaintAgeInfo, getAgeFormulaBreakdown, parseComplaintDate, isComplaintTimeFrozen } from "../utils/agingUtils";
 import { getEffectiveStationContactStatus } from "../utils/supabaseSanitizer";
 
 interface AllComplaintsListProps {
@@ -100,8 +100,11 @@ export default function AllComplaintsList({
     return !!(
       (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
       (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+      c.serviceStationContactStatus === "CONTACTED" ||
+      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
       c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center"
+      c.stationResponseStatus === "Submitted to Call Center" ||
+      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
     );
   };
 
@@ -1035,7 +1038,7 @@ export default function AllComplaintsList({
                           <span className="text-[9px] font-mono text-slate-600 font-bold">
                             {ageInfo.days}d {String(ageInfo.hours).padStart(2, "0")}h {String(ageInfo.minutes).padStart(2, "0")}m
                           </span>
-                          {(c.status === "Resolved" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied") ? (
+                          {isComplaintTimeFrozen(c) ? (
                             <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-1.5 py-0.2 rounded uppercase">
                               Frozen
                             </span>
@@ -1055,10 +1058,10 @@ export default function AllComplaintsList({
                               ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                               : c.currentSatisfaction === "Neutral"
                               ? "bg-slate-100 text-slate-700 border-slate-200"
-                              : "bg-rose-50 text-rose-700 border-rose-200"
+                              : "bg-orange-50 text-orange-700 border-orange-200"
                           }`}
                         >
-                          {c.currentSatisfaction || "Dissatisfied"}
+                          {(c.currentSatisfaction === "Dissatisfied" || c.currentSatisfaction === "Not Satisfied" || !c.currentSatisfaction) ? "Not Satisfied" : c.currentSatisfaction}
                         </span>
                       </td>
 
@@ -1066,19 +1069,27 @@ export default function AllComplaintsList({
                       <td className="py-2.5 px-3 whitespace-nowrap space-y-1">
                         <span
                           className={`text-[10px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1 w-fit ${
-                            isResolved
+                            c.status === "Resolved" || isResolved
                               ? "bg-green-100 text-green-800 border-green-300"
-                              : isPending
-                              ? "bg-red-100 text-red-800 border-red-300"
-                              : "bg-orange-100 text-orange-800 border-orange-300"
+                              : c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied"
+                              ? "bg-indigo-100 text-indigo-800 border-indigo-300 font-extrabold"
+                              : c.status === "Contacted"
+                              ? "bg-blue-100 text-blue-800 border-blue-300"
+                              : c.status === "In Progress"
+                              ? "bg-amber-100 text-amber-800 border-amber-300"
+                              : "bg-red-100 text-red-800 border-red-300"
                           }`}
                         >
-                          {isResolved ? (
+                          {(c.status === "Resolved" || isResolved) ? (
                             <CheckCircle className="h-3 w-3 text-green-600" />
+                          ) : (c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") ? (
+                            <AlertTriangle className="h-3 w-3 text-indigo-600" />
+                          ) : c.status === "Contacted" ? (
+                            <CheckCircle className="h-3 w-3 text-blue-600" />
                           ) : (
                             <Clock className="h-3 w-3 text-red-600" />
                           )}
-                          {c.status}
+                          {c.status || "Pending"}
                         </span>
                       </td>
 

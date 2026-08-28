@@ -38,6 +38,7 @@ export function matchesStationCodeOrName(complaintStation: string | undefined | 
 export function isComplaintRejected(c: Complaint | null | undefined): boolean {
   if (!c) return false;
   if (isResolvedCheck(c)) return false;
+  if (c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") return false;
 
   return !!(
     c.stationResponseStatus === "Rejected" ||
@@ -46,7 +47,6 @@ export function isComplaintRejected(c: Complaint | null | undefined): boolean {
     c.stationResponseStatus === "Returned to Call Center" ||
     c.feedbackStatus === "Returned to Service Station" ||
     c.feedbackStatus === "Rejected Again to Service Station" ||
-    c.feedbackStatus === "Still Dissatisfied" ||
     c.feedbackStatus === "Escalated" ||
     c.finalStatus === "Returned to Service Station" ||
     c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
@@ -68,8 +68,13 @@ export function isStationContacted(c: Complaint | null | undefined): boolean {
   return !!(
     (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
     (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+    c.serviceStationContactStatus === "CONTACTED" ||
+    (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
     c.status === "Contacted" ||
-    c.stationResponseStatus === "Submitted to Call Center"
+    c.status === "Contacted — Still Dissatisfied" ||
+    c.status === "Contacted - Still Dissatisfied" ||
+    c.stationResponseStatus === "Submitted to Call Center" ||
+    (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
   );
 }
 

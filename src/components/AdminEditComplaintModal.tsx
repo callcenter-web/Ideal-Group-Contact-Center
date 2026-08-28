@@ -339,6 +339,7 @@ export default function AdminEditComplaintModal({
                   <option value="Pending">Pending</option>
                   <option value="In Progress">In Progress</option>
                   <option value="Contacted">Contacted</option>
+                  <option value="Contacted — Still Dissatisfied">Contacted — Still Dissatisfied (Timer Frozen)</option>
                   <option value="Resolved">Resolved (Timer Frozen)</option>
                 </select>
               </div>

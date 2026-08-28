@@ -163,14 +163,62 @@ export function isComplaintResolved(c: Complaint | null | undefined): boolean {
 }
 
 /**
+ * Checks if a complaint is classified as "Contacted — Still Dissatisfied".
+ * This means the Call Center has completed its follow-up/contact with the customer,
+ * but the customer confirmed they are still dissatisfied after the service station's solution.
+ * It is NOT pending active recovery, and the SLA timer is frozen at contact.
+ */
+export function isComplaintContactedStillDissatisfied(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  if (isComplaintResolved(c)) return false;
+
+  if (c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") {
+    return true;
+  }
+  if (c.finalStatus === "Contacted — Still Dissatisfied" || c.finalStatus === "Contacted - Still Dissatisfied") {
+    return true;
+  }
+
+  const isUnreachable = 
+    c.feedbackStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Busy" || 
+    c.firstAttemptCallStatus === "No Answer" ||
+    c.secondAttemptCallStatus === "Customer Unreachable" || 
+    c.secondAttemptCallStatus === "Customer Busy" || 
+    c.secondAttemptCallStatus === "No Answer";
+
+  const hasCCContact = !!(c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) ||
+    c.firstAttemptCallStatus === "Connected" ||
+    c.secondAttemptCallStatus === "Connected";
+
+  const isDissatisfiedFeedback = 
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "No solution Received" ||
+    c.callCenterFinalSatisfaction === "Dissatisfied" ||
+    c.callCenterFinalSatisfaction === "Very Dissatisfied";
+
+  if (hasCCContact && !isUnreachable && (c.callCenterFinalRemarks || isDissatisfiedFeedback)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks if a complaint is actively pending in the current workflow cycle.
  * CRITICAL RECONCILIATION RULE:
- * A complaint is EITHER Resolved OR Pending (Never both).
- * Total Complaints = Resolved Complaints + Pending Complaints.
+ * A complaint has exactly ONE primary classification:
+ * 1. Resolved (Satisfied / Closed)
+ * 2. Contacted — Still Dissatisfied (Verified by CC, timer frozen, customer dissatisfied)
+ * 3. Pending (Active recovery needed)
+ * Total Complaints = Resolved + Contacted Still Dissatisfied + Pending.
  */
 export function isComplaintPending(c: Complaint | null | undefined): boolean {
   if (!c) return false;
-  return !isComplaintResolved(c);
+  return !isComplaintResolved(c) && !isComplaintContactedStillDissatisfied(c);
 }
 
 /**
@@ -183,13 +231,14 @@ export function isComplaintActivePending(c: Complaint | null | undefined): boole
 /**
  * Checks if a complaint is CURRENTLY in an active Call Center rejection / escalation state.
  * CRITICAL RECONCILIATION RULES:
- * 1. Resolved complaints can NEVER be counted as active rejected (Historical rejections are archived).
- * 2. Only active pending complaints with an unresolved rejection/return status are counted.
+ * 1. Resolved complaints can NEVER be counted as active rejected.
+ * 2. "Contacted — Still Dissatisfied" complaints are completed CC contacts, not active station returns.
+ * 3. Only active pending complaints with an explicit unresolved rejection/return status are counted.
  */
 export function isActiveCCRejectionRequired(c: Complaint | null | undefined): boolean {
   if (!c) return false;
-  // If complaint is resolved, historical rejections do NOT make it an active rejection
   if (isComplaintResolved(c)) return false;
+  if (isComplaintContactedStillDissatisfied(c)) return false;
 
   return !!(
     c.stationResponseStatus === "Rejected" ||
@@ -198,7 +247,6 @@ export function isActiveCCRejectionRequired(c: Complaint | null | undefined): bo
     c.stationResponseStatus === "Returned to Call Center" ||
     c.feedbackStatus === "Returned to Service Station" ||
     c.feedbackStatus === "Rejected Again to Service Station" ||
-    c.feedbackStatus === "Still Dissatisfied" ||
     c.feedbackStatus === "Escalated" ||
     c.finalStatus === "Returned to Service Station" ||
     c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
@@ -415,6 +463,8 @@ export interface StationReportMetrics {
   totalList: Complaint[];
   resolved: number;
   resolvedList: Complaint[];
+  contactedStillDissatisfied: number;
+  contactedStillDissatisfiedList: Complaint[];
   pending: number;
   pendingList: Complaint[];
   rejectedByCC: number; // Current active rejected count
@@ -496,6 +546,8 @@ export interface NationalReportSummary {
   totalList: Complaint[];
   resolved: number;
   resolvedList: Complaint[];
+  contactedStillDissatisfied: number;
+  contactedStillDissatisfiedList: Complaint[];
   pending: number;
   pendingList: Complaint[];
   rejectedByCC: number;
@@ -505,6 +557,7 @@ export interface NationalReportSummary {
   totalComplaints: number;
   totalPending: number;
   totalResolved: number;
+  totalContactedStillDissatisfied: number;
   totalNotContacted: number;
   totalContacted: number;
   totalRejectedReAction: number;
@@ -571,6 +624,7 @@ export function calculateStationReportMetrics(
   const totalList = complaints;
 
   const resolvedList: Complaint[] = [];
+  const contactedStillDissatisfiedList: Complaint[] = [];
   const pendingList: Complaint[] = [];
   const rejectedByCCList: Complaint[] = [];
 
@@ -622,7 +676,7 @@ export function calculateStationReportMetrics(
     }
 
     // 3. CC SLA Eligibility (Service Center Contacted = YES)
-    const isSCEligible = !!firstStationDate || !!c.stationContactedDate || c.status === "Contacted" || c.stationResponseStatus === "Submitted to Call Center";
+    const isSCEligible = !!firstStationDate || !!c.stationContactedDate || c.status === "Contacted" || c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied" || c.stationResponseStatus === "Submitted to Call Center";
     if (isSCEligible) {
       ccEligibleList.push(c);
       if (firstCCDate && firstStationDate) {
@@ -635,7 +689,7 @@ export function calculateStationReportMetrics(
       }
     }
 
-    // 4. Resolution vs Pending Classification
+    // 4. Resolution vs Contacted Still Dissatisfied vs Pending Classification
     if (isComplaintResolved(c)) {
       resolvedList.push(c);
 
@@ -648,6 +702,9 @@ export function calculateStationReportMetrics(
           solveTotalDays += diffDays;
         }
       }
+    } else if (isComplaintContactedStillDissatisfied(c)) {
+      // Completed Call Center follow-up but customer remains dissatisfied
+      contactedStillDissatisfiedList.push(c);
     } else {
       // Active Pending Case
       pendingList.push(c);
@@ -674,6 +731,7 @@ export function calculateStationReportMetrics(
   }
 
   const resolved = resolvedList.length;
+  const contactedStillDissatisfied = contactedStillDissatisfiedList.length;
   const pending = pendingList.length;
   const rejectedByCC = rejectedByCCList.length;
 
@@ -709,8 +767,8 @@ export function calculateStationReportMetrics(
 
   // Reconciliation Audit
   const reconciliationErrors: string[] = [];
-  if (total !== resolved + pending) {
-    reconciliationErrors.push(`Total (${total}) != Resolved (${resolved}) + Pending (${pending})`);
+  if (total !== resolved + contactedStillDissatisfied + pending) {
+    reconciliationErrors.push(`Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + Pending (${pending})`);
   }
   if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
     reconciliationErrors.push(`Pending (${pending}) != Sum of SLA Buckets (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`);
@@ -725,6 +783,8 @@ export function calculateStationReportMetrics(
     totalList,
     resolved,
     resolvedList,
+    contactedStillDissatisfied,
+    contactedStillDissatisfiedList,
     pending,
     pendingList,
     rejectedByCC,
@@ -871,6 +931,9 @@ export function calculateNationalReportSummary(
   let resolved = 0;
   const resolvedList: Complaint[] = [];
 
+  let contactedStillDissatisfied = 0;
+  const contactedStillDissatisfiedList: Complaint[] = [];
+
   let pending = 0;
   const pendingList: Complaint[] = [];
 
@@ -916,6 +979,9 @@ export function calculateNationalReportSummary(
 
     resolved += sm.resolved;
     resolvedList.push(...sm.resolvedList);
+
+    contactedStillDissatisfied += sm.contactedStillDissatisfied;
+    contactedStillDissatisfiedList.push(...sm.contactedStillDissatisfiedList);
 
     pending += sm.pending;
     pendingList.push(...sm.pendingList);
@@ -984,8 +1050,8 @@ export function calculateNationalReportSummary(
 
   // Global Reconciliation Checks
   const reconciliationErrors: string[] = [];
-  if (total !== resolved + pending) {
-    reconciliationErrors.push(`National Total (${total}) != Resolved (${resolved}) + Pending (${pending})`);
+  if (total !== resolved + contactedStillDissatisfied + pending) {
+    reconciliationErrors.push(`National Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + Pending (${pending})`);
   }
   if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
     reconciliationErrors.push(
@@ -998,6 +1064,8 @@ export function calculateNationalReportSummary(
     totalList,
     resolved,
     resolvedList,
+    contactedStillDissatisfied,
+    contactedStillDissatisfiedList,
     pending,
     pendingList,
     rejectedByCC,
@@ -1005,6 +1073,7 @@ export function calculateNationalReportSummary(
     totalComplaints: total,
     totalPending: pending,
     totalResolved: resolved,
+    totalContactedStillDissatisfied: contactedStillDissatisfied,
     totalNotContacted: Math.max(0, total - scContactedCount),
     totalContacted: scContactedCount,
     totalRejectedReAction: rejectedByCC,
@@ -1052,6 +1121,7 @@ export interface DiagnosticAuditItem {
   station: string;
   status: string;
   isResolved: boolean;
+  isContactedStillDissatisfied: boolean;
   isPending: boolean;
   isRejected: boolean;
   stationContacted: boolean;
@@ -1080,6 +1150,7 @@ export function getReconciliationAudit(
 
   for (const c of deduplicated) {
     const isRes = isComplaintResolved(c);
+    const isStillDissatisfied = isComplaintContactedStillDissatisfied(c);
     const isPend = isComplaintPending(c);
     const isRej = isActiveCCRejectionRequired(c);
     const aging = Math.round(getComplaintAgingDays(c, referenceDate) * 10) / 10;
@@ -1087,11 +1158,9 @@ export function getReconciliationAudit(
     const contactStatus = getComplaintCycleContactStatus(c);
     const issues: string[] = [];
 
-    if (isRes && isPend) {
-      issues.push("Conflict: Marked both Resolved and Pending");
-    }
-    if (!isRes && !isPend) {
-      issues.push("Conflict: Marked neither Resolved nor Pending");
+    const stateCount = (isRes ? 1 : 0) + (isStillDissatisfied ? 1 : 0) + (isPend ? 1 : 0);
+    if (stateCount !== 1) {
+      issues.push(`Conflict: Case has invalid primary status configuration (Resolved: ${isRes}, StillDissatisfied: ${isStillDissatisfied}, Pending: ${isPend})`);
     }
 
     if (issues.length > 0) {
@@ -1104,6 +1173,7 @@ export function getReconciliationAudit(
       station: c.station || "Unassigned",
       status: c.status || "Unknown",
       isResolved: isRes,
+      isContactedStillDissatisfied: isStillDissatisfied,
       isPending: isPend,
       isRejected: isRej,
       stationContacted: contactStatus.isContacted,

@@ -50,7 +50,7 @@ import AllComplaintsList from "./components/AllComplaintsList";
 import CallCenterSLAReportModal from "./components/CallCenterSLAReportModal";
 import AdminEditComplaintModal from "./components/AdminEditComplaintModal";
 import CaseHistoryTimeline from "./components/CaseHistoryTimeline";
-import { getComplaintAgeInfo, getAgeFormulaBreakdown } from "./utils/agingUtils";
+import { getComplaintAgeInfo, getAgeFormulaBreakdown, isComplaintTimeFrozen } from "./utils/agingUtils";
 import { getStoredCalendarDates, saveCalendarDates } from "./utils/workstationCalendar";
 import { WorkstationCalendarManager } from "./components/WorkstationCalendarManager";
 import { StationDirectoryAndEmailModal } from "./components/StationDirectoryAndEmailModal";
@@ -1034,6 +1034,12 @@ export default function App() {
               calcSatisfaction = "Dissatisfied";
               calcFinalStatus = "Unreachable (Invalid Number/Details)";
               isConnectedNow = false;
+            } else if (["Still Dissatisfied", "Not Satisfied"].includes(formSecondAttemptFeedbackStatus) || ["Still Dissatisfied", "Not Satisfied"].includes(formFeedbackStatus) || ["Still Dissatisfied", "Not Satisfied"].includes(formFirstAttemptCallStatus)) {
+              calcStatus = "Contacted — Still Dissatisfied";
+              calcSatisfaction = "Dissatisfied";
+              calcFeedbackStatus = "Still Dissatisfied";
+              calcFinalStatus = "Contacted — Still Dissatisfied";
+              isConnectedNow = true;
             } else if (formFirstAttemptCallStatus === "Customer Not Interested" || formSecondAttemptFeedbackStatus === "Customer Not Interested") {
               calcStatus = "Pending";
               calcSatisfaction = "Dissatisfied";
@@ -1045,7 +1051,7 @@ export default function App() {
               isConnectedNow = true;
               calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus || "Follow Up Required";
               calcStatus = "Pending";
-              calcSatisfaction = formCallCenterFinalSatisfaction || "Neutral";
+              calcSatisfaction = "Dissatisfied";
               calcFinalStatus = "In Progress";
             }
           } else {
@@ -1062,11 +1068,17 @@ export default function App() {
               calcSatisfaction = "Dissatisfied";
               calcFinalStatus = "Unreachable (Not Satisfied Base)";
               isConnectedNow = false;
-            } else if (["Not Satisfied", "No solution Received", "No Solution Received"].includes(formSecondAttemptFeedbackStatus) || ["No solution Received", "No Solution Received"].includes(formFeedbackStatus)) {
+            } else if (["No solution Received", "No Solution Received"].includes(formSecondAttemptFeedbackStatus) || ["No solution Received", "No Solution Received"].includes(formFeedbackStatus)) {
               calcStatus = "Pending";
               calcSatisfaction = "Dissatisfied";
-              calcFeedbackStatus = formSecondAttemptFeedbackStatus;
+              calcFeedbackStatus = formSecondAttemptFeedbackStatus || "No Solution Received";
               calcFinalStatus = "Re-assigned to Station (No Solution Received)";
+              isConnectedNow = true;
+            } else if (["Still Dissatisfied", "Not Satisfied"].includes(formSecondAttemptFeedbackStatus) || ["Still Dissatisfied", "Not Satisfied"].includes(formFeedbackStatus) || ["Still Dissatisfied", "Not Satisfied"].includes(formSecondAttemptCallStatus)) {
+              calcStatus = "Contacted — Still Dissatisfied";
+              calcSatisfaction = "Dissatisfied";
+              calcFeedbackStatus = "Still Dissatisfied";
+              calcFinalStatus = "Contacted — Still Dissatisfied";
               isConnectedNow = true;
             } else if (formSecondAttemptFeedbackStatus === "Escalated") {
               calcStatus = "Pending";
@@ -1083,7 +1095,7 @@ export default function App() {
             } else {
               calcFeedbackStatus = formSecondAttemptFeedbackStatus || formFeedbackStatus || "Follow Up Required";
               calcStatus = "Pending";
-              calcSatisfaction = formCallCenterFinalSatisfaction || "Neutral";
+              calcSatisfaction = "Dissatisfied";
               calcFinalStatus = "In Progress";
               isConnectedNow = true;
             }
@@ -1510,8 +1522,12 @@ export default function App() {
     }
     return !!(
       (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+      c.serviceStationContactStatus === "CONTACTED" ||
+      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
       c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center"
+      c.stationResponseStatus === "Submitted to Call Center" ||
+      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
     );
   };
 
@@ -1642,9 +1658,12 @@ export default function App() {
 
   // Calculate high-level KPIs for filtered view
   const totalCount = filteredComplaints.length;
-  const pendingCount = filteredComplaints.filter((c) => c.status === "Pending").length;
-  const progressCount = filteredComplaints.filter((c) => c.status === "In Progress").length;
-  const resolvedCount = filteredComplaints.filter((c) => c.status === "Resolved").length;
+  const pendingStationCount = filteredComplaints.filter((c) => !isStationContacted(c) && c.status !== "Resolved").length;
+  const contactedCount = filteredComplaints.filter((c) => isStationContacted(c) && c.status !== "Resolved").length;
+  const notSatisfiedCount = filteredComplaints.filter((c) => (c.currentSatisfaction === "Dissatisfied" || c.currentSatisfaction === "Very Dissatisfied" || (c.currentSatisfaction as any) === "Not Satisfied" || c.feedbackStatus === "Not Satisfied" || c.feedbackStatus === "Still Dissatisfied") && c.status !== "Resolved").length;
+  const progressCount = filteredComplaints.filter((c) => c.status === "In Progress" || (c.status === "Contacted" && c.currentSatisfaction !== "Satisfied")).length;
+  const pendingCount = pendingStationCount;
+  const resolvedCount = filteredComplaints.filter((c) => c.status === "Resolved" || isComplaintCompleted(c)).length;
 
   // CX Recovery Score: percentage converted to Neutral/Satisfied/Very Satisfied, or Resolved status
   const recoveredCount = filteredComplaints.filter(
@@ -1656,31 +1675,40 @@ export default function App() {
   const categories = Array.from(new Set(complaints.map((c) => c.category)));
 
   // Satisfaction mapping helper
-  const getSatisfactionBadge = (level: SatisfactionLevel) => {
+  const getSatisfactionBadge = (level: SatisfactionLevel | string) => {
     switch (level) {
       case "Very Dissatisfied":
-        return <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Very Dissatisfied</span>;
+        return <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Very Dissatisfied</span>;
       case "Dissatisfied":
-        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Dissatisfied</span>;
+      case "Not Satisfied":
+      case "Still Dissatisfied":
+        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Not Satisfied</span>;
       case "Neutral":
-        return <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Neutral</span>;
+        return <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Neutral</span>;
       case "Satisfied":
-        return <span className="bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Satisfied</span>;
+        return <span className="bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Satisfied</span>;
       case "Very Satisfied":
-        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">Very Satisfied</span>;
+        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Very Satisfied</span>;
+      default:
+        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Not Satisfied</span>;
     }
   };
 
-  const getStatusBadge = (status: FollowUpStatus) => {
+  const getStatusBadge = (status: FollowUpStatus | string) => {
     switch (status) {
       case "Pending":
-        return <span className="bg-red-50 text-red-700 border border-red-200 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">Pending</span>;
+        return <span className="bg-red-50 text-red-700 border border-red-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Pending</span>;
       case "In Progress":
-        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">In Progress</span>;
+        return <span className="bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">In Progress</span>;
       case "Contacted":
-        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">Contacted</span>;
+        return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Contacted</span>;
+      case "Contacted — Still Dissatisfied":
+      case "Contacted - Still Dissatisfied":
+        return <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Contacted — Still Dissatisfied</span>;
       case "Resolved":
-        return <span className="bg-green-50 text-green-700 border border-green-200 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">Resolved</span>;
+        return <span className="bg-green-50 text-green-700 border border-green-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Resolved</span>;
+      default:
+        return <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">{status}</span>;
     }
   };
 
@@ -2304,7 +2332,7 @@ NOTIFY pgrst, 'reload schema';
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               <MetricCard
                 theme={theme}
-                title="Total Dissatisfied"
+                title="Total Complaints"
                 value={totalCount}
                 subtitle="From current search scope"
                 icon={<Users className="h-4.5 w-4.5 text-slate-400" />}
@@ -2317,19 +2345,19 @@ NOTIFY pgrst, 'reload schema';
               />
               <MetricCard
                 theme={theme}
-                title="Pending Recovery"
-                value={pendingCount}
-                subtitle="Immediate action required"
+                title="Pending Station Contact"
+                value={pendingStationCount}
+                subtitle="Awaiting station action"
                 icon={<Clock className="h-4.5 w-4.5 text-red-500" />}
                 colorClass="bg-red-50 border-red-200 text-red-700 shadow-sm"
               />
               <MetricCard
                 theme={theme}
-                title="In Progress"
-                value={progressCount}
-                subtitle="Currently being investigated"
-                icon={<Settings className="h-4.5 w-4.5 text-orange-500" />}
-                colorClass="bg-orange-50 border-orange-200 text-orange-700 shadow-sm"
+                title="Contacted & Not Satisfied"
+                value={contactedCount}
+                subtitle={`${notSatisfiedCount} Not Satisfied • In Recovery`}
+                icon={<Settings className="h-4.5 w-4.5 text-blue-500" />}
+                colorClass="bg-blue-50 border-blue-200 text-blue-700 shadow-sm"
               />
               <MetricCard
                 theme={theme}
@@ -2872,7 +2900,7 @@ NOTIFY pgrst, 'reload schema';
                               <span className="text-slate-400">:</span>
                               <span>{String(selectedAge.minutes).padStart(2, "0")}m</span>
                               <span className="text-slate-400">:</span>
-                              <span className={(selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied") ? "text-emerald-700" : "text-blue-600 animate-pulse"}>
+                              <span className={isComplaintTimeFrozen(selectedComplaint) ? "text-emerald-700 font-black" : "text-blue-600 animate-pulse"}>
                                 {String(selectedAge.seconds).padStart(2, "0")}s
                               </span>
                             </span>
@@ -3553,7 +3581,7 @@ NOTIFY pgrst, 'reload schema';
                                   setFormFeedbackStatus(val);
                                   if (val === "Satisfied" || val === "Completed") {
                                     setFormCallCenterFinalSatisfaction("Satisfied");
-                                  } else if (["Not Satisfied", "No solution Received", "Customer Unreachable", "Escalated", "Customer Not Interested"].includes(val)) {
+                                  } else if (["Still Dissatisfied", "Not Satisfied", "No solution Received", "Customer Unreachable", "Escalated", "Customer Not Interested"].includes(val)) {
                                     if (formCallCenterFinalSatisfaction === "Satisfied" || formCallCenterFinalSatisfaction === "Very Satisfied") {
                                       setFormCallCenterFinalSatisfaction("Dissatisfied");
                                     }
@@ -3563,6 +3591,7 @@ NOTIFY pgrst, 'reload schema';
                               >
                                 <option value="Satisfied">Satisfied (Pass to Complete)</option>
                                 <option value="Completed">Completed (Pass to Complete)</option>
+                                <option value="Still Dissatisfied">Still Dissatisfied (Contacted & Customer Not Satisfied)</option>
                                 <option value="Follow Up Required">Follow Up Required</option>
                                 <option value="Not Satisfied">Not Satisfied</option>
                                 <option value="No solution Received">No solution Received</option>
