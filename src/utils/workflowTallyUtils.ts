@@ -208,27 +208,6 @@ export function isComplaintContactedStillDissatisfied(c: Complaint | null | unde
 }
 
 /**
- * Checks if a complaint is actively pending in the current workflow cycle.
- * CRITICAL RECONCILIATION RULE:
- * A complaint has exactly ONE primary classification:
- * 1. Resolved (Satisfied / Closed)
- * 2. Contacted — Still Dissatisfied (Verified by CC, timer frozen, customer dissatisfied)
- * 3. Pending (Active recovery needed)
- * Total Complaints = Resolved + Contacted Still Dissatisfied + Pending.
- */
-export function isComplaintPending(c: Complaint | null | undefined): boolean {
-  if (!c) return false;
-  return !isComplaintResolved(c) && !isComplaintContactedStillDissatisfied(c);
-}
-
-/**
- * Backward compatibility alias for isComplaintPending.
- */
-export function isComplaintActivePending(c: Complaint | null | undefined): boolean {
-  return isComplaintPending(c);
-}
-
-/**
  * Checks if a complaint is CURRENTLY in an active Call Center rejection / escalation state.
  * CRITICAL RECONCILIATION RULES:
  * 1. Resolved complaints can NEVER be counted as active rejected.
@@ -261,6 +240,211 @@ export function isActiveCCRejectionRequired(c: Complaint | null | undefined): bo
  */
 export function isComplaintRejected(c: Complaint | null | undefined): boolean {
   return isActiveCCRejectionRequired(c);
+}
+
+/**
+ * Checks if a complaint belongs strictly to Service Center Pending.
+ * WORKFLOW & OWNERSHIP DIRECTIVES:
+ * 1. Initial / New cases assigned by Admin/Creation that Service Center has not contacted.
+ * 2. Cases rejected by Call Center returned to Service Center (must display REJECTED label).
+ * 3. Cases where Service Center made a contact attempt and is in SC follow-up.
+ * 4. EXCLUDES cases that were successfully contacted and submitted to Call Center (owned by CC).
+ * 5. EXCLUDES cases that are Resolved or Contacted Still Dissatisfied.
+ */
+export function isServiceCenterPending(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  if (isComplaintResolved(c)) return false;
+  if (isComplaintContactedStillDissatisfied(c)) return false;
+
+  // Active rejection from Call Center returns case directly to Service Center Pending
+  if (isActiveCCRejectionRequired(c)) {
+    return true;
+  }
+
+  // Check if Service Center has already contacted and forwarded the complaint
+  const hasStationContacted = !!(
+    (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+    (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+    c.serviceStationContactStatus === "CONTACTED" ||
+    (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
+    c.status === "Contacted" ||
+    c.stationResponseStatus === "Submitted to Call Center"
+  );
+
+  // If Service Center has not contacted yet, or status is explicitly not contacted/attempted
+  if (!hasStationContacted) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a complaint belongs to Call Center Pending (Call Center Verification Queue).
+ * WORKFLOW DIRECTIVE:
+ * Call Center unreachable cases remain at the Call Center for 2nd attempt and are NOT counted in Service Center pending.
+ */
+export function isCallCenterPending(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+  if (isComplaintResolved(c)) return false;
+  if (isComplaintContactedStillDissatisfied(c)) return false;
+  if (isServiceCenterPending(c)) return false;
+
+  return true;
+}
+
+/**
+ * Checks if a Call Center pending case is awaiting 1st Attempt.
+ */
+export function isCallCenter1stAttemptPending(c: Complaint | null | undefined): boolean {
+  if (!isCallCenterPending(c)) return false;
+  return !c.firstAttemptCallStatus || c.firstAttemptCallStatus === "None" || c.firstAttemptCallStatus === "";
+}
+
+/**
+ * Checks if a Call Center pending case is in 2nd Attempt (e.g. 1st attempt was unreachable).
+ */
+export function isCallCenter2ndAttemptPending(c: Complaint | null | undefined): boolean {
+  if (!isCallCenterPending(c)) return false;
+  return !!c.firstAttemptCallStatus && c.firstAttemptCallStatus !== "None" && c.firstAttemptCallStatus !== "Satisfied";
+}
+
+/**
+ * Checks if a complaint is actively pending in the primary Service Center workflow.
+ * (Main Summary Pending contains ONLY Service Center Pending).
+ */
+export function isComplaintPending(c: Complaint | null | undefined): boolean {
+  return isServiceCenterPending(c);
+}
+
+/**
+ * Backward compatibility alias for isComplaintPending.
+ */
+export function isComplaintActivePending(c: Complaint | null | undefined): boolean {
+  return isServiceCenterPending(c);
+}
+
+export type ComplaintOwner = "SERVICE_CENTER" | "CALL_CENTER" | "COMPLETED";
+
+export type ComplaintWorkflowStage =
+  | "SC_NOT_CONTACTED"
+  | "SC_REJECTED"
+  | "SC_ATTEMPTED"
+  | "CC_1ST_ATTEMPT_PENDING"
+  | "CC_2ND_ATTEMPT_UNREACHABLE"
+  | "CC_IN_PROGRESS"
+  | "CONTACTED_STILL_DISSATISFIED"
+  | "RESOLVED";
+
+/**
+ * Authoritative ownership & stage resolver for every case in the system.
+ */
+export function getComplaintWorkflowOwnership(c: Complaint | null | undefined): {
+  owner: ComplaintOwner;
+  stage: ComplaintWorkflowStage;
+  isServiceCenterPending: boolean;
+  isCallCenterPending: boolean;
+  isResolved: boolean;
+  isStillDissatisfied: boolean;
+  isRejected: boolean;
+  stageLabel: string;
+  ownerLabel: string;
+  badgeClass: string;
+} {
+  if (!c) {
+    return {
+      owner: "SERVICE_CENTER",
+      stage: "SC_NOT_CONTACTED",
+      isServiceCenterPending: true,
+      isCallCenterPending: false,
+      isResolved: false,
+      isStillDissatisfied: false,
+      isRejected: false,
+      stageLabel: "Service Center Pending Contact",
+      ownerLabel: "Service Center",
+      badgeClass: "bg-rose-100 text-rose-800 border-rose-300"
+    };
+  }
+
+  const isRes = isComplaintResolved(c);
+  if (isRes) {
+    return {
+      owner: "COMPLETED",
+      stage: "RESOLVED",
+      isServiceCenterPending: false,
+      isCallCenterPending: false,
+      isResolved: true,
+      isStillDissatisfied: false,
+      isRejected: false,
+      stageLabel: "Resolved / Satisfied",
+      ownerLabel: "Completed",
+      badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-300"
+    };
+  }
+
+  const isStillDissatisfied = isComplaintContactedStillDissatisfied(c);
+  if (isStillDissatisfied) {
+    return {
+      owner: "COMPLETED",
+      stage: "CONTACTED_STILL_DISSATISFIED",
+      isServiceCenterPending: false,
+      isCallCenterPending: false,
+      isResolved: false,
+      isStillDissatisfied: true,
+      isRejected: false,
+      stageLabel: "Contacted — Still Dissatisfied",
+      ownerLabel: "Call Center (Completed)",
+      badgeClass: "bg-indigo-100 text-indigo-800 border-indigo-300"
+    };
+  }
+
+  const isRej = isActiveCCRejectionRequired(c);
+  if (isRej) {
+    return {
+      owner: "SERVICE_CENTER",
+      stage: "SC_REJECTED",
+      isServiceCenterPending: true,
+      isCallCenterPending: false,
+      isResolved: false,
+      isStillDissatisfied: false,
+      isRejected: true,
+      stageLabel: "REJECTED (Re-Contact Required)",
+      ownerLabel: "Service Center",
+      badgeClass: "bg-rose-600 text-white border-rose-700 shadow-xs font-black"
+    };
+  }
+
+  const isSC = isServiceCenterPending(c);
+  if (isSC) {
+    const isAttempted = c.serviceStationContactStatus === "CONTACT_ATTEMPTED" || c.serviceStationContactStatus === "CUSTOMER_UNREACHABLE";
+    return {
+      owner: "SERVICE_CENTER",
+      stage: isAttempted ? "SC_ATTEMPTED" : "SC_NOT_CONTACTED",
+      isServiceCenterPending: true,
+      isCallCenterPending: false,
+      isResolved: false,
+      isStillDissatisfied: false,
+      isRejected: false,
+      stageLabel: isAttempted ? "Service Center Follow-up" : "Service Center Pending Contact",
+      ownerLabel: "Service Center",
+      badgeClass: isAttempted ? "bg-amber-100 text-amber-800 border-amber-300" : "bg-rose-100 text-rose-800 border-rose-300"
+    };
+  }
+
+  // Call Center Pending
+  const is2nd = isCallCenter2ndAttemptPending(c);
+  return {
+    owner: "CALL_CENTER",
+    stage: is2nd ? "CC_2ND_ATTEMPT_UNREACHABLE" : "CC_1ST_ATTEMPT_PENDING",
+    isServiceCenterPending: false,
+    isCallCenterPending: true,
+    isResolved: false,
+    isStillDissatisfied: false,
+    isRejected: false,
+    stageLabel: is2nd ? "Call Center 2nd Attempt (Unreachable)" : "Call Center 1st Attempt Verification",
+    ownerLabel: "Call Center",
+    badgeClass: is2nd ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-blue-100 text-blue-800 border-blue-300"
+  };
 }
 
 /**
@@ -397,10 +581,8 @@ export function getFirstStationContactDate(c: Complaint): Date | null {
     c.contactAttempts.forEach((att) => {
       if (att && att.timestamp) {
         const isStationActor =
-          att.actorRole === "agent" ||
-          !att.actorRole ||
-          att.outcome === "CONTACTED" ||
-          att.outcome === "CONTACT_ATTEMPTED";
+          (att.actorRole === "agent" || !att.actorRole) &&
+          (att.outcome === "CONTACTED" || att.outcome === "Contacted");
         if (isStationActor) {
           const dAtt = parseValidDate(att.timestamp);
           if (dAtt) dates.push(dAtt);
@@ -465,12 +647,33 @@ export interface StationReportMetrics {
   resolvedList: Complaint[];
   contactedStillDissatisfied: number;
   contactedStillDissatisfiedList: Complaint[];
+  
+  // Main Pending is Service Center Pending ONLY
   pending: number;
   pendingList: Complaint[];
+
+  // Explicit Service Center breakdowns
+  scPending: number;
+  scPendingList: Complaint[];
+  scPendingUncontacted: number;
+  scPendingUncontactedList: Complaint[];
+  scPendingAttempted: number;
+  scPendingAttemptedList: Complaint[];
+  scPendingRejected: number;
+  scPendingRejectedList: Complaint[];
+
+  // Explicit Call Center breakdowns
+  ccPending: number;
+  ccPendingList: Complaint[];
+  cc1stAttemptPending: number;
+  cc1stAttemptPendingList: Complaint[];
+  cc2ndAttemptPending: number;
+  cc2ndAttemptPendingList: Complaint[];
+
   rejectedByCC: number; // Current active rejected count
   rejectedByCCList: Complaint[];
 
-  // SLA Aging Buckets (Active Pending Only)
+  // SLA Aging Buckets (Service Center Pending Only)
   sla_0_3: number;
   sla_0_3List: Complaint[];
   sla_3_5: number;
@@ -548,8 +751,29 @@ export interface NationalReportSummary {
   resolvedList: Complaint[];
   contactedStillDissatisfied: number;
   contactedStillDissatisfiedList: Complaint[];
+
+  // Main Pending is Service Center Pending ONLY
   pending: number;
   pendingList: Complaint[];
+
+  // Explicit Service Center breakdowns
+  scPending: number;
+  scPendingList: Complaint[];
+  scPendingUncontacted: number;
+  scPendingUncontactedList: Complaint[];
+  scPendingAttempted: number;
+  scPendingAttemptedList: Complaint[];
+  scPendingRejected: number;
+  scPendingRejectedList: Complaint[];
+
+  // Explicit Call Center breakdowns
+  ccPending: number;
+  ccPendingList: Complaint[];
+  cc1stAttemptPending: number;
+  cc1stAttemptPendingList: Complaint[];
+  cc2ndAttemptPending: number;
+  cc2ndAttemptPendingList: Complaint[];
+
   rejectedByCC: number;
   rejectedByCCList: Complaint[];
 
@@ -625,8 +849,18 @@ export function calculateStationReportMetrics(
 
   const resolvedList: Complaint[] = [];
   const contactedStillDissatisfiedList: Complaint[] = [];
-  const pendingList: Complaint[] = [];
+  
+  // Service Center Pending lists
+  const scPendingList: Complaint[] = [];
+  const scPendingUncontactedList: Complaint[] = [];
+  const scPendingAttemptedList: Complaint[] = [];
+  const scPendingRejectedList: Complaint[] = [];
   const rejectedByCCList: Complaint[] = [];
+
+  // Call Center Pending lists
+  const ccPendingList: Complaint[] = [];
+  const cc1stAttemptPendingList: Complaint[] = [];
+  const cc2ndAttemptPendingList: Complaint[] = [];
 
   const sla_0_3List: Complaint[] = [];
   const sla_3_5List: Complaint[] = [];
@@ -676,7 +910,7 @@ export function calculateStationReportMetrics(
     }
 
     // 3. CC SLA Eligibility (Service Center Contacted = YES)
-    const isSCEligible = !!firstStationDate || !!c.stationContactedDate || c.status === "Contacted" || c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied" || c.stationResponseStatus === "Submitted to Call Center";
+    const isSCEligible = !!firstStationDate || (!!c.stationContactedDate && c.stationContactedDate.trim().length > 0) || (!!c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) || c.serviceStationContactStatus === "CONTACTED" || c.stationResponseStatus === "Submitted to Call Center";
     if (isSCEligible) {
       ccEligibleList.push(c);
       if (firstCCDate && firstStationDate) {
@@ -689,7 +923,7 @@ export function calculateStationReportMetrics(
       }
     }
 
-    // 4. Resolution vs Contacted Still Dissatisfied vs Pending Classification
+    // 4. Resolution vs Contacted Still Dissatisfied vs Service Center Pending vs Call Center Pending
     if (isComplaintResolved(c)) {
       resolvedList.push(c);
 
@@ -705,16 +939,21 @@ export function calculateStationReportMetrics(
     } else if (isComplaintContactedStillDissatisfied(c)) {
       // Completed Call Center follow-up but customer remains dissatisfied
       contactedStillDissatisfiedList.push(c);
-    } else {
-      // Active Pending Case
-      pendingList.push(c);
+    } else if (isServiceCenterPending(c)) {
+      // Primary Service Center Pending
+      scPendingList.push(c);
 
       // Active CC Rejection / Escalation
       if (isActiveCCRejectionRequired(c)) {
+        scPendingRejectedList.push(c);
         rejectedByCCList.push(c);
+      } else if (c.serviceStationContactStatus === "CONTACT_ATTEMPTED" || c.serviceStationContactStatus === "CUSTOMER_UNREACHABLE") {
+        scPendingAttemptedList.push(c);
+      } else {
+        scPendingUncontactedList.push(c);
       }
 
-      // SLA Aging for Pending Case
+      // SLA Aging for Service Center Pending Case
       const ageDays = getComplaintAgingDays(c, referenceDate);
       totalPendingAgingDays += ageDays;
 
@@ -727,13 +966,32 @@ export function calculateStationReportMetrics(
       } else {
         sla_gt_10List.push(c);
       }
+    } else {
+      // Call Center Pending (Verification Queue / 2nd Attempt Queue)
+      ccPendingList.push(c);
+      if (isCallCenter1stAttemptPending(c)) {
+        cc1stAttemptPendingList.push(c);
+      } else {
+        cc2ndAttemptPendingList.push(c);
+      }
     }
   }
 
   const resolved = resolvedList.length;
   const contactedStillDissatisfied = contactedStillDissatisfiedList.length;
-  const pending = pendingList.length;
-  const rejectedByCC = rejectedByCCList.length;
+
+  const scPending = scPendingList.length;
+  const pendingList = scPendingList;
+  const pending = scPending;
+
+  const scPendingUncontacted = scPendingUncontactedList.length;
+  const scPendingAttempted = scPendingAttemptedList.length;
+  const scPendingRejected = scPendingRejectedList.length;
+  const rejectedByCC = scPendingRejectedList.length;
+
+  const ccPending = ccPendingList.length;
+  const cc1stAttemptPending = cc1stAttemptPendingList.length;
+  const cc2ndAttemptPending = cc2ndAttemptPendingList.length;
 
   const sla_0_3 = sla_0_3List.length;
   const sla_3_5 = sla_3_5List.length;
@@ -767,11 +1025,11 @@ export function calculateStationReportMetrics(
 
   // Reconciliation Audit
   const reconciliationErrors: string[] = [];
-  if (total !== resolved + contactedStillDissatisfied + pending) {
-    reconciliationErrors.push(`Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + Pending (${pending})`);
+  if (total !== resolved + contactedStillDissatisfied + scPending + ccPending) {
+    reconciliationErrors.push(`Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + SC Pending (${scPending}) + CC Pending (${ccPending})`);
   }
   if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
-    reconciliationErrors.push(`Pending (${pending}) != Sum of SLA Buckets (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`);
+    reconciliationErrors.push(`SC Pending (${pending}) != Sum of SLA Buckets (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`);
   }
 
   return {
@@ -787,6 +1045,20 @@ export function calculateStationReportMetrics(
     contactedStillDissatisfiedList,
     pending,
     pendingList,
+    scPending,
+    scPendingList,
+    scPendingUncontacted,
+    scPendingUncontactedList,
+    scPendingAttempted,
+    scPendingAttemptedList,
+    scPendingRejected,
+    scPendingRejectedList,
+    ccPending,
+    ccPendingList,
+    cc1stAttemptPending,
+    cc1stAttemptPendingList,
+    cc2ndAttemptPending,
+    cc2ndAttemptPendingList,
     rejectedByCC,
     rejectedByCCList,
     sla_0_3,
@@ -809,9 +1081,9 @@ export function calculateStationReportMetrics(
     escalatedList: rejectedByCCList,
     unclassified: 0,
     unclassifiedList: [],
-    notContacted: Math.max(0, total - scContactedCount),
+    notContacted: scPendingUncontacted,
     contacted: scContactedCount,
-    attempted: 0,
+    attempted: scPendingAttempted,
     rejectedReAction: rejectedByCC,
     recoveryRate: rate,
     slaTotal: pending,
@@ -937,6 +1209,27 @@ export function calculateNationalReportSummary(
   let pending = 0;
   const pendingList: Complaint[] = [];
 
+  let scPending = 0;
+  const scPendingList: Complaint[] = [];
+
+  let scPendingUncontacted = 0;
+  const scPendingUncontactedList: Complaint[] = [];
+
+  let scPendingAttempted = 0;
+  const scPendingAttemptedList: Complaint[] = [];
+
+  let scPendingRejected = 0;
+  const scPendingRejectedList: Complaint[] = [];
+
+  let ccPending = 0;
+  const ccPendingList: Complaint[] = [];
+
+  let cc1stAttemptPending = 0;
+  const cc1stAttemptPendingList: Complaint[] = [];
+
+  let cc2ndAttemptPending = 0;
+  const cc2ndAttemptPendingList: Complaint[] = [];
+
   let rejectedByCC = 0;
   const rejectedByCCList: Complaint[] = [];
 
@@ -985,6 +1278,27 @@ export function calculateNationalReportSummary(
 
     pending += sm.pending;
     pendingList.push(...sm.pendingList);
+
+    scPending += sm.scPending;
+    scPendingList.push(...sm.scPendingList);
+
+    scPendingUncontacted += sm.scPendingUncontacted;
+    scPendingUncontactedList.push(...sm.scPendingUncontactedList);
+
+    scPendingAttempted += sm.scPendingAttempted;
+    scPendingAttemptedList.push(...sm.scPendingAttemptedList);
+
+    scPendingRejected += sm.scPendingRejected;
+    scPendingRejectedList.push(...sm.scPendingRejectedList);
+
+    ccPending += sm.ccPending;
+    ccPendingList.push(...sm.ccPendingList);
+
+    cc1stAttemptPending += sm.cc1stAttemptPending;
+    cc1stAttemptPendingList.push(...sm.cc1stAttemptPendingList);
+
+    cc2ndAttemptPending += sm.cc2ndAttemptPending;
+    cc2ndAttemptPendingList.push(...sm.cc2ndAttemptPendingList);
 
     rejectedByCC += sm.rejectedByCC;
     rejectedByCCList.push(...sm.rejectedByCCList);
@@ -1050,12 +1364,12 @@ export function calculateNationalReportSummary(
 
   // Global Reconciliation Checks
   const reconciliationErrors: string[] = [];
-  if (total !== resolved + contactedStillDissatisfied + pending) {
-    reconciliationErrors.push(`National Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + Pending (${pending})`);
+  if (total !== resolved + contactedStillDissatisfied + scPending + ccPending) {
+    reconciliationErrors.push(`National Total (${total}) != Resolved (${resolved}) + Contacted Still Dissatisfied (${contactedStillDissatisfied}) + SC Pending (${scPending}) + CC Pending (${ccPending})`);
   }
   if (pending !== sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10) {
     reconciliationErrors.push(
-      `National Pending (${pending}) != SLA Buckets Sum (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`
+      `National SC Pending (${pending}) != SLA Buckets Sum (${sla_0_3 + sla_3_5 + sla_6_10 + sla_gt_10})`
     );
   }
 
@@ -1068,13 +1382,27 @@ export function calculateNationalReportSummary(
     contactedStillDissatisfiedList,
     pending,
     pendingList,
+    scPending,
+    scPendingList,
+    scPendingUncontacted,
+    scPendingUncontactedList,
+    scPendingAttempted,
+    scPendingAttemptedList,
+    scPendingRejected,
+    scPendingRejectedList,
+    ccPending,
+    ccPendingList,
+    cc1stAttemptPending,
+    cc1stAttemptPendingList,
+    cc2ndAttemptPending,
+    cc2ndAttemptPendingList,
     rejectedByCC,
     rejectedByCCList,
     totalComplaints: total,
     totalPending: pending,
     totalResolved: resolved,
     totalContactedStillDissatisfied: contactedStillDissatisfied,
-    totalNotContacted: Math.max(0, total - scContactedCount),
+    totalNotContacted: scPendingUncontacted,
     totalContacted: scContactedCount,
     totalRejectedReAction: rejectedByCC,
     overallRecoveryRate: rate,
@@ -1112,6 +1440,31 @@ export function calculateNationalReportSummary(
     stationMetrics,
     isFullyReconciled: reconciliationErrors.length === 0,
     reconciliationErrors
+  };
+}
+
+/**
+ * Calculates volume-weighted averages across service stations using the formula:
+ * Weighted_Avg = SUM(Metric * Station_Volume) / SUM(Station_Volume)
+ */
+export function calculateWeightedStationAverages(stationMetrics: StationReportMetrics[]) {
+  let totalVolume = 0;
+  let weightedStationContactSum = 0;
+  let weightedCCContactSum = 0;
+  let weightedSolveSum = 0;
+
+  for (const sm of stationMetrics) {
+    totalVolume += sm.total;
+    weightedStationContactSum += sm.avgDaysStationContact * sm.total;
+    weightedCCContactSum += sm.avgDaysCallCenterContact * sm.total;
+    weightedSolveSum += sm.avgDaysToSolveCase * sm.total;
+  }
+
+  return {
+    totalVolume,
+    weightedAvgDaysStationContact: totalVolume > 0 ? Math.round((weightedStationContactSum / totalVolume) * 10) / 10 : 0,
+    weightedAvgDaysCallCenterContact: totalVolume > 0 ? Math.round((weightedCCContactSum / totalVolume) * 10) / 10 : 0,
+    weightedAvgDaysToSolveCase: totalVolume > 0 ? Math.round((weightedSolveSum / totalVolume) * 10) / 10 : 0,
   };
 }
 

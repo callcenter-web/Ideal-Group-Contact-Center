@@ -30,7 +30,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint } from "../types";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { matchesStationCodeOrName, isStationContacted } from "../utils/stationUtils";
 import { parseComplaintDate } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 
@@ -95,20 +95,6 @@ export default function CallCenterSLAReportModal({
         .filter(Boolean)
     )
   ).sort().reverse();
-
-  // Helper: check if station has contacted / actioned the customer
-  const isStationContacted = (c: Complaint) => {
-    if (c.stationResponseStatus === "Rejected") return false;
-    return !!(
-      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
-      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
-      c.serviceStationContactStatus === "CONTACTED" ||
-      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
-      c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center" ||
-      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
-    );
-  };
 
   // Extract available distinct Call Center Officers / Agents from complaints dataset (only for station-contacted complaints)
   const availableOfficers = Array.from(

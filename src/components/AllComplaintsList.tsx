@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { Complaint, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName } from "../utils/stationUtils";
+import { matchesStationCodeOrName, isStationContacted } from "../utils/stationUtils";
 import { getComplaintAgeInfo, getAgeFormulaBreakdown, parseComplaintDate, isComplaintTimeFrozen } from "../utils/agingUtils";
 import { getEffectiveStationContactStatus } from "../utils/supabaseSanitizer";
 
@@ -93,20 +93,6 @@ export default function AllComplaintsList({
   // Delete Confirmation State
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
-
-  // Helper: check if station has contacted/actioned customer
-  const isStationContacted = (c: Complaint) => {
-    if (c.stationResponseStatus === "Rejected") return false;
-    return !!(
-      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
-      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
-      c.serviceStationContactStatus === "CONTACTED" ||
-      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
-      c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center" ||
-      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
-    );
-  };
 
   // Filter logic
   const filteredComplaints = useMemo(() => {
@@ -935,12 +921,12 @@ export default function AllComplaintsList({
                       <td className="py-2.5 px-3 bg-slate-50/70">
                         {isRejectedByCallCenter ? (
                           <div className="space-y-1">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
-                              <RotateCcw className="h-2.5 w-2.5 text-rose-600 shrink-0" />
-                              RE-CONTACT REQUIRED
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-600 text-white shadow-xs animate-pulse">
+                              <RotateCcw className="h-2.5 w-2.5 shrink-0" />
+                              REJECTED (RE-ACTION REQUIRED)
                             </span>
                             <span className="text-[9px] text-rose-700 font-extrabold block">
-                              Rejected by Call Center
+                              Rejected by Call Center → SC Pending
                             </span>
                           </div>
                         ) : contactStatus === "CONTACTED" ? (

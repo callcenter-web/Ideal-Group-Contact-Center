@@ -11,6 +11,7 @@ import {
   normalizeComplaintFromSupabase, 
   performResilientSupabaseUpsert 
 } from "./src/utils/supabaseSanitizer";
+import { generateSlaDashboardPdf } from "./src/utils/slaPdfGenerator";
 
 dotenv.config();
 
@@ -592,30 +593,42 @@ Ensure your response is highly detailed, professional, and directly actionable f
     }
   });
 
-  // API Route to Generate and Download SLA Performance Dashboard PDF
-  app.get("/api/download-sla-pdf", (req, res) => {
-    const pdfPath = path.join(process.cwd(), "SLA_Performance_Dashboard.pdf");
-    const publicPdfPath = path.join(process.cwd(), "public", "SLA_Performance_Dashboard.pdf");
-
-    const targetPath = fs.existsSync(pdfPath) ? pdfPath : (fs.existsSync(publicPdfPath) ? publicPdfPath : null);
-
-    if (targetPath) {
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
-      return res.sendFile(targetPath);
-    } else {
-      try {
-        const { execSync } = require("child_process");
-        execSync("python3 generate_sla_dashboard.py", { stdio: "inherit" });
-        if (fs.existsSync(pdfPath)) {
-          res.setHeader("Content-Type", "application/pdf");
-          res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
-          return res.sendFile(pdfPath);
+  // API Route to Generate and Download Dynamic SLA Performance Dashboard PDF
+  app.all("/api/download-sla-pdf", async (req, res) => {
+    try {
+      let complaintsToUse = req.body?.complaints;
+      if (!complaintsToUse || !Array.isArray(complaintsToUse) || complaintsToUse.length === 0) {
+        // Fetch from Supabase or fallback to DEMO_COMPLAINTS
+        const { data: dbData, error: dbError } = await supabase.from("complaints").select("*");
+        if (!dbError && dbData && dbData.length > 0) {
+          complaintsToUse = dbData.map(normalizeComplaintFromSupabase);
+        } else {
+          complaintsToUse = DEMO_COMPLAINTS;
         }
-      } catch (err: any) {
-        console.error("PDF generation execution error:", err);
       }
-      return res.status(404).json({ error: "SLA_Performance_Dashboard.pdf is being generated. Please retry in a few seconds." });
+
+      const options = {
+        stationFilter: req.query.station as string || req.body?.stationFilter || "all",
+        reportDate: req.query.date as string || req.body?.reportDate || new Date().toISOString().split("T")[0],
+      };
+
+      const doc = generateSlaDashboardPdf(complaintsToUse, options);
+      const pdfArrayBuffer = doc.output("arraybuffer");
+      const pdfBuffer = Buffer.from(pdfArrayBuffer);
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=SLA_Performance_Dashboard_${options.reportDate}.pdf`);
+      return res.send(pdfBuffer);
+    } catch (err: any) {
+      console.error("PDF generation server error:", err);
+      // Fallback to static file if exists
+      const pdfPath = path.join(process.cwd(), "SLA_Performance_Dashboard.pdf");
+      if (fs.existsSync(pdfPath)) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "attachment; filename=SLA_Performance_Dashboard.pdf");
+        return res.sendFile(pdfPath);
+      }
+      return res.status(500).json({ error: "Failed to generate dynamic SLA PDF", details: err.message });
     }
   });
 

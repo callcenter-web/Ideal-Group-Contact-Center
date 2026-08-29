@@ -37,7 +37,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate, CaseHistoryEntry, ContactAttemptEvent } from "./types";
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
-import { matchesStationCodeOrName, isComplaintRejected, isStationContacted } from "./utils/stationUtils";
+import { matchesStationCodeOrName, isComplaintRejected, isStationContacted as isStationContactedUtil } from "./utils/stationUtils";
 import { sanitizeComplaintDates, parseComplaintDate } from "./utils/agingUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -1511,24 +1511,7 @@ export default function App() {
 
   // Helper to determine if service station has contacted/actioned the customer
   const isStationContacted = (c: Complaint) => {
-    if (
-      c.stationResponseStatus === "Rejected" ||
-      c.stationResponseStatus === "Returned to Service Station" ||
-      c.stationResponseStatus === "Rejected by Call Center" ||
-      c.feedbackStatus === "Returned to Service Station" ||
-      c.finalStatus === "Returned to Service Station"
-    ) {
-      return false;
-    }
-    return !!(
-      (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
-      (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
-      c.serviceStationContactStatus === "CONTACTED" ||
-      (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
-      c.status === "Contacted" ||
-      c.stationResponseStatus === "Submitted to Call Center" ||
-      (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
-    );
+    return isStationContactedUtil(c);
   };
 
   // Helper to determine if a complaint is completed/resolved

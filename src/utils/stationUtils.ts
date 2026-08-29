@@ -32,6 +32,31 @@ export function matchesStationCodeOrName(complaintStation: string | undefined | 
 }
 
 /**
+ * Helper to check if a complaint has been contacted by the Call Center OR is resolved/closed.
+ * This is used to scope executive and graphical breakdown summaries to only contacted and closed records.
+ */
+export function isContactedByCallCenterOrClosed(c: Complaint | null | undefined): boolean {
+  if (!c) return false;
+
+  // 1. Closed or Resolved cases
+  if (isResolvedCheck(c)) return true;
+  if (c.status === "Resolved" || c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") return true;
+  if (c.finalStatus === "Closed" || c.finalStatus === "Completed" || c.finalStatus === "Resolved" || c.finalStatus === "Unreachable") return true;
+  
+  // 2. Call Center Contact recorded
+  if (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) return true;
+  if (c.firstAttemptCallStatus && c.firstAttemptCallStatus.trim().length > 0 && c.firstAttemptCallStatus !== "None") return true;
+  if (c.secondAttemptCallStatus && c.secondAttemptCallStatus.trim().length > 0 && c.secondAttemptCallStatus !== "None") return true;
+  if (c.secondAttemptFeedbackStatus && c.secondAttemptFeedbackStatus.trim().length > 0) return true;
+  if (c.feedbackStatus && c.feedbackStatus.trim().length > 0 && c.feedbackStatus !== "Pending" && c.feedbackStatus !== "Follow-up Required") return true;
+  if (c.callCenterFinalSatisfaction && c.callCenterFinalSatisfaction.trim().length > 0) return true;
+  if (c.callCenterFinalRemarks && c.callCenterFinalRemarks.trim().length > 0) return true;
+  if (c.status === "Contacted") return true;
+
+  return false;
+}
+
+/**
  * Robustly checks if a complaint has an active unresolved rejection/return to the Service Station.
  * Historical rejections on resolved complaints are not considered active rejections.
  */
@@ -60,7 +85,7 @@ export function isComplaintRejected(c: Complaint | null | undefined): boolean {
 
 /**
  * Helper to check if a complaint has been contacted/actioned by the Service Station/Center.
- * Returns true ONLY IF Contacted by Service Center = YES.
+ * Returns true ONLY IF Contacted by Service Station = YES.
  */
 export function isStationContacted(c: Complaint | null | undefined): boolean {
   if (!c) return false;
@@ -70,11 +95,8 @@ export function isStationContacted(c: Complaint | null | undefined): boolean {
     (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
     c.serviceStationContactStatus === "CONTACTED" ||
     (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
-    c.status === "Contacted" ||
-    c.status === "Contacted — Still Dissatisfied" ||
-    c.status === "Contacted - Still Dissatisfied" ||
     c.stationResponseStatus === "Submitted to Call Center" ||
-    (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0)
+    (Array.isArray(c.contactAttempts) && c.contactAttempts.some(att => (att.actorRole === "agent" || !att.actorRole) && (att.outcome === "CONTACTED" || att.outcome === "Contacted")))
   );
 }
 

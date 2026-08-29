@@ -38,9 +38,10 @@ import {
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Complaint, StationProfile, SatisfactionLevel } from "../types";
+import { generateSlaDashboardPdf } from "../utils/slaPdfGenerator";
 import { STATIONS } from "../demoData";
-import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible, isComplaintRejected } from "../utils/stationUtils";
-import { parseComplaintDate, formatAndSanitizeDate } from "../utils/agingUtils";
+import { matchesStationCodeOrName, isStationContacted, getCallCenterSLAStatus, isCallCenterSlaEligible, isComplaintRejected, isContactedByCallCenterOrClosed } from "../utils/stationUtils";
+import { parseComplaintDate, formatAndSanitizeDate, isComplaintTimeFrozen, getComplaintAgeInfo } from "../utils/agingUtils";
 import { sanitizeDocOklch } from "../utils/pdfExportUtils";
 import { getActiveCycleAgeInfo, isComplaintResolved as isComplaintResolvedUtil, calculateNationalReportSummary } from "../utils/workflowTallyUtils";
 
@@ -194,8 +195,37 @@ export default function ReportsPanel({
     return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
   };
 
-  // Helper: compute aging details for a single complaint using active cycle working days
+  // Helper: compute aging details for a single complaint using active cycle working days or frozen duration
   const getComplaintAging = (c: Complaint) => {
+    if (isComplaintTimeFrozen(c)) {
+      const ageInfo = getComplaintAgeInfo(c);
+      const days = ageInfo.days;
+      let colorClass = "";
+      let textClass = "";
+      let bgClass = "";
+      let label = ageInfo.category;
+
+      if (days <= 3) {
+        colorClass = "border-emerald-200 text-emerald-700 bg-emerald-50";
+        textClass = "text-emerald-600";
+        bgClass = "bg-emerald-500";
+      } else if (days <= 5) {
+        colorClass = "border-amber-200 text-amber-700 bg-amber-50";
+        textClass = "text-amber-600";
+        bgClass = "bg-amber-500";
+      } else if (days <= 10) {
+        colorClass = "border-orange-200 text-orange-700 bg-orange-50";
+        textClass = "text-orange-600";
+        bgClass = "bg-orange-500";
+      } else {
+        colorClass = "border-rose-200 text-rose-700 bg-rose-50";
+        textClass = "text-rose-600";
+        bgClass = "bg-rose-500";
+      }
+
+      return { days, colorClass, textClass, bgClass, label, isFrozen: true };
+    }
+
     const ageInfo = getActiveCycleAgeInfo(c, new Date());
     const days = ageInfo.workingDays;
     
@@ -222,7 +252,7 @@ export default function ReportsPanel({
       bgClass = "bg-rose-500";
     }
 
-    return { days, colorClass, textClass, bgClass, label };
+    return { days, colorClass, textClass, bgClass, label, isFrozen: false };
   };
 
   // Unique categories for filtering
@@ -284,17 +314,35 @@ export default function ReportsPanel({
 
   const totalInScope = activeScopeComplaints.length;
   
-  let greenCount = 0; // 0-3 Days (New)
-  let yellowCount = 0; // 3-5 Days (Pending)
-  let orangeCount = 0; // 6-10 Days (Escalated)
-  let redCount = 0; // >10 Days (Critical)
+  // Filter activeScopeComplaints to only frozen times (resolved / closed / timer-frozen cases)
+  const frozenComplaintsInScope = activeScopeComplaints.filter(c => isComplaintTimeFrozen(c));
+  const totalFrozenInScope = frozenComplaintsInScope.length;
 
-  activeScopeComplaints.forEach((c) => {
+  let greenCount = 0; // 0-3 Days (Frozen)
+  let yellowCount = 0; // 3-5 Days (Frozen)
+  let orangeCount = 0; // 6-10 Days (Frozen)
+  let redCount = 0; // >10 Days (Frozen)
+
+  const greenList: Complaint[] = [];
+  const yellowList: Complaint[] = [];
+  const orangeList: Complaint[] = [];
+  const redList: Complaint[] = [];
+
+  frozenComplaintsInScope.forEach((c) => {
     const { days } = getComplaintAging(c);
-    if (days <= 3) greenCount++;
-    else if (days <= 5) yellowCount++;
-    else if (days <= 10) orangeCount++;
-    else redCount++;
+    if (days <= 3) {
+      greenCount++;
+      greenList.push(c);
+    } else if (days <= 5) {
+      yellowCount++;
+      yellowList.push(c);
+    } else if (days <= 10) {
+      orangeCount++;
+      orangeList.push(c);
+    } else {
+      redCount++;
+      redList.push(c);
+    }
   });
 
   // Helper for overall list aging metrics
@@ -547,55 +595,16 @@ export default function ReportsPanel({
   const handleDownloadStationGraphicalPDF = async () => {
     setIsGeneratingStationPDF(true);
     try {
-      const pdfRoot = document.getElementById("executive-management-sla-pdf-root");
-      if (!pdfRoot) {
-        alert("Executive PDF root element not found.");
-        return;
-      }
-
-      // Briefly render pdfRoot for html2canvas
-      pdfRoot.style.display = "block";
-
-      const pageElements = pdfRoot.querySelectorAll<HTMLElement>(".executive-pdf-page");
-      if (!pageElements || pageElements.length === 0) {
-        alert("No PDF page elements found.");
-        pdfRoot.style.display = "none";
-        return;
-      }
-
-      const pdf = new jsPDF("l", "mm", "a4"); // Landscape A4 = 297mm x 210mm
-      const pdfWidth = 297;
-      const pdfHeight = 210;
-
-      for (let i = 0; i < pageElements.length; i++) {
-        const pageEl = pageElements[i];
-
-        const canvas = await html2canvas(pageEl, {
-          scale: 2,
-          useCORS: true,
-          backgroundColor: "#ffffff",
-          logging: false,
-          onclone: (clonedDoc) => {
-            sanitizeDocOklch(clonedDoc);
-          },
-        });
-
-        const imgData = canvas.toDataURL("image/png");
-        if (i > 0) {
-          pdf.addPage("a4", "l");
-        }
-        pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      }
-
-      pdfRoot.style.display = "none";
-
       const today = new Date().toISOString().split("T")[0];
-      pdf.save(`Executive_SLA_Performance_Report_${selectedStationCode}_${today}.pdf`);
+      const doc = generateSlaDashboardPdf(filteredComplaints, {
+        stationFilter: selectedStationCode,
+        reportDate: today,
+      });
+
+      doc.save(`Executive_SLA_Performance_Report_${selectedStationCode}_${today}.pdf`);
     } catch (err) {
       console.error("Failed to export executive SLA PDF:", err);
       alert("Error generating PDF. Please try again.");
-      const pdfRoot = document.getElementById("executive-management-sla-pdf-root");
-      if (pdfRoot) pdfRoot.style.display = "none";
     } finally {
       setIsGeneratingStationPDF(false);
     }
@@ -799,11 +808,11 @@ export default function ReportsPanel({
       pdf.setTextColor(6, 95, 70);
       pdf.text("New (0-3 Days)", 15, cardY + 5);
       pdf.setFontSize(14);
-      const greenPct = totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0;
+      const greenPct = totalFrozenInScope > 0 ? Math.round((greenCount / totalFrozenInScope) * 100) : 0;
       pdf.text(`${greenCount}`, 15, cardY + 13);
       pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${greenPct}% of total`, 15, cardY + 18);
+      pdf.text(`${greenPct}% of frozen`, 15, cardY + 18);
 
       // Card 2: Pending (3-5 Days)
       pdf.setFillColor(254, 243, 199);
@@ -814,11 +823,11 @@ export default function ReportsPanel({
       pdf.setTextColor(146, 64, 14);
       pdf.text("Pending (3-5 Days)", 12 + cardW + gap + 3, cardY + 5);
       pdf.setFontSize(14);
-      const yellowPct = totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0;
+      const yellowPct = totalFrozenInScope > 0 ? Math.round((yellowCount / totalFrozenInScope) * 100) : 0;
       pdf.text(`${yellowCount}`, 12 + cardW + gap + 3, cardY + 13);
       pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${yellowPct}% of total`, 12 + cardW + gap + 3, cardY + 18);
+      pdf.text(`${yellowPct}% of frozen`, 12 + cardW + gap + 3, cardY + 18);
 
       // Card 3: Escalated (6-10 Days)
       pdf.setFillColor(255, 247, 237);
@@ -829,11 +838,11 @@ export default function ReportsPanel({
       pdf.setTextColor(194, 65, 12);
       pdf.text("Escalated (6-10 Days)", 12 + (cardW + gap) * 2 + 3, cardY + 5);
       pdf.setFontSize(14);
-      const orangePct = totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0;
+      const orangePct = totalFrozenInScope > 0 ? Math.round((orangeCount / totalFrozenInScope) * 100) : 0;
       pdf.text(`${orangeCount}`, 12 + (cardW + gap) * 2 + 3, cardY + 13);
       pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${orangePct}% of total`, 12 + (cardW + gap) * 2 + 3, cardY + 18);
+      pdf.text(`${orangePct}% of frozen`, 12 + (cardW + gap) * 2 + 3, cardY + 18);
 
       // Card 4: Critical (>10 Days)
       pdf.setFillColor(254, 242, 242);
@@ -844,11 +853,11 @@ export default function ReportsPanel({
       pdf.setTextColor(153, 27, 27);
       pdf.text("Critical (>10 Days)", 12 + (cardW + gap) * 3 + 3, cardY + 5);
       pdf.setFontSize(14);
-      const redPct = totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0;
+      const redPct = totalFrozenInScope > 0 ? Math.round((redCount / totalFrozenInScope) * 100) : 0;
       pdf.text(`${redCount}`, 12 + (cardW + gap) * 3 + 3, cardY + 13);
       pdf.setFontSize(7);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${redPct}% of total`, 12 + (cardW + gap) * 3 + 3, cardY + 18);
+      pdf.text(`${redPct}% of frozen`, 12 + (cardW + gap) * 3 + 3, cardY + 18);
 
       // Visual Graphical progress charts Section at Y=92
       const chartY = 92;
@@ -2091,10 +2100,12 @@ export default function ReportsPanel({
                 ? { code: "ALL", name: "Overall Summary (All Service Stations)" }
                 : STATIONS.find(s => s.code === selectedStationCode) || STATIONS[0];
               
-              const activeStationComplaints = selectedStationCode === "all"
+              const rawStationComplaints = selectedStationCode === "all"
                 ? filteredComplaints
                 : filteredComplaints.filter(c => matchesStationCodeOrName(c.station, selectedStation.code));
               
+              // Only get contacted ones by call center and closed ones for the summary
+              const activeStationComplaints = rawStationComplaints.filter(c => isContactedByCallCenterOrClosed(c));
               const activeStationTotal = activeStationComplaints.length;
 
               // Aging breakdown
@@ -2116,39 +2127,77 @@ export default function ReportsPanel({
               const stationEscalatedPct = activeStationTotal > 0 ? Math.round((stationEscalatedCount / activeStationTotal) * 100) : 0;
               const stationCriticalPct = activeStationTotal > 0 ? Math.round((stationCriticalCount / activeStationTotal) * 100) : 0;
 
-              // Satisfaction breakdown
-              const stationVerySatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Satisfied").length;
-              const stationSatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Satisfied").length;
-              const stationNeutral = activeStationComplaints.filter(c => c.currentSatisfaction === "Neutral").length;
-              const stationDissatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Dissatisfied").length;
-              const stationVeryDissatisfied = activeStationComplaints.filter(c => c.currentSatisfaction === "Very Dissatisfied").length;
+              // Clean mutual satisfaction breakdown
+              let stationSatisfiedTotal = 0;
+              let stationDissatisfiedTotal = 0;
+              let stationNeutralTotal = 0;
 
-              const stationSatisfiedTotal = stationVerySatisfied + stationSatisfied;
-              const stationDissatisfiedTotal = stationVeryDissatisfied + stationVeryDissatisfied;
+              activeStationComplaints.forEach((c) => {
+                const isSatisfied = 
+                  c.currentSatisfaction === "Satisfied" || 
+                  c.currentSatisfaction === "Very Satisfied" || 
+                  c.callCenterFinalSatisfaction === "Satisfied" ||
+                  c.callCenterFinalSatisfaction === "Very Satisfied" ||
+                  c.feedbackStatus === "Satisfied" || 
+                  c.feedbackStatus === "Satisfied After Resolution" ||
+                  c.firstAttemptCallStatus === "Satisfied" ||
+                  c.secondAttemptFeedbackStatus === "Satisfied";
+
+                const isDissatisfied = 
+                  !isSatisfied && (
+                    c.currentSatisfaction === "Dissatisfied" || 
+                    c.currentSatisfaction === "Very Dissatisfied" || 
+                    c.callCenterFinalSatisfaction === "Dissatisfied" ||
+                    c.callCenterFinalSatisfaction === "Very Dissatisfied" ||
+                    c.feedbackStatus === "Still Dissatisfied" ||
+                    c.feedbackStatus === "Not Satisfied" ||
+                    c.secondAttemptFeedbackStatus === "Not Satisfied" ||
+                    c.secondAttemptFeedbackStatus === "No solution Received" ||
+                    c.secondAttemptFeedbackStatus === "No Solution Received"
+                  );
+
+                const isNeutral = 
+                  !isSatisfied && !isDissatisfied && (
+                    c.currentSatisfaction === "Neutral" || 
+                    c.callCenterFinalSatisfaction === "Neutral"
+                  );
+
+                if (isSatisfied) {
+                  stationSatisfiedTotal++;
+                } else if (isDissatisfied) {
+                  stationDissatisfiedTotal++;
+                } else if (isNeutral) {
+                  stationNeutralTotal++;
+                }
+              });
 
               const stationSatisfactionRate = activeStationTotal > 0 ? Math.round((stationSatisfiedTotal / activeStationTotal) * 100) : 0;
               const stationDissatisfiedRate = activeStationTotal > 0 ? Math.round((stationDissatisfiedTotal / activeStationTotal) * 100) : 0;
-              const stationNeutralRate = activeStationTotal > 0 ? Math.round((stationNeutral / activeStationTotal) * 100) : 0;
+              const stationNeutralRate = activeStationTotal > 0 ? Math.round((stationNeutralTotal / activeStationTotal) * 100) : 0;
 
-              // Active station SLA contact averages
-              const activeStationMetrics = selectedStationCode === "all"
-                ? null
-                : stationMetrics.find(sm => sm.code === selectedStationCode);
-
-              const stationAvgContact = activeStationMetrics ? activeStationMetrics.avgDaysStationContact : overallReportAging.avgDaysStationContact;
-              const ccAvgContact = activeStationMetrics ? activeStationMetrics.avgDaysCallCenterContact : overallReportAging.avgDaysCallCenterContact;
-              const solveAvgDays = activeStationMetrics ? activeStationMetrics.avgDaysToSolveCase : overallReportAging.avgDaysToSolveCase;
+              // Active station SLA contact and turnaround averages calculated specifically on the contacted & closed workload
+              const stationTurnaround = getStationMetricsCalculations(activeStationComplaints);
+              const stationAvgContact = stationTurnaround.avgDaysStationContact;
+              const ccAvgContact = stationTurnaround.avgDaysCallCenterContact;
+              const solveAvgDays = stationTurnaround.avgDaysToSolveCase;
 
               return (
                 <div className="space-y-4">
                   {/* Header & Quick Selector Pills */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-3 border-slate-200 dark:border-slate-800">
                     <div>
-                      <h4 className={`text-sm font-black uppercase tracking-wider flex items-center gap-2 ${textTitle}`}>
-                        <Activity className="h-4 w-4 text-blue-600" />
-                        {selectedStation.code} Graphical SLA & Performance Analysis
-                      </h4>
-                      <p className={`text-xs font-bold mt-0.5 ${textSub}`}>{selectedStation.name}</p>
+                      <div className="flex items-center gap-2">
+                        <h4 className={`text-sm font-black uppercase tracking-wider flex items-center gap-2 ${textTitle}`}>
+                          <Activity className="h-4 w-4 text-blue-600" />
+                          {selectedStation.code} Graphical SLA & Performance Analysis
+                        </h4>
+                        <span className="text-[9px] font-black text-blue-700 bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded-full uppercase">
+                          Contacted & Closed Only
+                        </span>
+                      </div>
+                      <p className={`text-xs font-bold mt-0.5 ${textSub}`}>
+                        {selectedStation.name} • Filtered to {activeStationTotal} Call Center Contacted and Closed cases (from {rawStationComplaints.length} Total Received)
+                      </p>
                     </div>
 
                     {/* Quick Station Switcher Pills */}
@@ -2185,7 +2234,7 @@ export default function ReportsPanel({
                     <div className={`py-12 text-center rounded-xl border border-dashed my-4 ${
                       isDark ? "bg-slate-950/40 border-slate-800" : "bg-slate-50/50 border-slate-200"
                     }`}>
-                      <p className="text-sm font-bold text-slate-400">No matching cases for {selectedStation.name}.</p>
+                      <p className="text-sm font-bold text-slate-400">No contacted or closed cases found for {selectedStation.name}.</p>
                       <p className="text-xs text-slate-400 mt-1">Try resetting search filters or selecting another station above.</p>
                     </div>
                   ) : (
@@ -2363,7 +2412,7 @@ export default function ReportsPanel({
           </div>
         </div>
 
-        {/* Aging Metric Summary Cards */}
+        {/* Aging Metric Summary Cards (Frozen Times Calculation) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: New */}
           <div className={`p-4 rounded-xl flex items-center justify-between border transition-all duration-300 hover:scale-[1.01] ${
@@ -2376,14 +2425,17 @@ export default function ReportsPanel({
                 <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-emerald-400/80" : "text-emerald-800"}`}>
                   New (0-3 Days)
                 </span>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[100px] ${
                   isDark ? "text-emerald-300 bg-emerald-950/80 border-emerald-800" : "text-emerald-800 bg-emerald-100 border-emerald-300"
                 }`} title={activeScopeTitle}>
                   {activeScopeTitle}
                 </span>
+                <span className="text-[7.5px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-emerald-200/80 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 border border-emerald-400/50">
+                  Frozen
+                </span>
               </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-emerald-400" : "text-emerald-900"}`}>{greenCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Immediate initial response speed</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-emerald-500" : "text-emerald-700"}`}>Frozen duration (≤3 days)</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-500/10 border-emerald-500/20"
@@ -2403,14 +2455,17 @@ export default function ReportsPanel({
                 <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-800"}`}>
                   Pending (3-5 Days)
                 </span>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[100px] ${
                   isDark ? "text-amber-300 bg-amber-950/80 border-amber-800" : "text-amber-800 bg-amber-100 border-amber-300"
                 }`} title={activeScopeTitle}>
                   {activeScopeTitle}
                 </span>
+                <span className="text-[7.5px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-amber-200/80 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-400/50">
+                  Frozen
+                </span>
               </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-amber-400" : "text-amber-900"}`}>{yellowCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Active customer interactions</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-amber-500" : "text-amber-700"}`}>Frozen duration (3-5 days)</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-500/10 border-amber-500/20"
@@ -2430,14 +2485,17 @@ export default function ReportsPanel({
                 <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-orange-400/80" : "text-orange-850"}`}>
                   Escalated (6-10 Days)
                 </span>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[100px] ${
                   isDark ? "text-orange-300 bg-orange-950/80 border-orange-800" : "text-orange-800 bg-orange-100 border-orange-300"
                 }`} title={activeScopeTitle}>
                   {activeScopeTitle}
                 </span>
+                <span className="text-[7.5px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-orange-200/80 dark:bg-orange-900/60 text-orange-800 dark:text-orange-200 border border-orange-400/50">
+                  Frozen
+                </span>
               </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-orange-400" : "text-orange-900"}`}>{orangeCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-orange-500" : "text-orange-700"}`}>Forwarded for management view</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-orange-500" : "text-orange-700"}`}>Frozen duration (6-10 days)</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-orange-500/10 border-orange-500/20" : "bg-orange-500/10 border-orange-500/20"
@@ -2457,14 +2515,17 @@ export default function ReportsPanel({
                 <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? "text-rose-400/80" : "text-rose-800"}`}>
                   {"Critical (>10 Days)"}
                 </span>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[110px] ${
+                <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-[100px] ${
                   isDark ? "text-rose-300 bg-rose-950/80 border-rose-800" : "text-rose-800 bg-rose-100 border-rose-300"
                 }`} title={activeScopeTitle}>
                   {activeScopeTitle}
                 </span>
+                <span className="text-[7.5px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-rose-200/80 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 border border-rose-400/50">
+                  Frozen
+                </span>
               </div>
               <p className={`text-2xl font-black mt-1 ${isDark ? "text-rose-400" : "text-rose-900"}`}>{redCount}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>High-priority aging tickets</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${isDark ? "text-rose-500" : "text-rose-700"}`}>Frozen duration (&gt;10 days)</p>
             </div>
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
               isDark ? "bg-rose-500/10 border-rose-500/20" : "bg-rose-500/10 border-rose-500/20"
@@ -2481,9 +2542,14 @@ export default function ReportsPanel({
           <div className={`p-4 rounded-xl border shadow-xs flex flex-col justify-between transition-all duration-500 ${cardBg}`}>
             <div>
               <div className={`flex items-center justify-between mb-3.5 border-b pb-1.5 ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
-                  Aging SLA Proportions
-                </h4>
+                <div>
+                  <h4 className={`text-[11px] font-black uppercase tracking-wider ${textTitle}`}>
+                    Aging SLA Proportions
+                  </h4>
+                  <span className="text-[9px] font-bold text-slate-400">
+                    Frozen Times Only ({totalFrozenInScope} of {totalInScope})
+                  </span>
+                </div>
                 <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border truncate max-w-[120px] ${
                   isDark ? "text-blue-400 bg-blue-950/40 border-blue-900/30" : "text-blue-700 bg-blue-50 border-blue-200"
                 }`} title={activeScopeTitle}>
@@ -2495,12 +2561,12 @@ export default function ReportsPanel({
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>0-3 Days (New)</span>
-                    <span>{greenCount} ({totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0}%)</span>
+                    <span>{greenCount} ({totalFrozenInScope > 0 ? Math.round((greenCount / totalFrozenInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${totalInScope > 0 ? Math.round((greenCount / totalInScope) * 100) : 0}%` }}
+                      style={{ width: `${totalFrozenInScope > 0 ? Math.round((greenCount / totalFrozenInScope) * 100) : 0}%` }}
                     />
                   </div>
                 </div>
@@ -2509,12 +2575,12 @@ export default function ReportsPanel({
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>3-5 Days (Pending)</span>
-                    <span>{yellowCount} ({totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0}%)</span>
+                    <span>{yellowCount} ({totalFrozenInScope > 0 ? Math.round((yellowCount / totalFrozenInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${totalInScope > 0 ? Math.round((yellowCount / totalInScope) * 100) : 0}%` }}
+                      style={{ width: `${totalFrozenInScope > 0 ? Math.round((yellowCount / totalFrozenInScope) * 100) : 0}%` }}
                     />
                   </div>
                 </div>
@@ -2523,12 +2589,12 @@ export default function ReportsPanel({
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>6-10 Days (Escalated)</span>
-                    <span>{orangeCount} ({totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0}%)</span>
+                    <span>{orangeCount} ({totalFrozenInScope > 0 ? Math.round((orangeCount / totalFrozenInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-orange-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${totalInScope > 0 ? Math.round((orangeCount / totalInScope) * 100) : 0}%` }}
+                      style={{ width: `${totalFrozenInScope > 0 ? Math.round((orangeCount / totalFrozenInScope) * 100) : 0}%` }}
                     />
                   </div>
                 </div>
@@ -2537,19 +2603,19 @@ export default function ReportsPanel({
                 <div>
                   <div className={`flex justify-between text-xs font-bold mb-1 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                     <span>&gt;10 Days (Critical)</span>
-                    <span>{redCount} ({totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0}%)</span>
+                    <span>{redCount} ({totalFrozenInScope > 0 ? Math.round((redCount / totalFrozenInScope) * 100) : 0}%)</span>
                   </div>
                   <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
                     <div 
                       className="bg-rose-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${totalInScope > 0 ? Math.round((redCount / totalInScope) * 100) : 0}%` }}
+                      style={{ width: `${totalFrozenInScope > 0 ? Math.round((redCount / totalFrozenInScope) * 100) : 0}%` }}
                     />
                   </div>
                 </div>
               </div>
             </div>
             <p className={`text-[9px] font-bold mt-4 pt-1.5 border-t ${isDark ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"}`}>
-              SLA levels represent date-to-date aging analysis thresholds for {activeScopeTitle}.
+              SLA levels calculated exclusively for frozen time records ({totalFrozenInScope} cases) for {activeScopeTitle}.
             </p>
           </div>
 
