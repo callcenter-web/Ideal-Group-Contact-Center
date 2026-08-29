@@ -2233,7 +2233,7 @@ NOTIFY pgrst, 'reload schema';
                 id="btn-call-center-sla-report"
                 type="button"
                 onClick={() => setShowSLAReportModal(true)}
-                className="mb-1 py-1.5 px-3.5 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white font-extrabold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap border border-blue-600/40"
+                className="mb-1 py-1.5 px-3.5 bg-blue-700 hover:bg-blue-800 text-white font-extrabold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap border border-blue-600/40"
                 title="View Service Station & Call Center Analytics Reports"
               >
                 <ShieldAlert className="h-3.5 w-3.5 text-amber-300" />

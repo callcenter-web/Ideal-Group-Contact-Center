@@ -249,23 +249,25 @@ export default function ServiceStationContactMonitor({
     <div id="service-station-contact-monitor" className="space-y-4">
       
       {/* Header Banner */}
-      <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm ${
-        isDark ? "bg-slate-900/90 border-slate-800 text-slate-100" : "bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-slate-800 text-white"
+      <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-xs transition-colors duration-300 ${
+        isDark ? "bg-slate-900/90 border-slate-800/90 text-slate-100" : "bg-slate-50/80 border-slate-200 text-slate-800"
       }`}>
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-blue-600/30 border border-blue-400/30 text-blue-400">
+          <div className={`p-2.5 rounded-lg border ${
+            isDark ? "bg-blue-950/40 border-blue-800/50 text-blue-400" : "bg-blue-100 border-blue-200 text-blue-700"
+          }`}>
             <PhoneCall className="h-6 w-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-black uppercase tracking-wider text-white">
+              <h2 className={`text-base font-black uppercase tracking-wider ${isDark ? "text-white" : "text-slate-900"}`}>
                 Service Station Customer Contact Monitor
               </h2>
-              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
                 Live Status
               </span>
             </div>
-            <p className="text-xs text-slate-300 mt-0.5">
+            <p className={`text-xs mt-0.5 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
               Real-time operational monitoring of customer contact actions, call attempts, unreachable logs, and SLA compliance.
             </p>
           </div>
@@ -273,11 +275,15 @@ export default function ServiceStationContactMonitor({
 
         {/* Station Filter Dropdown in Header */}
         <div className="flex items-center gap-2 self-stretch md:self-auto">
-          <span className="text-[11px] font-bold text-slate-300 uppercase whitespace-nowrap">Filter Station:</span>
+          <span className={`text-[11px] font-bold uppercase whitespace-nowrap ${isDark ? "text-slate-400" : "text-slate-600"}`}>Filter Station:</span>
           <select
             value={activeStationFilter}
             onChange={(e) => onSelectStationFilter(e.target.value)}
-            className="bg-slate-800 text-white border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-blue-400 cursor-pointer"
+            className={`border rounded-lg px-3 py-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer transition-colors ${
+              isDark 
+                ? "bg-slate-950 text-slate-100 border-slate-800" 
+                : "bg-white text-slate-800 border-slate-300 shadow-xs"
+            }`}
           >
             <option value="All">All Service Stations ({complaints.length})</option>
             {STATIONS.map((st) => {

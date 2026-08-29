@@ -110,36 +110,50 @@ export default function StationOverview({
       </div>
 
       {/* National Overview Strip */}
-      <div className={`p-3.5 rounded-xl border grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 shadow-xs ${
-        isDark ? "bg-slate-900/90 border-slate-800 text-slate-100" : "bg-gradient-to-r from-blue-50/50 to-indigo-50/50 border-blue-200/80 text-slate-800"
+      <div className={`p-3.5 rounded-xl border grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 shadow-xs transition-colors duration-300 ${
+        isDark ? "bg-slate-900/90 border-slate-800/90 text-slate-100 shadow-black/20" : "bg-slate-50/80 border-slate-200 text-slate-800 shadow-slate-100"
       }`}>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Total Cases</span>
-          <span className="text-base font-black text-slate-900 dark:text-white mt-0.5 block">{nationalSummary.totalComplaints}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-slate-950/50 border-slate-800/80" : "bg-white border-slate-200/80"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-slate-400" : "text-slate-500"}`}>Total Cases</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-slate-100" : "text-slate-900"}`}>{nationalSummary.totalComplaints}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-orange-600 block">Pending Action</span>
-          <span className="text-base font-black text-orange-600 mt-0.5 block">{nationalSummary.totalPending}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-amber-950/20 border-amber-900/40" : "bg-white border-amber-200/70"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-amber-400" : "text-amber-700"}`}>Pending Action</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-amber-400" : "text-amber-600"}`}>{nationalSummary.totalPending}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 block">Resolved</span>
-          <span className="text-base font-black text-emerald-600 mt-0.5 block">{nationalSummary.totalResolved}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-emerald-950/20 border-emerald-900/40" : "bg-white border-emerald-200/70"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-emerald-400" : "text-emerald-700"}`}>Resolved</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>{nationalSummary.totalResolved}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-rose-600 block">Not Contacted</span>
-          <span className="text-base font-black text-rose-600 mt-0.5 block">{nationalSummary.totalNotContacted}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-rose-950/20 border-rose-900/40" : "bg-white border-rose-200/70"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-rose-400" : "text-rose-700"}`}>Not Contacted</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-rose-400" : "text-rose-600"}`}>{nationalSummary.totalNotContacted}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 block">Contacted</span>
-          <span className="text-base font-black text-blue-600 mt-0.5 block">{nationalSummary.totalContacted}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-blue-950/20 border-blue-900/40" : "bg-white border-blue-200/70"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-blue-400" : "text-blue-700"}`}>Contacted</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-blue-400" : "text-blue-600"}`}>{nationalSummary.totalContacted}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center">
-          <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 block">Re-Action Req.</span>
-          <span className="text-base font-black text-rose-700 mt-0.5 block">{nationalSummary.totalRejectedReAction}</span>
+        <div className={`p-2 rounded-lg border text-center transition-colors ${
+          isDark ? "bg-rose-950/25 border-rose-900/50" : "bg-white border-rose-200/80"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-rose-400" : "text-rose-700"}`}>Re-Action Req.</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-rose-400" : "text-rose-700"}`}>{nationalSummary.totalRejectedReAction}</span>
         </div>
-        <div className="p-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 text-center col-span-2 sm:col-span-1">
-          <span className="text-[9px] font-black uppercase tracking-wider text-indigo-600 block">CX Recovery</span>
-          <span className="text-base font-black text-indigo-600 mt-0.5 block">{nationalSummary.overallRecoveryRate}%</span>
+        <div className={`p-2 rounded-lg border text-center col-span-2 sm:col-span-1 transition-colors ${
+          isDark ? "bg-indigo-950/20 border-indigo-900/40" : "bg-white border-indigo-200/70"
+        }`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider block ${isDark ? "text-indigo-400" : "text-indigo-700"}`}>CX Recovery</span>
+          <span className={`text-base font-black mt-0.5 block ${isDark ? "text-indigo-400" : "text-indigo-600"}`}>{nationalSummary.overallRecoveryRate}%</span>
         </div>
       </div>
 
@@ -206,21 +220,27 @@ export default function StationOverview({
 
                 {/* Active Cycle Contact Breakdown */}
                 <div className="grid grid-cols-3 gap-1.5 mt-2 text-center text-[10px]">
-                  <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 p-1.5 rounded-md">
-                    <span className="text-[8px] font-black uppercase text-rose-700 dark:text-rose-400 block">Not Contacted</span>
-                    <span className={`font-black ${stat.notContacted > 0 ? "text-rose-700 dark:text-rose-400 font-black text-xs" : "text-slate-400"}`}>
+                  <div className={`p-1.5 rounded-md border transition-colors ${
+                    isDark ? "bg-rose-950/20 border-rose-900/40 text-rose-400" : "bg-rose-50 border-rose-200 text-rose-700"
+                  }`}>
+                    <span className={`text-[8px] font-black uppercase block ${isDark ? "text-rose-400" : "text-rose-700"}`}>Not Contacted</span>
+                    <span className={`font-black ${stat.notContacted > 0 ? (isDark ? "text-rose-400" : "text-rose-700") + " font-black text-xs" : isDark ? "text-slate-600" : "text-slate-400"}`}>
                       {stat.notContacted}
                     </span>
                   </div>
-                  <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 p-1.5 rounded-md">
-                    <span className="text-[8px] font-black uppercase text-emerald-700 dark:text-emerald-400 block">Contacted</span>
-                    <span className={`font-black ${stat.contacted > 0 ? "text-emerald-700 dark:text-emerald-400 font-black text-xs" : "text-slate-400"}`}>
+                  <div className={`p-1.5 rounded-md border transition-colors ${
+                    isDark ? "bg-emerald-950/20 border-emerald-900/40 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  }`}>
+                    <span className={`text-[8px] font-black uppercase block ${isDark ? "text-emerald-400" : "text-emerald-700"}`}>Contacted</span>
+                    <span className={`font-black ${stat.contacted > 0 ? (isDark ? "text-emerald-400" : "text-emerald-700") + " font-black text-xs" : isDark ? "text-slate-600" : "text-slate-400"}`}>
                       {stat.contacted}
                     </span>
                   </div>
-                  <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-1.5 rounded-md">
-                    <span className="text-[8px] font-black uppercase text-amber-700 dark:text-amber-400 block">Attempted</span>
-                    <span className={`font-black ${stat.attempted > 0 ? "text-amber-700 dark:text-amber-400 font-black text-xs" : "text-slate-400"}`}>
+                  <div className={`p-1.5 rounded-md border transition-colors ${
+                    isDark ? "bg-amber-950/20 border-amber-900/40 text-amber-400" : "bg-amber-50 border-amber-200 text-amber-700"
+                  }`}>
+                    <span className={`text-[8px] font-black uppercase block ${isDark ? "text-amber-400" : "text-amber-700"}`}>Attempted</span>
+                    <span className={`font-black ${stat.attempted > 0 ? (isDark ? "text-amber-400" : "text-amber-700") + " font-black text-xs" : isDark ? "text-slate-600" : "text-slate-400"}`}>
                       {stat.attempted}
                     </span>
                   </div>
@@ -230,11 +250,15 @@ export default function StationOverview({
                 {stat.rejectedReAction > 0 && (
                   <div
                     onClick={() => onSelectStation(stat.stationCode)}
-                    className="mt-2.5 bg-rose-50 border border-rose-300 rounded-lg p-2 text-center flex items-center justify-between cursor-pointer hover:bg-rose-100/80 transition-all shadow-2xs"
+                    className={`mt-2.5 border rounded-lg p-2 text-center flex items-center justify-between cursor-pointer transition-all shadow-2xs ${
+                      isDark 
+                        ? "bg-rose-950/30 border-rose-900/60 text-rose-300 hover:bg-rose-950/50" 
+                        : "bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100/80"
+                    }`}
                     title="Click to manage re-action queue for this station"
                   >
-                    <span className="text-[10px] font-black text-rose-800 uppercase flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3 text-rose-600 shrink-0" />
+                    <span className={`text-[10px] font-black uppercase flex items-center gap-1 ${isDark ? "text-rose-300" : "text-rose-800"}`}>
+                      <AlertTriangle className="h-3 w-3 text-rose-500 shrink-0" />
                       {stat.rejectedReAction} Response{stat.rejectedReAction > 1 ? "s" : ""} Rejected
                     </span>
                     <span className="text-[9px] bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">
@@ -247,14 +271,14 @@ export default function StationOverview({
                 <div className="mt-4 space-y-1">
                   <div className="flex justify-between text-[10px]">
                     <span className={`font-semibold ${isDark ? "text-slate-400" : "text-slate-500"}`}>CX Recovery Rate</span>
-                    <span className={`font-bold ${isDark ? "text-red-400" : "text-blue-600"}`}>{stat.recoveryRate}%</span>
+                    <span className={`font-bold ${isDark ? "text-indigo-400" : "text-indigo-600"}`}>{stat.recoveryRate}%</span>
                   </div>
                   <div className={`w-full h-2 rounded-full overflow-hidden border ${
                     isDark ? "bg-slate-950 border-slate-800" : "bg-slate-100 border-slate-200"
                   }`}>
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
-                        isDark ? "bg-gradient-to-r from-red-600 to-green-500" : "bg-gradient-to-r from-blue-600 to-green-500"
+                        isDark ? "bg-indigo-500" : "bg-indigo-600"
                       }`}
                       style={{ width: `${Math.min(100, stat.recoveryRate)}%` }}
                     />
@@ -263,15 +287,23 @@ export default function StationOverview({
 
                 {/* Officers / Contact Info */}
                 {matchedStationProfile && (
-                  <div className="mt-3 bg-slate-50 dark:bg-slate-950/50 p-2.5 rounded-lg border border-slate-200/60 dark:border-slate-800 space-y-1">
-                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  <div className={`mt-3 p-2.5 rounded-lg border space-y-1 transition-colors ${
+                    isDark ? "bg-slate-950/60 border-slate-800/80" : "bg-slate-50 border-slate-200/60"
+                  }`}>
+                    <div className={`flex items-center justify-between text-[10px] font-bold ${
+                      isDark ? "text-slate-400" : "text-slate-500"
+                    }`}>
                       <span>Contact Email(s):</span>
-                      <span className="font-mono text-[9px] text-blue-600 dark:text-blue-400 font-extrabold truncate max-w-[170px]">
+                      <span className={`font-mono text-[9px] font-extrabold truncate max-w-[170px] ${
+                        isDark ? "text-blue-400" : "text-blue-600"
+                      }`}>
                         {matchedStationProfile.email}
                       </span>
                     </div>
                     {matchedStationProfile.officers && matchedStationProfile.officers.length > 0 && (
-                      <div className="text-[10px] text-slate-700 dark:text-slate-300 font-medium pt-0.5 border-t border-slate-200/40 dark:border-slate-800">
+                      <div className={`text-[10px] font-medium pt-0.5 border-t ${
+                        isDark ? "text-slate-300 border-slate-800" : "text-slate-700 border-slate-200/40"
+                      }`}>
                         <span className="font-bold">Manager:</span> {matchedStationProfile.officers[0].name} ({matchedStationProfile.officers[0].role})
                       </div>
                     )}
@@ -279,7 +311,9 @@ export default function StationOverview({
                 )}
 
                 {/* Station SLA Ageing Matrix (Strictly computed on Active Pending Cases) */}
-                <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                <div className={`mt-3.5 pt-3 border-t space-y-1.5 ${
+                  isDark ? "border-slate-800" : "border-slate-100"
+                }`}>
                   <div className="flex items-center justify-between">
                     <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 ${
                       isDark ? "text-slate-400" : "text-slate-600"
@@ -287,24 +321,32 @@ export default function StationOverview({
                       <Clock className="h-3 w-3 text-blue-500 shrink-0" />
                       Active Cycle SLA Matrix
                     </span>
-                    <span className="text-[9px] font-mono font-bold text-slate-500">
+                    <span className={`text-[9px] font-mono font-bold ${isDark ? "text-slate-500" : "text-slate-500"}`}>
                       Pending Sum = {stat.slaTotal}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
-                    <div className="px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold bg-emerald-50 text-emerald-800 border-emerald-300">
+                    <div className={`px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold ${
+                      isDark ? "bg-emerald-950/25 text-emerald-400 border-emerald-900/50" : "bg-emerald-50 text-emerald-800 border-emerald-300"
+                    }`}>
                       <span className="truncate mr-1 text-[9px] font-extrabold">0-3 Days (New)</span>
                       <span className="font-mono font-black">{stat.sla_0_3}</span>
                     </div>
-                    <div className="px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold bg-amber-50 text-amber-800 border-amber-300">
+                    <div className={`px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold ${
+                      isDark ? "bg-amber-950/25 text-amber-400 border-amber-900/50" : "bg-amber-50 text-amber-800 border-amber-300"
+                    }`}>
                       <span className="truncate mr-1 text-[9px] font-extrabold">3-5 Days (Pending)</span>
                       <span className="font-mono font-black">{stat.sla_3_5}</span>
                     </div>
-                    <div className="px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold bg-orange-50 text-orange-800 border-orange-300">
+                    <div className={`px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold ${
+                      isDark ? "bg-orange-950/25 text-orange-400 border-orange-900/50" : "bg-orange-50 text-orange-800 border-orange-300"
+                    }`}>
                       <span className="truncate mr-1 text-[9px] font-extrabold">6-10 Days (Escalated)</span>
                       <span className="font-mono font-black">{stat.sla_6_10}</span>
                     </div>
-                    <div className="px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold bg-rose-50 text-rose-800 border-rose-300">
+                    <div className={`px-2 py-1 rounded-md border flex items-center justify-between text-[10px] font-bold ${
+                      isDark ? "bg-rose-950/25 text-rose-400 border-rose-900/50" : "bg-rose-50 text-rose-800 border-rose-300"
+                    }`}>
                       <span className="truncate mr-1 text-[9px] font-extrabold">&gt;10 Days (Critical)</span>
                       <span className="font-mono font-black">{stat.sla_gt_10}</span>
                     </div>

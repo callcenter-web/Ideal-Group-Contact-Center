@@ -1311,26 +1311,26 @@ export default function ReportsPanel({
 
       {/* SLA & ANALYTICS REPORT CARD SECTION */}
       {onOpenSLAReportModal && (
-        <div className={`p-5 rounded-2xl border shadow-sm transition-all duration-500 bg-gradient-to-r ${
+        <div className={`p-5 rounded-2xl border shadow-xs transition-all duration-300 ${
           isDark 
-            ? "from-slate-900 via-blue-950 to-slate-900 border-blue-900/50 text-slate-100" 
-            : "from-blue-50 via-indigo-50/50 to-white border-blue-200/80 text-slate-900"
+            ? "bg-slate-900/90 border-slate-800 text-slate-100" 
+            : "bg-slate-50/90 border-slate-200 text-slate-900"
         }`}>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1.5 max-w-3xl">
               <div className="flex items-center gap-2">
-                <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                <div className={`p-2 rounded-xl shadow-xs ${isDark ? "bg-blue-600 text-white" : "bg-blue-600 text-white"}`}>
                   <ShieldAlert className="h-5 w-5 text-amber-300" />
                 </div>
-                <h3 className="text-sm font-black uppercase tracking-wider text-blue-900">
+                <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? "text-white" : "text-slate-900"}`}>
                   Service Station & Call Center SLA Analytics Dashboard
                 </h3>
                 <span className="bg-blue-600 text-white font-black text-[9px] uppercase px-2 py-0.5 rounded-full">
                   Interactive Report
                 </span>
               </div>
-              <p className="text-xs font-medium text-slate-600 leading-relaxed">
-                Generate dual-perspective analytics: <strong className="text-blue-800">Service Station View</strong> (stations, workflow statuses, feedback statuses, and monthly dates) and <strong className="text-blue-800">Call Center View</strong> (agents/officers, date SLAs, 24h targets, aging, and current statuses: Pending, Contacted, In Progress / Rejected, Resolved).
+              <p className={`text-xs font-medium leading-relaxed ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                Generate dual-perspective analytics: <strong className={isDark ? "text-blue-400" : "text-blue-700"}>Service Station View</strong> (stations, workflow statuses, feedback statuses, and monthly dates) and <strong className={isDark ? "text-blue-400" : "text-blue-700"}>Call Center View</strong> (agents/officers, date SLAs, 24h targets, aging, and current statuses: Pending, Contacted, In Progress / Rejected, Resolved).
               </p>
             </div>
 
