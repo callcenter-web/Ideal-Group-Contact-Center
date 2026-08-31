@@ -196,14 +196,31 @@ export const addWorkingDaysExcludingSundays = (
 
 export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
   if (!c) return false;
+
+  // Active rejection returned to service center cannot be frozen
+  const isRejected = 
+    c.stationResponseStatus === "Rejected" ||
+    c.stationResponseStatus === "Returned to Service Station" ||
+    c.stationResponseStatus === "Rejected by Call Center" ||
+    c.feedbackStatus === "Returned to Service Station" ||
+    c.finalStatus === "Returned to Service Station" ||
+    c.finalStatus === "Pending with Aftermarket (Re-contact Required)";
+
+  if (isRejected) return false;
+
   const isResolved = 
     c.status === "Resolved" || 
     c.status === "Contacted — Still Dissatisfied" ||
     c.status === "Contacted - Still Dissatisfied" ||
     c.finalStatus === "Closed" || 
+    c.finalStatus === "Completed" || 
+    c.finalStatus === "Resolved" || 
     c.feedbackStatus === "Satisfied" || 
+    c.feedbackStatus === "Satisfied After Resolution" ||
     c.callCenterFinalSatisfaction === "Satisfied" || 
-    c.callCenterFinalSatisfaction === "Very Satisfied";
+    c.callCenterFinalSatisfaction === "Very Satisfied" ||
+    c.currentSatisfaction === "Satisfied" ||
+    c.currentSatisfaction === "Very Satisfied";
 
   const isUnreachable = 
     c.feedbackStatus === "Customer Unreachable" || 
@@ -220,11 +237,24 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
     c.finalStatus === "Unreachable" ||
     (c.finalStatus && c.finalStatus.includes("Unreachable"));
 
-  const isCallCenterContactedNoUnreachable = 
-    !!(c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) &&
-    !isUnreachable;
+  // Check if Service Station/Center process has been completed
+  const isStationDone = !!(
+    (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+    (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+    c.serviceStationContactStatus === "CONTACTED" ||
+    (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
+    c.stationResponseStatus === "Submitted to Call Center"
+  );
 
-  return isResolved || isCallCenterContactedNoUnreachable;
+  // Check if Call Center process has been completed
+  const isCallCenterDone = !!(
+    (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) ||
+    (c.callCenterFinalRemarks && c.callCenterFinalRemarks.trim().length > 0) ||
+    (c.callCenterFinalSatisfaction && c.callCenterFinalSatisfaction.trim().length > 0)
+  ) && !isUnreachable;
+
+  // Only freeze time when both Service Station AND Call Center processes are completed, OR the complaint is officially resolved/closed/satisfied
+  return isResolved || (isStationDone && isCallCenterDone);
 };
 
 export const getComplaintAgeInfo = (

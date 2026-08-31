@@ -18,9 +18,8 @@ export function parseValidDate(val: any): Date | null {
   if (typeof val === "number" || (!isNaN(Number(val)) && !String(val).includes("-") && !String(val).includes("/"))) {
     const num = Number(val);
     if (num > 30000 && num < 70000) {
-      const excelEpoch = new Date(1899, 11, 30);
-      const ms = Math.round(num * 86400 * 1000);
-      const parsed = new Date(excelEpoch.getTime() + ms);
+      const ms = Math.round((num - 25569) * 86400 * 1000);
+      const parsed = new Date(ms);
       if (!isNaN(parsed.getTime())) return parsed;
     }
   }
@@ -1183,10 +1182,10 @@ export function calculateStationReportMetrics(
   const sla_6_10 = sla_6_10List.length;
   const sla_gt_10 = sla_gt_10List.length;
 
-  // Averages (rounded to 1 decimal place, 0 if no eligible records)
-  const avgDaysStationContact = stationContactCount > 0 ? Math.round((stationContactTotalDays / stationContactCount) * 10) / 10 : 0;
-  const avgDaysCallCenterContact = ccContactCount > 0 ? Math.round((ccContactTotalDays / ccContactCount) * 10) / 10 : 0;
-  const avgDaysToSolveCase = solveCount > 0 ? Math.round((solveTotalDays / solveCount) * 10) / 10 : 0;
+  // Averages (rounded to 0 decimals / whole numbers, 0 if no eligible records)
+  const avgDaysStationContact = stationContactCount > 0 ? Math.round(stationContactTotalDays / stationContactCount) : 0;
+  const avgDaysCallCenterContact = ccContactCount > 0 ? Math.round(ccContactTotalDays / ccContactCount) : 0;
+  const avgDaysToSolveCase = solveCount > 0 ? Math.round(solveTotalDays / solveCount) : 0;
 
   const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
   const resolutionRate = `${rate}%`;
@@ -1523,20 +1522,20 @@ export function calculateNationalReportSummary(
     ccSlaBreachedCount += sm.ccSlaBreachedCount;
   }
 
-  // National averages calculated directly from eligible records across all stations
+  // National averages calculated directly from eligible records across all stations (0 decimals)
   const avgDaysStationContact =
     nationalStationContactCount > 0
-      ? Math.round((nationalStationContactTotalDays / nationalStationContactCount) * 10) / 10
+      ? Math.round(nationalStationContactTotalDays / nationalStationContactCount)
       : 0;
 
   const avgDaysCallCenterContact =
     nationalCCContactCount > 0
-      ? Math.round((nationalCCContactTotalDays / nationalCCContactCount) * 10) / 10
+      ? Math.round(nationalCCContactTotalDays / nationalCCContactCount)
       : 0;
 
   const avgDaysToSolveCase =
     nationalSolveCount > 0
-      ? Math.round((nationalSolveTotalDays / nationalSolveCount) * 10) / 10
+      ? Math.round(nationalSolveTotalDays / nationalSolveCount)
       : 0;
 
   const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
@@ -1647,9 +1646,9 @@ export function calculateWeightedStationAverages(stationMetrics: StationReportMe
 
   return {
     totalVolume,
-    weightedAvgDaysStationContact: totalVolume > 0 ? Math.round((weightedStationContactSum / totalVolume) * 10) / 10 : 0,
-    weightedAvgDaysCallCenterContact: totalVolume > 0 ? Math.round((weightedCCContactSum / totalVolume) * 10) / 10 : 0,
-    weightedAvgDaysToSolveCase: totalVolume > 0 ? Math.round((weightedSolveSum / totalVolume) * 10) / 10 : 0,
+    weightedAvgDaysStationContact: totalVolume > 0 ? Math.round(weightedStationContactSum / totalVolume) : 0,
+    weightedAvgDaysCallCenterContact: totalVolume > 0 ? Math.round(weightedCCContactSum / totalVolume) : 0,
+    weightedAvgDaysToSolveCase: totalVolume > 0 ? Math.round(weightedSolveSum / totalVolume) : 0,
   };
 }
 

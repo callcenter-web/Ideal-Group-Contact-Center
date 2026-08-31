@@ -2854,21 +2854,21 @@ NOTIFY pgrst, 'reload schema';
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
                         <div className="flex items-center gap-2">
                           <div className={`p-1.5 text-white rounded-lg shrink-0 shadow-2xs ${
-                            (selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied")
+                            isComplaintTimeFrozen(selectedComplaint)
                               ? "bg-emerald-600"
                               : "bg-blue-600"
                           }`}>
                             <Clock className={`h-4 w-4 ${
-                              (selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied")
+                              isComplaintTimeFrozen(selectedComplaint)
                                 ? ""
                                 : "animate-spin-slow"
                             }`} />
                           </div>
                           <div>
                             <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block flex items-center gap-1.5">
-                              {(selectedComplaint.status === "Resolved" || selectedComplaint.finalStatus === "Closed" || selectedComplaint.feedbackStatus === "Satisfied") ? (
+                              {isComplaintTimeFrozen(selectedComplaint) ? (
                                 <>
-                                  <span>Complaint Duration (Timer Frozen at Resolution)</span>
+                                  <span>Complaint Duration (Timer Frozen at Completion)</span>
                                   <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-black px-1.5 py-0.2 rounded uppercase">
                                     FROZEN
                                   </span>
@@ -3294,7 +3294,7 @@ NOTIFY pgrst, 'reload schema';
                               )}
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 font-medium">
-                              <span>Station Action Logged: <strong>{selectedComplaint.stationContactedDate || selectedComplaint.date || "N/A"}</strong></span>
+                              <span>Station Action Logged: <strong>{selectedComplaint.stationContactedDate || "Pending Station Action"}</strong></span>
                               <span>Adviser: <strong>{selectedComplaint.agentName || "Service Station Adviser"}</strong></span>
                             </div>
 
