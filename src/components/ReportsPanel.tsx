@@ -453,6 +453,12 @@ export default function ReportsPanel({
   const grandPending = nationalSummary.pending;
   const grandPendingList = nationalSummary.pendingList;
 
+  const grandScPendingUncontacted = nationalSummary.scPendingUncontacted;
+  const grandScPendingUncontactedList = nationalSummary.scPendingUncontactedList;
+
+  const grandScPendingAttempted = nationalSummary.scPendingAttempted;
+  const grandScPendingAttemptedList = nationalSummary.scPendingAttemptedList;
+
   const grandUnclassified = 0;
   const grandUnclassifiedList: Complaint[] = [];
 
@@ -562,30 +568,63 @@ export default function ReportsPanel({
       "Total Complaints (Received)",
       "Resolved Complaints (Contacted & Satisfied by CC)",
       "Pending/In-Progress (Not Contacted by Service Station)",
-      "Rejected by Call Center (Escalated)",
-      "0-3 Days (New)",
-      "3-5 Days (Pending)",
-      "6-10 Days (Escalated)",
-      ">10 Days (Critical)",
+      "Rejected by Call Center (Escalated) (Showall)",
+      "0-3 Days (New)(Get from Pending customers for service station)",
+      "3-5 Days (Pending)(Get from Pending customers for service station)",
+      "6-10 Days (Escalated)(Get from Pending customers for service station)",
+      ">10 Days (Critical)(Get from Pending customers for service station)",
       "Avg Days to Contact Customer (Service Station)",
       "Avg Days to Contact Customer (Call Center)",
-      "Average Days to Solve Case"
+      "Average Days to Solve Case { Avg Days to Contact Customer (Service Station) + Avg Days to Contact Customer (Call Center) }/2"
     ];
 
-    const rows = stationMetrics.map((sm) => [
-      sm.code,
-      sm.name,
-      sm.total.toString(),
-      sm.resolved.toString(),
-      sm.pending.toString(),
-      sm.escalated > 0 ? sm.escalated.toString() : "0",
-      sm.days0_3 > 0 ? sm.days0_3.toString() : "0",
-      sm.days3_5 > 0 ? sm.days3_5.toString() : "0",
-      sm.days6_10 > 0 ? sm.days6_10.toString() : "0",
-      sm.days10Plus > 0 ? sm.days10Plus.toString() : "0",
-      sm.avgDaysStationContact.toString(),
-      sm.avgDaysCallCenterContact.toString(),
-      sm.avgDaysToSolveCase.toString()
+    const rows = stationMetrics.map((sm) => {
+      const rejectedCount = sm.escalated || sm.rejectedReAction || sm.rejectedByCC || 0;
+      const scAvg = Math.round(sm.avgDaysStationContact || 0);
+      const ccAvg = Math.round(sm.avgDaysCallCenterContact || 0);
+      // Formula matching user specification: Avg Days SC + Math.round(Avg Days CC / 2)
+      const solveAvg = scAvg > 0 || ccAvg > 0 
+        ? Math.round(scAvg + ccAvg / 2) 
+        : (sm.avgDaysToSolveCase > 0 ? Math.round(sm.avgDaysToSolveCase) : 0);
+
+      return [
+        sm.code,
+        sm.name,
+        sm.total.toString(),
+        sm.resolved.toString(),
+        sm.pending.toString(),
+        rejectedCount.toString(),
+        sm.days0_3 > 0 ? sm.days0_3.toString() : "0",
+        sm.days3_5 > 0 ? sm.days3_5.toString() : "0",
+        sm.days6_10 > 0 ? sm.days6_10.toString() : "0",
+        sm.days10Plus > 0 ? sm.days10Plus.toString() : "0",
+        scAvg.toString(),
+        ccAvg.toString(),
+        solveAvg.toString()
+      ];
+    });
+
+    // Add overall summary total row
+    const grandScAvg = Math.round(overallReportAging.avgDaysStationContact || 0);
+    const grandCcAvg = Math.round(overallReportAging.avgDaysCallCenterContact || 0);
+    const grandSolveAvg = grandScAvg > 0 || grandCcAvg > 0 
+      ? Math.round(grandScAvg + grandCcAvg / 2)
+      : (overallReportAging.avgDaysToSolveCase > 0 ? Math.round(overallReportAging.avgDaysToSolveCase) : 0);
+
+    rows.push([
+      "ALL",
+      "Overall Summary / All Stations",
+      grandTotal.toString(),
+      grandResolved.toString(),
+      grandPending.toString(),
+      grandEscalated.toString(),
+      grandDays0_3 > 0 ? grandDays0_3.toString() : "0",
+      grandDays3_5 > 0 ? grandDays3_5.toString() : "0",
+      grandDays6_10 > 0 ? grandDays6_10.toString() : "0",
+      grandDays10Plus > 0 ? grandDays10Plus.toString() : "0",
+      grandScAvg.toString(),
+      grandCcAvg.toString(),
+      grandSolveAvg.toString()
     ]);
 
     downloadCSV(headers, rows, `CX_Station_Performance_Report_${new Date().toISOString().split('T')[0]}.csv`);
@@ -1720,6 +1759,7 @@ export default function ReportsPanel({
                     <tr className={`border-b text-[10px] font-black uppercase tracking-wider transition-colors duration-500 ${
                       isDark ? "border-slate-800 bg-slate-950/90 text-slate-400" : "border-slate-200 bg-slate-50/90 text-slate-600"
                     }`}>
+                      <th className="py-3.5 px-3 font-black text-center w-24">Code</th>
                       <th className="py-3.5 px-4 font-black">Service Station Name</th>
                       <th className="py-3.5 px-3 text-center">
                         <div>Total Complaints</div>
@@ -1727,40 +1767,62 @@ export default function ReportsPanel({
                       </th>
                       <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">
                         <div>Resolved Complaints</div>
-                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(contacted &amp; satisfied)</div>
+                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(contacted &amp; satisfied by cc)</div>
                       </th>
                       <th className={`py-3.5 px-3 text-center text-amber-600 dark:text-amber-400 ${isDark ? "bg-amber-950/20" : "bg-amber-50/50"}`}>
                         <div>Pending / In-Progress</div>
-                        <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(pending contact + unreachable + rejected)</div>
+                        <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(not contacted by service station)</div>
                       </th>
-                      <th className={`py-3.5 px-3 text-center text-rose-600 dark:text-rose-400 ${isDark ? "bg-rose-950/20" : "bg-rose-50/50"}`}>
+                      <th className={`py-3.5 px-3 text-center text-rose-700 bg-rose-50/90 dark:bg-rose-950/40 dark:text-rose-300 border-x border-rose-200/80 dark:border-rose-900/50`}>
                         <div className="flex items-center justify-center gap-1">
-                          <AlertTriangle className="h-3 w-3 text-rose-500" />
-                          <span>Rejected by CC</span>
+                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                          <span className="font-black text-rose-700 dark:text-rose-300">Rejected by Call Center</span>
                         </div>
-                        <div className="text-[8.5px] font-bold text-rose-500/80 lowercase">(escalated / rejected)</div>
+                        <div className="text-[8.5px] font-bold text-rose-600/90 dark:text-rose-400/90 lowercase">(escalated) (showall)</div>
                       </th>
-                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">0-3 Days (New)</th>
-                      <th className="py-3.5 px-3 text-center text-amber-600 dark:text-amber-400">3-5 Days (Pending)</th>
-                      <th className="py-3.5 px-3 text-center text-orange-600 dark:text-orange-400">6-10 Days (Escalated)</th>
-                      <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">&gt;10 Days (Critical)</th>
+                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">
+                        <div>0-3 Days</div>
+                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(new pending)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-amber-600 dark:text-amber-400">
+                        <div>3-5 Days</div>
+                        <div className="text-[8.5px] font-bold text-amber-500/80 lowercase">(pending)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-orange-600 dark:text-orange-400">
+                        <div>6-10 Days</div>
+                        <div className="text-[8.5px] font-bold text-orange-500/80 lowercase">(escalated)</div>
+                      </th>
+                      <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">
+                        <div>&gt;10 Days</div>
+                        <div className="text-[8.5px] font-bold text-rose-500/80 lowercase">(critical)</div>
+                      </th>
                       <th className="py-3.5 px-3 text-center text-blue-600 dark:text-blue-400">
-                        <div>Avg Days Contact</div>
+                        <div>Avg Days to Contact</div>
                         <div className="text-[8.5px] font-bold text-blue-500/80 lowercase">(service station)</div>
                       </th>
                       <th className="py-3.5 px-3 text-center text-indigo-600 dark:text-indigo-400">
-                        <div>Avg Days Contact</div>
+                        <div>Avg Days to Contact</div>
                         <div className="text-[8.5px] font-bold text-indigo-500/80 lowercase">(call center)</div>
                       </th>
-                      <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">
-                        <div>Avg Days to Solve</div>
-                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">(case lifecycle)</div>
+                      <th 
+                        title="Average Days to Solve Case: { Avg Days to Contact Customer (Service Station) + Avg Days to Contact Customer (Call Center) } / 2 (no decimals)"
+                        className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400"
+                      >
+                        <div>Average Days to Solve Case</div>
+                        <div className="text-[8.5px] font-bold text-emerald-500/80 lowercase">&#123; (sc) + (cc) &#125; / 2</div>
                       </th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y text-xs transition-colors duration-500 ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
                     {stationMetrics.map((sm) => {
                       const isSelected = selectedStationCode === sm.code;
+                      const rejectedCount = sm.escalated || sm.rejectedReAction || sm.rejectedByCC || 0;
+                      const scAvg = Math.round(sm.avgDaysStationContact || 0);
+                      const ccAvg = Math.round(sm.avgDaysCallCenterContact || 0);
+                      const solveAvg = scAvg > 0 || ccAvg > 0 
+                        ? Math.round(scAvg + ccAvg / 2) 
+                        : (sm.avgDaysToSolveCase > 0 ? Math.round(sm.avgDaysToSolveCase) : 0);
+
                       return (
                         <tr 
                           key={sm.code} 
@@ -1775,12 +1837,12 @@ export default function ReportsPanel({
                                 : "hover:bg-slate-50/70 text-slate-700"
                           }`}
                         >
+                          <td className="py-3 px-3 text-center">
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono font-bold">{sm.code}</span>
+                          </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
-                              <div>
-                                <p className={`font-bold ${isDark ? "text-slate-100" : "text-slate-900"}`}>{sm.name}</p>
-                                <span className="text-[10px] text-slate-400 font-mono font-bold">{sm.code}</span>
-                              </div>
+                              <p className={`font-bold ${isDark ? "text-slate-100" : "text-slate-900"}`}>{sm.name}</p>
                               {isSelected && (
                                 <span className="text-[9px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
                                   Selected
@@ -1811,7 +1873,7 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "Resolved Complaints (Contacted & Satisfied)", sm.resolvedList, "emerald");
+                                  handleOpenDrilldown(sm.name, sm.code, "Resolved Complaints (Contacted & Satisfied by CC)", sm.resolvedList, "emerald");
                                 }}
                                 title={`Click to view ${sm.resolved} resolved complaints for ${sm.name}`}
                                 className="font-black px-2 py-0.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
@@ -1822,16 +1884,16 @@ export default function ReportsPanel({
                               <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
                             )}
                           </td>
-                          {/* Pending */}
+                          {/* Pending / In-Progress */}
                           <td className={`py-3 px-3 text-center ${isDark ? "bg-amber-950/10" : "bg-amber-50/30"}`}>
                             {sm.pending > 0 ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "Pending / In-Progress Workload (Pending Contact + Unreachable + Rejected by CC)", sm.pendingList, "amber");
+                                  handleOpenDrilldown(sm.name, sm.code, "Pending / In-Progress (Not Contacted by Service Station)", sm.pendingList, "amber");
                                 }}
-                                title={`Click to view ${sm.pending} pending / in-progress complaints (pending contact, unreachable & rejected) for ${sm.name}`}
+                                title={`Click to view ${sm.pending} pending / in-progress complaints for ${sm.name}`}
                                 className="font-black px-2.5 py-1 rounded-md text-xs text-amber-700 bg-amber-100 hover:bg-amber-200 dark:text-amber-300 dark:bg-amber-950/70 dark:border-amber-800/80 border border-amber-300 cursor-pointer hover:underline hover:scale-105 transition-all shadow-2xs"
                               >
                                 {sm.pending}
@@ -1841,19 +1903,19 @@ export default function ReportsPanel({
                             )}
                           </td>
                           {/* Escalated / Rejected by CC */}
-                          <td className={`py-3 px-3 text-center ${isDark ? "bg-rose-950/10" : "bg-rose-50/30"}`}>
-                            {sm.escalated > 0 ? (
+                          <td className={`py-3 px-3 text-center border-x ${isDark ? "bg-rose-950/30 border-rose-900/40" : "bg-rose-50/60 border-rose-200/60"}`}>
+                            {rejectedCount > 0 ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "Rejected by Call Center / Escalated", sm.escalatedList, "rose");
+                                  handleOpenDrilldown(sm.name, sm.code, "Rejected by Call Center / Escalated (Showall)", sm.escalatedList, "rose");
                                 }}
-                                title={`Click to view ${sm.escalated} rejected/escalated complaints for ${sm.name}`}
-                                className="font-black px-2.5 py-1 rounded-md text-xs text-rose-700 bg-rose-100 hover:bg-rose-200 dark:text-rose-300 dark:bg-rose-950/70 dark:border-rose-800/80 border border-rose-300 cursor-pointer hover:underline hover:scale-105 transition-all shadow-2xs inline-flex items-center gap-1"
+                                title={`Click to view ${rejectedCount} rejected/escalated complaints for ${sm.name}`}
+                                className="font-black px-2.5 py-1 rounded-md text-xs text-white bg-rose-600 hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600 cursor-pointer hover:scale-105 transition-all shadow-xs inline-flex items-center gap-1"
                               >
-                                <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400 shrink-0" />
-                                <span>{sm.escalated}</span>
+                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                <span>{rejectedCount}</span>
                               </button>
                             ) : (
                               <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
@@ -1866,7 +1928,7 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "0-3 Days (New)", sm.days0_3List, "emerald");
+                                  handleOpenDrilldown(sm.name, sm.code, "0-3 Days (New)(Pending Customers for SC)", sm.days0_3List, "emerald");
                                 }}
                                 title={`Click to view ${sm.days0_3} new (0-3d) complaints for ${sm.name}`}
                                 className="font-bold px-2 py-0.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 cursor-pointer hover:scale-105 transition-all"
@@ -1874,7 +1936,7 @@ export default function ReportsPanel({
                                 {sm.days0_3}
                               </button>
                             ) : (
-                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
                             )}
                           </td>
                           {/* 3-5d */}
@@ -1884,7 +1946,7 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "3-5 Days (Pending SLA)", sm.days3_5List, "amber");
+                                  handleOpenDrilldown(sm.name, sm.code, "3-5 Days (Pending)(Pending Customers for SC)", sm.days3_5List, "amber");
                                 }}
                                 title={`Click to view ${sm.days3_5} pending (3-5d) complaints for ${sm.name}`}
                                 className="font-bold px-2 py-0.5 rounded-md text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer hover:scale-105 transition-all"
@@ -1892,7 +1954,7 @@ export default function ReportsPanel({
                                 {sm.days3_5}
                               </button>
                             ) : (
-                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
                             )}
                           </td>
                           {/* 6-10d */}
@@ -1902,15 +1964,15 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, "6-10 Days (Escalated Aging)", sm.days6_10List, "orange");
+                                  handleOpenDrilldown(sm.name, sm.code, "6-10 Days (Escalated)(Pending Customers for SC)", sm.days6_10List, "orange");
                                 }}
-                                title={`Click to view ${sm.days6_10} escalated aging (6-10d) complaints for ${sm.name}`}
+                                title={`Click to view ${sm.days6_10} escalated (6-10d) complaints for ${sm.name}`}
                                 className="font-bold px-2 py-0.5 rounded-md text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/50 cursor-pointer hover:scale-105 transition-all"
                               >
                                 {sm.days6_10}
                               </button>
                             ) : (
-                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
                             )}
                           </td>
                           {/* >10d (Critical Aging) */}
@@ -1920,29 +1982,32 @@ export default function ReportsPanel({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenDrilldown(sm.name, sm.code, ">10 Days (Critical Aging)", sm.days10PlusList, "rose");
+                                  handleOpenDrilldown(sm.name, sm.code, ">10 Days (Critical)(Pending Customers for SC)", sm.days10PlusList, "rose");
                                 }}
-                                title={`Click to inspect details of all ${sm.days10Plus} critical aging (>10d) complaints for ${sm.name}`}
+                                title={`Click to inspect details of all ${sm.days10Plus} critical (>10d) complaints for ${sm.name}`}
                                 className="inline-flex items-center justify-center font-black px-2.5 py-1 rounded-md text-xs bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/70 dark:text-rose-300 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800/80 shadow-2xs hover:shadow-sm hover:scale-105 transition-all cursor-pointer group"
                               >
                                 <span className="group-hover:underline">{sm.days10Plus}</span>
                                 <span className="ml-1 text-[10px] opacity-75">🔍</span>
                               </button>
                             ) : (
-                              <span className="text-slate-300 dark:text-slate-700 font-bold">-</span>
+                              <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
                             )}
                           </td>
-                          {/* Avg Days Station Contact */}
+                          {/* Avg Days Station Contact (0 decimals) */}
                           <td className="py-3 px-3 text-center font-black text-blue-600 dark:text-blue-400 text-xs">
-                            {sm.avgDaysStationContact} {sm.avgDaysStationContact === 1 ? "day" : "days"}
+                            {scAvg}
                           </td>
-                          {/* Avg Days Call Center Contact */}
+                          {/* Avg Days Call Center Contact (0 decimals) */}
                           <td className="py-3 px-3 text-center font-black text-indigo-600 dark:text-indigo-400 text-xs">
-                            {sm.avgDaysCallCenterContact} {sm.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                            {ccAvg}
                           </td>
-                          {/* Avg Days to Solve Case */}
-                          <td className="py-3 px-3 text-center font-black text-emerald-600 dark:text-emerald-400 text-xs">
-                            {sm.avgDaysToSolveCase} {sm.avgDaysToSolveCase === 1 ? "day" : "days"}
+                          {/* Avg Days to Solve Case (0 decimals) */}
+                          <td 
+                            title={`Average days to solve case: { ${scAvg} (SC) + ${ccAvg} (CC) } / 2 = ${solveAvg}`}
+                            className="py-3 px-3 text-center font-black text-emerald-600 dark:text-emerald-400 text-xs"
+                          >
+                            {solveAvg}
                           </td>
                         </tr>
                       );
@@ -1958,6 +2023,7 @@ export default function ReportsPanel({
                       }`}
                       title="Click to view overall stats across all stations"
                     >
+                      <td className="py-3.5 px-3 text-center text-slate-400 font-mono">ALL</td>
                       <td className="py-3.5 px-4 uppercase tracking-wider flex items-center gap-2">
                         <span>Overall Summary / All Stations</span>
                         {selectedStationCode === "all" && <span className="text-[10px] bg-blue-500 text-white font-black px-2 py-0.5 rounded">(Selected)</span>}
@@ -1982,7 +2048,7 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "Resolved Complaints (Contacted & Satisfied)", grandResolvedList, "emerald");
+                            handleOpenDrilldown("All Service Stations", "ALL", "Resolved Complaints (Contacted & Satisfied by CC)", grandResolvedList, "emerald");
                           }}
                           title={`Click to view ${grandResolved} resolved complaints across all stations`}
                           className="hover:underline font-black cursor-pointer"
@@ -1990,13 +2056,13 @@ export default function ReportsPanel({
                           {grandResolved}
                         </button>
                       </td>
-                      {/* Grand Pending */}
+                      {/* Grand Total Pending */}
                       <td className="py-3.5 px-3 text-center bg-amber-500/10 text-amber-400">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "Pending / In-Progress Workload (Pending Contact + Unreachable + Rejected by CC)", grandPendingList, "amber");
+                            handleOpenDrilldown("All Service Stations", "ALL", "Pending / In-Progress (Not Contacted by Service Station)", grandPendingList, "amber");
                           }}
                           title={`Click to view ${grandPending} pending complaints across all stations`}
                           className="font-black px-2.5 py-1 rounded-md text-xs bg-amber-400 text-slate-950 hover:bg-amber-300 shadow-2xs hover:scale-105 transition-all cursor-pointer"
@@ -2004,20 +2070,20 @@ export default function ReportsPanel({
                           {grandPending}
                         </button>
                       </td>
-                      {/* Grand Escalated */}
-                      <td className="py-3.5 px-3 text-center bg-rose-500/10 text-rose-400">
+                      {/* Grand Escalated / Rejected by CC */}
+                      <td className="py-3.5 px-3 text-center bg-rose-500/20 text-rose-300 border-x border-rose-500/30">
                         {grandEscalated > 0 ? (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleOpenDrilldown("All Service Stations", "ALL", "Rejected by Call Center / Escalated", grandEscalatedList, "rose");
+                              handleOpenDrilldown("All Service Stations", "ALL", "Rejected by Call Center / Escalated (Showall)", grandEscalatedList, "rose");
                             }}
                             title={`Click to view ${grandEscalated} rejected/escalated complaints across all stations`}
-                            className="font-black px-2.5 py-1 rounded-md text-xs bg-rose-500 text-white hover:bg-rose-600 shadow-2xs hover:scale-105 transition-all cursor-pointer inline-flex items-center gap-1"
+                            className="font-black px-2.5 py-1 rounded-md text-xs bg-rose-600 text-white hover:bg-rose-700 shadow-2xs hover:scale-105 transition-all cursor-pointer inline-flex items-center gap-1"
                           >
                             <AlertTriangle className="h-3 w-3 shrink-0" />
-                            <span>{grandEscalated}</span>
+                            <span>{grandEscalated} Total Rejected</span>
                           </button>
                         ) : (
                           <span className="font-bold text-slate-400">0</span>
@@ -2029,7 +2095,7 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "0-3 Days (New)", grandDays0_3List, "emerald");
+                            handleOpenDrilldown("All Service Stations", "ALL", "0-3 Days (New)(Pending Customers for SC)", grandDays0_3List, "emerald");
                           }}
                           title={`Click to view ${grandDays0_3} new (0-3d) complaints across all stations`}
                           className="hover:underline font-black cursor-pointer"
@@ -2043,7 +2109,7 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "3-5 Days (Pending SLA)", grandDays3_5List, "amber");
+                            handleOpenDrilldown("All Service Stations", "ALL", "3-5 Days (Pending)(Pending Customers for SC)", grandDays3_5List, "amber");
                           }}
                           title={`Click to view ${grandDays3_5} pending (3-5d) complaints across all stations`}
                           className="hover:underline font-black cursor-pointer"
@@ -2057,9 +2123,9 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "6-10 Days (Escalated Aging)", grandDays6_10List, "orange");
+                            handleOpenDrilldown("All Service Stations", "ALL", "6-10 Days (Escalated)(Pending Customers for SC)", grandDays6_10List, "orange");
                           }}
-                          title={`Click to view ${grandDays6_10} escalated aging (6-10d) complaints across all stations`}
+                          title={`Click to view ${grandDays6_10} escalated (6-10d) complaints across all stations`}
                           className="hover:underline font-black cursor-pointer"
                         >
                           {grandDays6_10}
@@ -2071,26 +2137,31 @@ export default function ReportsPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", ">10 Days (Critical Aging)", grandDays10PlusList, "rose");
+                            handleOpenDrilldown("All Service Stations", "ALL", ">10 Days (Critical)(Pending Customers for SC)", grandDays10PlusList, "rose");
                           }}
-                          title={`Click to inspect details of all ${grandDays10Plus} critical aging (>10d) complaints across all stations`}
+                          title={`Click to inspect details of all ${grandDays10Plus} critical (>10d) complaints across all stations`}
                           className="hover:underline font-black cursor-pointer inline-flex items-center gap-1"
                         >
                           <span>{grandDays10Plus}</span>
                           <span className="text-[10px]">🔍</span>
                         </button>
                       </td>
-                      {/* Overall Avg Days SC Contact */}
+                      {/* Overall Avg Days SC Contact (0 decimals) */}
                       <td className="py-3.5 px-3 text-center text-blue-300">
-                        {overallReportAging.avgDaysStationContact} {overallReportAging.avgDaysStationContact === 1 ? "day" : "days"}
+                        {Math.round(overallReportAging.avgDaysStationContact || 0)}
                       </td>
-                      {/* Overall Avg Days CC Contact */}
+                      {/* Overall Avg Days CC Contact (0 decimals) */}
                       <td className="py-3.5 px-3 text-center text-indigo-300">
-                        {overallReportAging.avgDaysCallCenterContact} {overallReportAging.avgDaysCallCenterContact === 1 ? "day" : "days"}
+                        {Math.round(overallReportAging.avgDaysCallCenterContact || 0)}
                       </td>
-                      {/* Overall Avg Days to Solve Case */}
-                      <td className="py-3.5 px-3 text-center text-emerald-300">
-                        {overallReportAging.avgDaysToSolveCase} {overallReportAging.avgDaysToSolveCase === 1 ? "day" : "days"}
+                      {/* Overall Avg Days to Solve Case (0 decimals) */}
+                      <td 
+                        title={`Overall average days to solve case across all stations: ${Math.round(overallReportAging.avgDaysStationContact || 0)} + ${Math.round(overallReportAging.avgDaysCallCenterContact || 0)}/2`}
+                        className="py-3.5 px-3 text-center text-emerald-300"
+                      >
+                        {Math.round(overallReportAging.avgDaysStationContact || 0) > 0 || Math.round(overallReportAging.avgDaysCallCenterContact || 0) > 0
+                          ? Math.round(Math.round(overallReportAging.avgDaysStationContact || 0) + Math.round(overallReportAging.avgDaysCallCenterContact || 0) / 2)
+                          : Math.round(overallReportAging.avgDaysToSolveCase || 0)}
                       </td>
                     </tr>
                   </tfoot>
