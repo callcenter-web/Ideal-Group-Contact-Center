@@ -119,6 +119,26 @@ export function deduplicateComplaints(complaints: Complaint[]): Complaint[] {
 }
 
 /**
+ * Helper to check if a complaint has an active rejection flag from Call Center
+ */
+function hasActiveRejectionFlag(c: Complaint): boolean {
+  return !!(
+    c.stationResponseStatus === "Rejected" ||
+    c.stationResponseStatus === "Returned to Service Station" ||
+    c.stationResponseStatus === "Rejected by Call Center" ||
+    c.stationResponseStatus === "Returned to Call Center" ||
+    c.feedbackStatus === "Returned to Service Station" ||
+    c.feedbackStatus === "Rejected Again to Service Station" ||
+    c.feedbackStatus === "Escalated" ||
+    c.finalStatus === "Returned to Service Station" ||
+    c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
+    c.finalStatus === "Escalated" ||
+    (typeof c.finalStatus === "string" && (c.finalStatus.includes("Re-assigned") || c.finalStatus.includes("Rejected"))) ||
+    (typeof c.stationResponseStatus === "string" && (c.stationResponseStatus.toLowerCase().includes("reject") || c.stationResponseStatus.toLowerCase().includes("returned")))
+  );
+}
+
+/**
  * Checks if a complaint is truly resolved in its current state.
  * CRITICAL RECONCILIATION RULE:
  * A historical rejection does NOT permanently prevent a complaint from being resolved.
@@ -127,7 +147,10 @@ export function deduplicateComplaints(complaints: Complaint[]): Complaint[] {
 export function isComplaintResolved(c: Complaint | null | undefined): boolean {
   if (!c) return false;
 
-  // 1. Explicit Customer Satisfaction Indicators
+  // 1. If complaint has an active rejection / return to station, it is NOT resolved
+  if (hasActiveRejectionFlag(c)) return false;
+
+  // 2. Explicit Customer Satisfaction Indicators
   const isSatisfied = 
     c.currentSatisfaction === "Satisfied" || 
     c.currentSatisfaction === "Very Satisfied" || 
@@ -139,26 +162,50 @@ export function isComplaintResolved(c: Complaint | null | undefined): boolean {
     (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
     (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied");
 
-  // 2. Explicit Workflow Resolution Statuses
+  // 3. Explicit Workflow Resolution Statuses
   const isResolvedStatus = 
     c.status === "Resolved" || 
     c.feedbackStatus === "Satisfied" || 
     c.feedbackStatus === "Satisfied After Resolution";
 
-  // 3. Final Lifecycle Closed / Completed Statuses
+  // 4. Final Lifecycle Closed / Completed Statuses
   const isFinalClosed = 
     c.finalStatus === "Closed" || 
     c.finalStatus === "Completed" || 
     c.finalStatus === "Resolved";
 
-  // 4. Customer Unreachable verified closure
+  // 5. Contacted by Service Station AND Call Center (Satisfied + Not Satisfied after contact)
+  const isStationContacted = !!(
+    (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
+    (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
+    c.serviceStationContactStatus === "CONTACTED" ||
+    (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
+    c.stationResponseStatus === "Submitted to Call Center"
+  );
+
+  const isCCContacted = !!(
+    (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) ||
+    (c.callCenterFinalRemarks && c.callCenterFinalRemarks.trim().length > 0) ||
+    c.status === "Contacted — Still Dissatisfied" ||
+    c.status === "Contacted - Still Dissatisfied" ||
+    c.finalStatus === "Contacted — Still Dissatisfied" ||
+    c.finalStatus === "Contacted - Still Dissatisfied" ||
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Still Dissatisfied" ||
+    c.secondAttemptFeedbackStatus === "Not Satisfied"
+  );
+
+  const isBothContactedClosed = isStationContacted && isCCContacted;
+
+  // 6. Customer Unreachable verified closure
   const isUnreachableClosed = 
     c.finalStatus === "Unreachable" || 
     (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable")) || 
     c.feedbackStatus === "Customer Unreachable" || 
     c.feedbackStatus === "Unreachable";
 
-  return !!(isSatisfied || isResolvedStatus || isFinalClosed || isUnreachableClosed);
+  return !!(isSatisfied || isResolvedStatus || isFinalClosed || isBothContactedClosed || isUnreachableClosed);
 }
 
 /**
@@ -169,7 +216,7 @@ export function isComplaintResolved(c: Complaint | null | undefined): boolean {
  */
 export function isComplaintContactedStillDissatisfied(c: Complaint | null | undefined): boolean {
   if (!c) return false;
-  if (isComplaintResolved(c)) return false;
+  if (hasActiveRejectionFlag(c)) return false;
 
   if (c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") {
     return true;
@@ -194,6 +241,7 @@ export function isComplaintContactedStillDissatisfied(c: Complaint | null | unde
   const isDissatisfiedFeedback = 
     c.feedbackStatus === "Still Dissatisfied" ||
     c.feedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Still Dissatisfied" ||
     c.secondAttemptFeedbackStatus === "Not Satisfied" ||
     c.secondAttemptFeedbackStatus === "No solution Received" ||
     c.callCenterFinalSatisfaction === "Dissatisfied" ||
@@ -215,23 +263,7 @@ export function isComplaintContactedStillDissatisfied(c: Complaint | null | unde
  */
 export function isActiveCCRejectionRequired(c: Complaint | null | undefined): boolean {
   if (!c) return false;
-  if (isComplaintResolved(c)) return false;
-  if (isComplaintContactedStillDissatisfied(c)) return false;
-
-  return !!(
-    c.stationResponseStatus === "Rejected" ||
-    c.stationResponseStatus === "Returned to Service Station" ||
-    c.stationResponseStatus === "Rejected by Call Center" ||
-    c.stationResponseStatus === "Returned to Call Center" ||
-    c.feedbackStatus === "Returned to Service Station" ||
-    c.feedbackStatus === "Rejected Again to Service Station" ||
-    c.feedbackStatus === "Escalated" ||
-    c.finalStatus === "Returned to Service Station" ||
-    c.finalStatus === "Pending with Aftermarket (Re-contact Required)" ||
-    c.finalStatus === "Escalated" ||
-    (typeof c.finalStatus === "string" && (c.finalStatus.includes("Re-assigned") || c.finalStatus.includes("Rejected"))) ||
-    (typeof c.stationResponseStatus === "string" && (c.stationResponseStatus.toLowerCase().includes("reject") || c.stationResponseStatus.toLowerCase().includes("returned")))
-  );
+  return hasActiveRejectionFlag(c);
 }
 
 /**
@@ -1185,7 +1217,10 @@ export function calculateStationReportMetrics(
   // Averages (rounded to 0 decimals / whole numbers, 0 if no eligible records)
   const avgDaysStationContact = stationContactCount > 0 ? Math.round(stationContactTotalDays / stationContactCount) : 0;
   const avgDaysCallCenterContact = ccContactCount > 0 ? Math.round(ccContactTotalDays / ccContactCount) : 0;
-  const avgDaysToSolveCase = solveCount > 0 ? Math.round(solveTotalDays / solveCount) : 0;
+  // User Formula: { Sum Average Days to Contact the CX (Each Service Station) + Average Days to Contact the CX (Call Center for each service station) } / 2
+  const avgDaysToSolveCase = (avgDaysStationContact > 0 || avgDaysCallCenterContact > 0)
+    ? Math.round((avgDaysStationContact + avgDaysCallCenterContact) / 2)
+    : (solveCount > 0 ? Math.round(solveTotalDays / solveCount) : 0);
 
   const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
   const resolutionRate = `${rate}%`;
@@ -1370,14 +1405,22 @@ export function calculateNationalReportSummary(
     stationBuckets.set("Other / Unassigned", unassigned);
   }
 
-  // Calculate metrics for each station
+  // Calculate metrics for each station in canonical STATIONS order
   const stationMetrics: StationReportMetrics[] = [];
 
-  stationBuckets.forEach((cList, sCode) => {
-    const stObj = STATIONS.find((s) => s.code === sCode);
-    const sName = stObj ? stObj.name : sCode;
-    const metrics = calculateStationReportMetrics(cList, sCode, sName, referenceDate);
+  // 1. First add predefined STATIONS in exact sequence (Rathmalana, Wanawasala, Yakkala, Kurunegala, Anuradhapura, Jaffna, Tissamaharama)
+  for (const st of STATIONS) {
+    const cList = stationBuckets.get(st.code) || [];
+    const metrics = calculateStationReportMetrics(cList, st.code, st.name, referenceDate);
     stationMetrics.push(metrics);
+  }
+
+  // 2. Then add any dynamic or unassigned stations if any exist
+  stationBuckets.forEach((cList, sCode) => {
+    if (!STATIONS.some((st) => st.code === sCode)) {
+      const metrics = calculateStationReportMetrics(cList, sCode, sCode, referenceDate);
+      stationMetrics.push(metrics);
+    }
   });
 
   // Aggregate National Totals
@@ -1533,10 +1576,13 @@ export function calculateNationalReportSummary(
       ? Math.round(nationalCCContactTotalDays / nationalCCContactCount)
       : 0;
 
+  // User Formula: { Sum Average Days to Contact the CX (Each Service Station) + Average Days to Contact the CX (Call Center for each service station) } / 2
   const avgDaysToSolveCase =
-    nationalSolveCount > 0
-      ? Math.round(nationalSolveTotalDays / nationalSolveCount)
-      : 0;
+    (avgDaysStationContact > 0 || avgDaysCallCenterContact > 0)
+      ? Math.round((avgDaysStationContact + avgDaysCallCenterContact) / 2)
+      : (nationalSolveCount > 0
+        ? Math.round(nationalSolveTotalDays / nationalSolveCount)
+        : 0);
 
   const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
   const resolutionRate = `${rate}%`;

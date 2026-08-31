@@ -203,10 +203,23 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
     c.stationResponseStatus === "Returned to Service Station" ||
     c.stationResponseStatus === "Rejected by Call Center" ||
     c.feedbackStatus === "Returned to Service Station" ||
+    c.feedbackStatus === "Rejected Again to Service Station" ||
+    c.feedbackStatus === "Escalated" ||
     c.finalStatus === "Returned to Service Station" ||
     c.finalStatus === "Pending with Aftermarket (Re-contact Required)";
 
   if (isRejected) return false;
+
+  const isSatisfied = 
+    c.currentSatisfaction === "Satisfied" || 
+    c.currentSatisfaction === "Very Satisfied" || 
+    c.callCenterFinalSatisfaction === "Satisfied" ||
+    c.callCenterFinalSatisfaction === "Very Satisfied" ||
+    c.firstAttemptCallStatus === "Satisfied" ||
+    c.secondAttemptCallStatus === "Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Satisfied" ||
+    (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
+    (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied");
 
   const isResolved = 
     c.status === "Resolved" || 
@@ -215,27 +228,10 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
     c.finalStatus === "Closed" || 
     c.finalStatus === "Completed" || 
     c.finalStatus === "Resolved" || 
+    c.finalStatus === "Contacted — Still Dissatisfied" ||
+    c.finalStatus === "Contacted - Still Dissatisfied" ||
     c.feedbackStatus === "Satisfied" || 
-    c.feedbackStatus === "Satisfied After Resolution" ||
-    c.callCenterFinalSatisfaction === "Satisfied" || 
-    c.callCenterFinalSatisfaction === "Very Satisfied" ||
-    c.currentSatisfaction === "Satisfied" ||
-    c.currentSatisfaction === "Very Satisfied";
-
-  const isUnreachable = 
-    c.feedbackStatus === "Customer Unreachable" || 
-    c.firstAttemptCallStatus === "Customer Unreachable" || 
-    c.firstAttemptCallStatus === "Customer Busy" || 
-    c.firstAttemptCallStatus === "No Answer" ||
-    c.firstAttemptCallStatus === "Invalid Details" ||
-    c.firstAttemptCallStatus === "Invalid Number" ||
-    c.secondAttemptCallStatus === "Customer Unreachable" ||
-    c.secondAttemptCallStatus === "Customer Busy" ||
-    c.secondAttemptCallStatus === "No Answer" ||
-    c.secondAttemptCallStatus === "Invalid Details" ||
-    c.secondAttemptCallStatus === "Invalid Number" ||
-    c.finalStatus === "Unreachable" ||
-    (c.finalStatus && c.finalStatus.includes("Unreachable"));
+    c.feedbackStatus === "Satisfied After Resolution";
 
   // Check if Service Station/Center process has been completed
   const isStationDone = !!(
@@ -250,11 +246,30 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
   const isCallCenterDone = !!(
     (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) ||
     (c.callCenterFinalRemarks && c.callCenterFinalRemarks.trim().length > 0) ||
-    (c.callCenterFinalSatisfaction && c.callCenterFinalSatisfaction.trim().length > 0)
-  ) && !isUnreachable;
+    (c.callCenterFinalSatisfaction && c.callCenterFinalSatisfaction.trim().length > 0) ||
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Still Dissatisfied" ||
+    c.secondAttemptFeedbackStatus === "Not Satisfied"
+  );
 
-  // Only freeze time when both Service Station AND Call Center processes are completed, OR the complaint is officially resolved/closed/satisfied
-  return isResolved || (isStationDone && isCallCenterDone);
+  const isUnreachable = 
+    c.feedbackStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Unreachable" || 
+    c.firstAttemptCallStatus === "Customer Busy" || 
+    c.firstAttemptCallStatus === "No Answer" ||
+    c.firstAttemptCallStatus === "Invalid Details" ||
+    c.firstAttemptCallStatus === "Invalid Number" ||
+    c.secondAttemptCallStatus === "Customer Unreachable" || 
+    c.secondAttemptCallStatus === "Customer Busy" || 
+    c.secondAttemptCallStatus === "No Answer" ||
+    c.secondAttemptCallStatus === "Invalid Details" ||
+    c.secondAttemptCallStatus === "Invalid Number" ||
+    c.finalStatus === "Unreachable" ||
+    (typeof c.finalStatus === "string" && c.finalStatus.includes("Unreachable"));
+
+  // Only freeze time when both Service Station AND Call Center processes are completed, OR the complaint is officially resolved/closed/satisfied/unreachable
+  return isSatisfied || isResolved || (isStationDone && isCallCenterDone) || isUnreachable;
 };
 
 export const getComplaintAgeInfo = (

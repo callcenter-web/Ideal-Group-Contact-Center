@@ -1820,7 +1820,7 @@ export default function ReportsPanel({
                       const scAvg = Math.round(sm.avgDaysStationContact || 0);
                       const ccAvg = Math.round(sm.avgDaysCallCenterContact || 0);
                       const solveAvg = scAvg > 0 || ccAvg > 0 
-                        ? Math.round(scAvg + ccAvg / 2) 
+                        ? Math.round((scAvg + ccAvg) / 2) 
                         : (sm.avgDaysToSolveCase > 0 ? Math.round(sm.avgDaysToSolveCase) : 0);
 
                       return (
@@ -2156,12 +2156,10 @@ export default function ReportsPanel({
                       </td>
                       {/* Overall Avg Days to Solve Case (0 decimals) */}
                       <td 
-                        title={`Overall average days to solve case across all stations: ${Math.round(overallReportAging.avgDaysStationContact || 0)} + ${Math.round(overallReportAging.avgDaysCallCenterContact || 0)}/2`}
+                        title={`Overall average days to solve case across all stations: { ${Math.round(overallReportAging.avgDaysStationContact || 0)} (SC) + ${Math.round(overallReportAging.avgDaysCallCenterContact || 0)} (CC) } / 2`}
                         className="py-3.5 px-3 text-center text-emerald-300"
                       >
-                        {Math.round(overallReportAging.avgDaysStationContact || 0) > 0 || Math.round(overallReportAging.avgDaysCallCenterContact || 0) > 0
-                          ? Math.round(Math.round(overallReportAging.avgDaysStationContact || 0) + Math.round(overallReportAging.avgDaysCallCenterContact || 0) / 2)
-                          : Math.round(overallReportAging.avgDaysToSolveCase || 0)}
+                        {Math.round(overallReportAging.avgDaysToSolveCase || 0)}
                       </td>
                     </tr>
                   </tfoot>

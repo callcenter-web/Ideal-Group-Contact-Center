@@ -38,6 +38,7 @@ import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, 
 import { DEMO_COMPLAINTS, STATIONS, CALL_CENTER_OFFICERS } from "./demoData";
 import { sanitizeComplaintForSupabase, normalizeComplaintFromSupabase, deduplicateAndSanitizeComplaints, performResilientSupabaseUpsert, mergeComplaintObjects } from "./utils/supabaseSanitizer";
 import { matchesStationCodeOrName, isComplaintRejected, isStationContacted as isStationContactedUtil } from "./utils/stationUtils";
+import { isComplaintResolved } from "./utils/workflowTallyUtils";
 import { sanitizeComplaintDates, parseComplaintDate } from "./utils/agingUtils";
 import LoginScreen from "./components/LoginScreen";
 import UploadZone from "./components/UploadZone";
@@ -495,6 +496,7 @@ export default function App() {
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
+  const [agentAgingFilter, setAgentAgingFilter] = useState<"All" | "0-3" | "3-5" | "6-10" | ">10">("All");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [stationFilter, setStationFilter] = useState<string>("All");
   const [dateFilter, setDateFilter] = useState<string>("All");
@@ -1522,23 +1524,7 @@ export default function App() {
 
   // Helper to determine if a complaint is completed/resolved
   const isComplaintCompleted = (c: Complaint) => {
-    return (
-      c.status === "Resolved" ||
-      c.feedbackStatus === "Satisfied" ||
-      c.feedbackStatus === "Satisfied After Resolution" ||
-      c.callCenterFinalSatisfaction === "Satisfied" ||
-      c.callCenterFinalSatisfaction === "Very Satisfied" ||
-      c.currentSatisfaction === "Satisfied" ||
-      c.currentSatisfaction === "Very Satisfied" ||
-      c.firstAttemptCallStatus === "Satisfied" ||
-      c.secondAttemptCallStatus === "Satisfied" ||
-      c.secondAttemptFeedbackStatus === "Satisfied" ||
-      (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
-      (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied") ||
-      c.finalStatus === "Closed" ||
-      c.finalStatus === "Completed" ||
-      c.finalStatus === "Resolved"
-    );
+    return isComplaintResolved(c);
   };
 
   // Filter complaints based on search and selected filter values
@@ -1564,6 +1550,21 @@ export default function App() {
         matchesStatus = isComplaintRejected(c);
       } else {
         matchesStatus = !isStationContacted(c);
+      }
+      
+      // If agent selected an SLA Aging bucket
+      if (matchesStatus && agentAgingFilter !== "All") {
+        const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+        const daysPassed = ageInfo.workingDaysPassed ?? ageInfo.days;
+        if (agentAgingFilter === "0-3") {
+          matchesStatus = daysPassed <= 3;
+        } else if (agentAgingFilter === "3-5") {
+          matchesStatus = daysPassed > 3 && daysPassed <= 5;
+        } else if (agentAgingFilter === "6-10") {
+          matchesStatus = daysPassed > 5 && daysPassed <= 10;
+        } else if (agentAgingFilter === ">10") {
+          matchesStatus = daysPassed > 10;
+        }
       }
     } else if (statusFilter === "1st Attempt Required") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
@@ -1659,6 +1660,34 @@ export default function App() {
     (c) => c.status === "Resolved" || c.currentSatisfaction === "Satisfied" || c.currentSatisfaction === "Very Satisfied"
   ).length;
   const recoveryRate = totalCount > 0 ? Math.round((recoveredCount / totalCount) * 100) : 0;
+
+  // Agent Station Pending Complaints Aging Breakdown (0-3, 3-5, 6-10, >10 days)
+  const agentStationPendingComplaints = complaints.filter(
+    (c) => matchesStationCodeOrName(c.station, currentUser.station) && !isStationContacted(c)
+  );
+  const agentAgingBreakdown = {
+    total: agentStationPendingComplaints.length,
+    "0-3": agentStationPendingComplaints.filter((c) => {
+      const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      const days = age.workingDaysPassed ?? age.days;
+      return days <= 3;
+    }).length,
+    "3-5": agentStationPendingComplaints.filter((c) => {
+      const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      const days = age.workingDaysPassed ?? age.days;
+      return days > 3 && days <= 5;
+    }).length,
+    "6-10": agentStationPendingComplaints.filter((c) => {
+      const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      const days = age.workingDaysPassed ?? age.days;
+      return days > 5 && days <= 10;
+    }).length,
+    ">10": agentStationPendingComplaints.filter((c) => {
+      const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      const days = age.workingDaysPassed ?? age.days;
+      return days > 10;
+    }).length,
+  };
 
   // Unique lists for dropdowns
   const categories = Array.from(new Set(complaints.map((c) => c.category)));
@@ -2439,29 +2468,108 @@ NOTIFY pgrst, 'reload schema';
 
                     {/* Service Station Filter Tabs (Only showing pending / actionable customers for station) */}
                     {currentUser.role === "agent" && (
-                      <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
-                        <button
-                          type="button"
-                          onClick={() => setStatusFilter("To Contact")}
-                          className={`flex-1 min-w-[140px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            (statusFilter === "To Contact" || statusFilter === "Pending" || statusFilter !== "Rejected")
-                              ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          ⏳ Pending Station Contact ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && !isStationContacted(c)).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setStatusFilter("Rejected")}
-                          className={`flex-1 min-w-[130px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            statusFilter === "Rejected"
-                              ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isComplaintRejected(c)).length})
-                        </button>
+                      <div className="space-y-2">
+                        <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter("To Contact");
+                              setAgentAgingFilter("All");
+                            }}
+                            className={`flex-1 min-w-[140px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                              (statusFilter === "To Contact" || statusFilter === "Pending" || statusFilter !== "Rejected")
+                                ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
+                                : "text-slate-600 hover:text-slate-800"
+                            }`}
+                          >
+                            ⏳ Pending Station Contact ({agentAgingBreakdown.total})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter("Rejected");
+                              setAgentAgingFilter("All");
+                            }}
+                            className={`flex-1 min-w-[130px] text-center py-1.5 px-3 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                              statusFilter === "Rejected"
+                                ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
+                                : "text-slate-600 hover:text-slate-800"
+                            }`}
+                          >
+                            ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isComplaintRejected(c)).length})
+                          </button>
+                        </div>
+
+                        {/* Pending Customers Aging Breakdown Sub-Filter Strip */}
+                        {statusFilter !== "Rejected" && (
+                          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
+                            <div className="flex items-center gap-1.5 text-slate-700">
+                              <Clock className="w-3.5 h-3.5 text-blue-600" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Pending Aging Breakdown:</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter("All")}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
+                                  agentAgingFilter === "All"
+                                    ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                All ({agentAgingBreakdown.total})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter("0-3")}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                                  agentAgingFilter === "0-3"
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-500"
+                                    : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                                0-3 Days ({agentAgingBreakdown["0-3"]})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter("3-5")}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                                  agentAgingFilter === "3-5"
+                                    ? "bg-amber-600 text-white border-amber-600 shadow-xs ring-1 ring-amber-500"
+                                    : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+                                3-5 Days ({agentAgingBreakdown["3-5"]})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter("6-10")}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                                  agentAgingFilter === "6-10"
+                                    ? "bg-orange-600 text-white border-orange-600 shadow-xs ring-1 ring-orange-500"
+                                    : "bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100"
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block"></span>
+                                6-10 Days ({agentAgingBreakdown["6-10"]})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter(">10")}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                                  agentAgingFilter === ">10"
+                                    ? "bg-rose-600 text-white border-rose-600 shadow-xs ring-1 ring-rose-500"
+                                    : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
+                                &gt;10 Days ({agentAgingBreakdown[">10"]})
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
