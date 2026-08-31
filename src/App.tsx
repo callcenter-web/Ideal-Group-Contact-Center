@@ -122,7 +122,7 @@ export default function App() {
   const [stationsList, setStationsList] = useState<StationProfile[]>(STATIONS);
   const [calendarDates, setCalendarDates] = useState<WorkstationCalendarDate[]>(() => getStoredCalendarDates());
   const [emailLogs, setEmailLogs] = useState<SystemicEmailLog[]>(() => getStoredSystemicEmailLogs());
-  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [complaints, setComplaints] = useState<Complaint[]>(DEMO_COMPLAINTS);
 
   // Central Database Sync & Feedback States
   const [dbSaveState, setDbSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -186,10 +186,16 @@ export default function App() {
       ]);
 
       if (resC.success && resC.data) {
-        setComplaints(resC.data);
+        if (resC.data.length > 0) {
+          setComplaints(resC.data);
+        } else {
+          setComplaints(DEMO_COMPLAINTS);
+          saveComplaintsCentral(DEMO_COMPLAINTS);
+        }
         setSupabaseActive(true);
         setSupabaseError(null);
       } else if (!resC.success) {
+        setComplaints(DEMO_COMPLAINTS);
         setSupabaseActive(false);
         setSupabaseError(resC.error || "Failed to load complaints from central database");
       }

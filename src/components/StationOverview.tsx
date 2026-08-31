@@ -17,7 +17,11 @@ import {
   ChevronUp,
   X,
   Database,
-  Search
+  Search,
+  LayoutGrid,
+  Table as TableIcon,
+  PhoneCall,
+  PhoneOff
 } from "lucide-react";
 import { 
   calculateStationMetrics, 
@@ -42,6 +46,7 @@ export default function StationOverview({
   theme = "light" 
 }: StationOverviewProps) {
   const isDark = theme === "dark";
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false);
   const [diagnosticSearch, setDiagnosticSearch] = useState("");
   const [filterStationDiagnostics, setFilterStationDiagnostics] = useState("all");
@@ -93,6 +98,46 @@ export default function StationOverview({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* View Mode Toggle Switch */}
+          <div className={`p-0.5 rounded-lg border flex items-center ${
+            isDark ? "bg-slate-950 border-slate-800" : "bg-slate-100 border-slate-300"
+          }`}>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`px-2.5 py-1 rounded-md text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                viewMode === "table"
+                  ? isDark 
+                    ? "bg-blue-600 text-white shadow-xs" 
+                    : "bg-white text-blue-700 shadow-xs"
+                  : isDark 
+                    ? "text-slate-400 hover:text-slate-200" 
+                    : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="View Station Performance Table"
+            >
+              <TableIcon className="h-3.5 w-3.5" />
+              <span>Table View</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("cards")}
+              className={`px-2.5 py-1 rounded-md text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                viewMode === "cards"
+                  ? isDark 
+                    ? "bg-blue-600 text-white shadow-xs" 
+                    : "bg-white text-blue-700 shadow-xs"
+                  : isDark 
+                    ? "text-slate-400 hover:text-slate-200" 
+                    : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="View Station Cards Matrix"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              <span>Cards Grid</span>
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setShowDiagnosticsModal(true)}
@@ -104,7 +149,7 @@ export default function StationOverview({
             title="Open Data Reconciliation & Audit Engine"
           >
             <Bug className="h-3.5 w-3.5 text-blue-600" />
-            <span>Reconciliation Audit ({auditReport.cleanCasesCount}/{auditReport.totalAudited} Clean)</span>
+            <span>Audit ({auditReport.cleanCasesCount}/{auditReport.totalAudited})</span>
           </button>
         </div>
       </div>
@@ -157,7 +202,244 @@ export default function StationOverview({
         </div>
       </div>
 
-      {/* Grid of Service Station Cards */}
+      {/* Station Performance Content: Table View vs Cards Grid */}
+      {viewMode === "table" ? (
+        <div className={`rounded-xl border overflow-hidden shadow-xs transition-colors duration-300 ${
+          isDark ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+        }`}>
+          <div className={`p-3.5 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+            isDark ? "border-slate-800 bg-slate-950/60" : "border-slate-200 bg-slate-50/70"
+          }`}>
+            <div className="flex items-center gap-2">
+              <TableIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                Service Station Performance Scorecard Table
+              </h4>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold">
+              <span>Click on any station name or rejected count to navigate to that station queue</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse whitespace-nowrap">
+              <thead>
+                <tr className={`border-b text-[10px] font-black uppercase tracking-wider ${
+                  isDark ? "bg-slate-950/90 text-slate-300 border-slate-800" : "bg-slate-100 text-slate-700 border-slate-200"
+                }`}>
+                  <th className="py-3 px-3.5">Service Station</th>
+                  <th className="py-3 px-2 text-center">Total</th>
+                  <th className="py-3 px-2 text-center text-emerald-600 dark:text-emerald-400">Resolved</th>
+                  <th className="py-3 px-2 text-center text-amber-600 dark:text-amber-400">Pending</th>
+                  {/* Station-by-Station Rejected Counts column */}
+                  <th className="py-3 px-2 text-center text-rose-700 bg-rose-50/80 dark:bg-rose-950/40 dark:text-rose-300">
+                    <div className="flex items-center justify-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400 shrink-0" />
+                      <span>Rejected by CC (Re-Action)</span>
+                    </div>
+                  </th>
+                  <th className="py-3 px-2 text-center text-rose-600 dark:text-rose-400">Not Contacted</th>
+                  <th className="py-3 px-2 text-center text-blue-600 dark:text-blue-400">Contacted</th>
+                  <th className="py-3 px-2 text-center text-amber-600 dark:text-amber-400">Attempted</th>
+                  <th className="py-3 px-2 text-center text-emerald-600 dark:text-emerald-400">0-3d (New)</th>
+                  <th className="py-3 px-2 text-center text-amber-600 dark:text-amber-400">3-5d (Pending)</th>
+                  <th className="py-3 px-2 text-center text-orange-600 dark:text-orange-400">6-10d (Esc.)</th>
+                  <th className="py-3 px-2 text-center text-rose-600 dark:text-rose-400">&gt;10d (Crit.)</th>
+                  <th className="py-3 px-2 text-center text-indigo-600 dark:text-indigo-400">CX Recovery %</th>
+                  <th className="py-3 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y text-xs font-medium ${
+                isDark ? "divide-slate-800 text-slate-200" : "divide-slate-100 text-slate-800"
+              }`}>
+                {nationalSummary.stationMetrics.map((stat, idx) => {
+                  const matchedProfile = STATIONS.find(st => st.code === stat.stationCode || st.name === stat.stationName);
+                  const offDates = calendarDates.filter(
+                    d => d.station === "All" || d.station.toLowerCase() === stat.stationName.toLowerCase() || d.station.toLowerCase() === stat.stationCode.toLowerCase()
+                  );
+
+                  return (
+                    <tr 
+                      key={stat.stationCode}
+                      className={`transition-colors ${
+                        idx % 2 === 0 
+                          ? isDark ? "bg-slate-900/60 hover:bg-slate-800/60" : "bg-white hover:bg-slate-50"
+                          : isDark ? "bg-slate-950/40 hover:bg-slate-800/60" : "bg-slate-50/60 hover:bg-slate-100/70"
+                      }`}
+                    >
+                      <td className="py-2.5 px-3.5">
+                        <div className="flex items-center gap-2">
+                          <MapPin className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-red-500" : "text-blue-600"}`} />
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => onSelectStation(stat.stationCode)}
+                              className="font-bold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer text-left flex items-center gap-1.5"
+                            >
+                              <span>{stat.stationName}</span>
+                              <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border ${
+                                isDark ? "bg-slate-950 border-slate-800 text-slate-400" : "bg-slate-100 border-slate-300 text-slate-600"
+                              }`}>
+                                {stat.stationCode}
+                              </span>
+                            </button>
+                            {matchedProfile?.officers && matchedProfile.officers.length > 0 && (
+                              <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                                Mgr: {matchedProfile.officers[0].name}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-black text-slate-900 dark:text-slate-100">
+                        {stat.total}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-bold text-emerald-600 dark:text-emerald-400">
+                        {stat.resolved}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-bold text-amber-600 dark:text-amber-400">
+                        {stat.pending}
+                      </td>
+                      {/* Station-by-Station Rejected Counts badge */}
+                      <td className="py-2.5 px-2 text-center bg-rose-50/50 dark:bg-rose-950/20">
+                        {stat.rejectedReAction > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => onSelectStation(stat.stationCode)}
+                            className="font-black px-2.5 py-0.5 rounded text-xs bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600 shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-all hover:scale-105"
+                            title={`Click to manage ${stat.rejectedReAction} rejected re-action cases for ${stat.stationName}`}
+                          >
+                            <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                            <span>{stat.rejectedReAction}</span>
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 font-bold">0</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <span className={`font-bold ${stat.notContacted > 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-slate-400"}`}>
+                          {stat.notContacted}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <span className={`font-bold ${stat.contacted > 0 ? "text-blue-600 dark:text-blue-400 font-black" : "text-slate-400"}`}>
+                          {stat.contacted}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <span className={`font-bold ${stat.attempted > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
+                          {stat.attempted}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        {stat.sla_0_3}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-mono font-bold text-amber-600 dark:text-amber-400">
+                        {stat.sla_3_5}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-mono font-bold text-orange-600 dark:text-orange-400">
+                        {stat.sla_6_10}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-mono font-bold text-rose-600 dark:text-rose-400">
+                        {stat.sla_gt_10}
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                          {stat.recoveryRate}%
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {onOpenCalendarModal && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenCalendarModal(stat.stationName)}
+                              className={`p-1.5 rounded border transition-all ${
+                                isDark 
+                                  ? "bg-slate-950 border-slate-800 text-blue-400 hover:bg-slate-800" 
+                                  : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                              }`}
+                              title={`View ${offDates.length} Holiday / Calendar Dates`}
+                            >
+                              <Calendar className="h-3 w-3" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onSelectStation(stat.stationCode)}
+                            className={`px-2 py-1 rounded text-[10px] font-black uppercase flex items-center gap-1 transition-all ${
+                              isDark 
+                                ? "bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/60" 
+                                : "bg-blue-600 hover:bg-blue-700 text-white shadow-2xs"
+                            }`}
+                          >
+                            <span>Manage</span>
+                            <ArrowRight className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {/* National Grand Totals Footer */}
+              <tfoot>
+                <tr className={`border-t-2 font-black text-xs ${
+                  isDark ? "bg-slate-950 text-white border-slate-700" : "bg-slate-900 text-white border-slate-800"
+                }`}>
+                  <td className="py-3 px-3.5 uppercase tracking-wider">
+                    Grand Total ({nationalSummary.stationMetrics.length} Stations)
+                  </td>
+                  <td className="py-3 px-2 text-center text-white font-black">
+                    {nationalSummary.totalComplaints}
+                  </td>
+                  <td className="py-3 px-2 text-center text-emerald-400">
+                    {nationalSummary.totalResolved}
+                  </td>
+                  <td className="py-3 px-2 text-center text-amber-400">
+                    {nationalSummary.totalPending}
+                  </td>
+                  {/* Grand Total Rejected */}
+                  <td className="py-3 px-2 text-center text-rose-300 bg-rose-950/40">
+                    <div className="inline-flex items-center gap-1 font-black px-2 py-0.5 rounded bg-rose-600 text-white">
+                      <AlertTriangle className="h-3 w-3" />
+                      <span>{nationalSummary.totalRejectedReAction} Total Rejected</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-2 text-center text-rose-400">
+                    {nationalSummary.totalNotContacted}
+                  </td>
+                  <td className="py-3 px-2 text-center text-blue-400">
+                    {nationalSummary.totalContacted}
+                  </td>
+                  <td className="py-3 px-2 text-center text-amber-400">
+                    {nationalSummary.stationMetrics.reduce((sum, s) => sum + s.attempted, 0)}
+                  </td>
+                  <td className="py-3 px-2 text-center text-emerald-400 font-mono">
+                    {nationalSummary.stationMetrics.reduce((sum, s) => sum + s.sla_0_3, 0)}
+                  </td>
+                  <td className="py-3 px-2 text-center text-amber-400 font-mono">
+                    {nationalSummary.stationMetrics.reduce((sum, s) => sum + s.sla_3_5, 0)}
+                  </td>
+                  <td className="py-3 px-2 text-center text-orange-400 font-mono">
+                    {nationalSummary.stationMetrics.reduce((sum, s) => sum + s.sla_6_10, 0)}
+                  </td>
+                  <td className="py-3 px-2 text-center text-rose-400 font-mono">
+                    {nationalSummary.stationMetrics.reduce((sum, s) => sum + s.sla_gt_10, 0)}
+                  </td>
+                  <td className="py-3 px-2 text-center text-indigo-300">
+                    {nationalSummary.overallRecoveryRate}%
+                  </td>
+                  <td className="py-3 px-3 text-right text-[10px] text-slate-400">
+                    All Stations
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      ) : (
+      /* Grid of Service Station Cards */
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {nationalSummary.stationMetrics.map((stat) => {
           const matchedStationProfile = STATIONS.find(st => st.code === stat.stationCode || st.name === stat.stationName);
@@ -406,6 +688,7 @@ export default function StationOverview({
           );
         })}
       </div>
+      )}
 
       {/* Diagnostics / Reconciliation Modal */}
       {showDiagnosticsModal && (

@@ -521,6 +521,12 @@ export default function ServiceStationContactMonitor({
                 <th className="py-2.5 px-2 text-center text-emerald-600">Contacted</th>
                 <th className="py-2.5 px-2 text-center text-amber-600">Attempted</th>
                 <th className="py-2.5 px-2 text-center text-orange-600">Unreachable</th>
+                <th className="py-2.5 px-2 text-center text-rose-700 bg-rose-100/60 dark:bg-rose-950/40">
+                  <div className="flex items-center justify-center gap-1">
+                    <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
+                    <span>Rejected (Re-Action)</span>
+                  </div>
+                </th>
                 <th className="py-2.5 px-2 text-center text-red-600">SLA Breached</th>
                 <th className="py-2.5 px-3 text-right">Contact Rate</th>
               </tr>
@@ -546,7 +552,7 @@ export default function ServiceStationContactMonitor({
                       >
                         <span>{st.name}</span>
                         {st.rejected > 0 && (
-                          <span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1 py-0.2 rounded" title={`${st.rejected} rejected cases`}>
+                          <span className="text-[9px] font-black text-rose-700 bg-rose-100 dark:bg-rose-950 dark:text-rose-300 px-1.5 py-0.5 rounded border border-rose-300 dark:border-rose-800" title={`${st.rejected} rejected cases requiring re-action`}>
                             {st.rejected} rej
                           </span>
                         )}
@@ -627,6 +633,25 @@ export default function ServiceStationContactMonitor({
                       >
                         {st.unreachable}
                       </button>
+                    </td>
+                    {/* Rejected by CC (Re-Action Required) */}
+                    <td className="py-2 px-2 text-center bg-rose-50/40 dark:bg-rose-950/20">
+                      {st.rejected > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelectStationFilter(st.code);
+                            onSelectContactStatusFilter("ALL");
+                          }}
+                          className="font-black px-2 py-0.5 rounded text-xs bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600 shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-all hover:scale-105"
+                          title={`Click to view ${st.rejected} rejected cases for ${st.name}`}
+                        >
+                          <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                          <span>{st.rejected}</span>
+                        </button>
+                      ) : (
+                        <span className="text-slate-400 font-bold">0</span>
+                      )}
                     </td>
                     <td className="py-2 px-2 text-center">
                       <button

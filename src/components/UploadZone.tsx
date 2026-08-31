@@ -270,6 +270,123 @@ export default function UploadZone({
           if (!customerPhone) missingFields.push("Phone No");
           if (!primaryWoNo) missingFields.push("WO Number");
 
+          // Workflow & Rejection columns if present in file
+          const uploadedStatusStr = getValue(["status", "workflow status", "case status"]);
+          let parsedStatus: "Pending" | "In Progress" | "Contacted" | "Resolved" | "Contacted — Still Dissatisfied" = "Pending";
+          if (uploadedStatusStr) {
+            const sLower = uploadedStatusStr.toLowerCase();
+            if (sLower.includes("resolved") || sLower.includes("satisfied") || sLower.includes("closed")) {
+              parsedStatus = "Resolved";
+            } else if (sLower.includes("still dissatisfied")) {
+              parsedStatus = "Contacted — Still Dissatisfied";
+            } else if (sLower.includes("contacted")) {
+              parsedStatus = "Contacted";
+            } else if (sLower.includes("in progress") || sLower.includes("inprogress")) {
+              parsedStatus = "In Progress";
+            }
+          }
+
+          const rawStationResponse = getValue([
+            "station response status",
+            "station_response_status",
+            "response status",
+            "station response",
+            "rejection status",
+            "re-action status",
+            "call center rejection"
+          ]);
+
+          let stationResponseStatus: any = undefined;
+          if (rawStationResponse) {
+            const respLower = rawStationResponse.toLowerCase();
+            if (respLower.includes("reject") || respLower.includes("returned to service") || respLower.includes("re-action") || respLower.includes("reaction")) {
+              stationResponseStatus = "Rejected by Call Center";
+            } else if (respLower.includes("submitted") || respLower.includes("forwarded") || respLower.includes("call center")) {
+              stationResponseStatus = "Submitted to Call Center";
+            } else if (respLower.includes("draft") || respLower.includes("pending")) {
+              stationResponseStatus = "Pending Station Contact";
+            } else {
+              stationResponseStatus = rawStationResponse;
+            }
+          }
+
+          const stationResolutionNotes = getValue([
+            "station resolution notes",
+            "station resolution",
+            "station notes",
+            "workshop resolution",
+            "action taken by station",
+            "station action"
+          ]);
+
+          const rawStationContactDate = getValue([
+            "station contacted date",
+            "station contacted",
+            "service station contacted date",
+            "date contacted by station",
+            "service station contacted at"
+          ]);
+          const stationContactedDate = formatAndSanitizeDate(rawStationContactDate);
+
+          const stationResponseRejectionReason = getValue([
+            "station response rejection reason",
+            "rejection reason",
+            "rejection remarks",
+            "cc rejection reason",
+            "reason for rejection",
+            "re-action reason"
+          ]);
+
+          const rawStationRejectedDate = getValue([
+            "station response rejected date",
+            "rejected date",
+            "rejection date",
+            "date rejected"
+          ]);
+          const stationResponseRejectedDate = formatAndSanitizeDate(rawStationRejectedDate);
+
+          const stationResponseRejectedBy = getValue([
+            "station response rejected by",
+            "rejected by",
+            "rejecting officer"
+          ]);
+
+          const feedbackStatus = getValue([
+            "feedback status",
+            "feedback_status",
+            "call center feedback",
+            "customer feedback status"
+          ]);
+
+          const finalStatus = getValue([
+            "final status",
+            "final_status",
+            "overall status"
+          ]);
+
+          const callCenterFinalRemarks = getValue([
+            "call center final remarks",
+            "call center remarks",
+            "cc remarks",
+            "call center notes",
+            "final remarks"
+          ]);
+
+          const agentNameVal = getValue([
+            "agent name",
+            "agent",
+            "officer",
+            "call center agent",
+            "handled by",
+            "officer name"
+          ]);
+
+          const serviceStationContactStatus = getValue([
+            "service station contact status",
+            "service_station_contact_status",
+            "station contact status"
+          ]);
+
           const rawComplaint: Complaint = {
             id: primaryId,
             customerName: customerName || "Unknown Customer",
@@ -282,9 +399,9 @@ export default function UploadZone({
             receivedDateTime: finalReceivedDateTime,
             initialSatisfaction: initialSat,
             currentSatisfaction: initialSat,
-            status: "Pending",
+            status: parsedStatus,
             notes: "",
-            agentName: "",
+            agentName: agentNameVal || "",
             callCenterContactedDate: cleanCallCenterDate,
             
             month,
@@ -303,10 +420,17 @@ export default function UploadZone({
             chassiNo,
             npsScore,
 
-            stationContactedDate: "",
-            stationResolutionNotes: "",
-            callCenterFinalRemarks: "",
-            callCenterFinalSatisfaction: undefined
+            stationContactedDate: stationContactedDate || "",
+            stationResolutionNotes: stationResolutionNotes || "",
+            stationResponseStatus: stationResponseStatus || (rawStationResponse ? "Rejected by Call Center" : undefined),
+            stationResponseRejectionReason: stationResponseRejectionReason || undefined,
+            stationResponseRejectedDate: stationResponseRejectedDate || undefined,
+            stationResponseRejectedBy: stationResponseRejectedBy || undefined,
+            feedbackStatus: feedbackStatus || (stationResponseStatus === "Rejected by Call Center" ? "Returned to Service Station" : undefined),
+            finalStatus: finalStatus || (stationResponseStatus === "Rejected by Call Center" ? "Pending with Aftermarket (Re-contact Required)" : undefined),
+            callCenterFinalRemarks: callCenterFinalRemarks || "",
+            callCenterFinalSatisfaction: undefined,
+            serviceStationContactStatus: serviceStationContactStatus || undefined
           };
 
           const complaintObj = sanitizeComplaintDates(rawComplaint);

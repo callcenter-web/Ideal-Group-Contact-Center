@@ -1733,8 +1733,11 @@ export default function ReportsPanel({
                         <div>Pending / In-Progress</div>
                         <div className="text-[8.5px] font-bold text-amber-600/80 dark:text-amber-400/80 lowercase">(pending contact + unreachable + rejected)</div>
                       </th>
-                      <th className="py-3.5 px-3 text-center text-rose-600 dark:text-rose-400">
-                        <div>Rejected by CC</div>
+                      <th className={`py-3.5 px-3 text-center text-rose-600 dark:text-rose-400 ${isDark ? "bg-rose-950/20" : "bg-rose-50/50"}`}>
+                        <div className="flex items-center justify-center gap-1">
+                          <AlertTriangle className="h-3 w-3 text-rose-500" />
+                          <span>Rejected by CC</span>
+                        </div>
                         <div className="text-[8.5px] font-bold text-rose-500/80 lowercase">(escalated / rejected)</div>
                       </th>
                       <th className="py-3.5 px-3 text-center text-emerald-600 dark:text-emerald-400">0-3 Days (New)</th>
@@ -1838,7 +1841,7 @@ export default function ReportsPanel({
                             )}
                           </td>
                           {/* Escalated / Rejected by CC */}
-                          <td className="py-3 px-3 text-center">
+                          <td className={`py-3 px-3 text-center ${isDark ? "bg-rose-950/10" : "bg-rose-50/30"}`}>
                             {sm.escalated > 0 ? (
                               <button
                                 type="button"
@@ -1847,9 +1850,10 @@ export default function ReportsPanel({
                                   handleOpenDrilldown(sm.name, sm.code, "Rejected by Call Center / Escalated", sm.escalatedList, "rose");
                                 }}
                                 title={`Click to view ${sm.escalated} rejected/escalated complaints for ${sm.name}`}
-                                className="font-black px-2 py-0.5 rounded-md text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer hover:underline hover:scale-105 transition-all"
+                                className="font-black px-2.5 py-1 rounded-md text-xs text-rose-700 bg-rose-100 hover:bg-rose-200 dark:text-rose-300 dark:bg-rose-950/70 dark:border-rose-800/80 border border-rose-300 cursor-pointer hover:underline hover:scale-105 transition-all shadow-2xs inline-flex items-center gap-1"
                               >
-                                {sm.escalated}
+                                <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400 shrink-0" />
+                                <span>{sm.escalated}</span>
                               </button>
                             ) : (
                               <span className="text-slate-400 dark:text-slate-600 font-bold">0</span>
@@ -2001,18 +2005,23 @@ export default function ReportsPanel({
                         </button>
                       </td>
                       {/* Grand Escalated */}
-                      <td className="py-3.5 px-3 text-center text-rose-400">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenDrilldown("All Service Stations", "ALL", "Rejected by Call Center / Escalated", grandEscalatedList, "rose");
-                          }}
-                          title={`Click to view ${grandEscalated} rejected/escalated complaints across all stations`}
-                          className="hover:underline font-black cursor-pointer"
-                        >
-                          {grandEscalated}
-                        </button>
+                      <td className="py-3.5 px-3 text-center bg-rose-500/10 text-rose-400">
+                        {grandEscalated > 0 ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDrilldown("All Service Stations", "ALL", "Rejected by Call Center / Escalated", grandEscalatedList, "rose");
+                            }}
+                            title={`Click to view ${grandEscalated} rejected/escalated complaints across all stations`}
+                            className="font-black px-2.5 py-1 rounded-md text-xs bg-rose-500 text-white hover:bg-rose-600 shadow-2xs hover:scale-105 transition-all cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            <span>{grandEscalated}</span>
+                          </button>
+                        ) : (
+                          <span className="font-bold text-slate-400">0</span>
+                        )}
                       </td>
                       {/* Grand 0-3d */}
                       <td className="py-3.5 px-3 text-center text-emerald-400">

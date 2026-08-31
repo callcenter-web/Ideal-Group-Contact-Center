@@ -107,6 +107,8 @@ export interface Complaint {
   // Call center officer and tracking fields
   callCenterOfficer?: string;
   callCenterContactedBy?: string;
+  assignedOfficerId?: string;
+  assigned_officer_id?: string;
   updatedBy?: string;
 
   // Station Response Rejection & Verification tracking
