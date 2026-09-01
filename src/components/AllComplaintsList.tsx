@@ -141,17 +141,34 @@ export default function AllComplaintsList({
 
       // Status
       let matchesStatus = true;
-      if (statusFilter === "rejected") {
+      if (statusFilter === "rejected" || statusFilter === "Rejected") {
         matchesStatus = c.stationResponseStatus === "Rejected" || 
                         c.stationResponseStatus === "Returned to Service Station" ||
                         c.stationResponseStatus === "Rejected by Call Center" ||
                         c.feedbackStatus === "Returned to Service Station";
-      } else if (statusFilter === "to_contact" || statusFilter === "pending") {
-        matchesStatus = getEffectiveStationContactStatus(c) === "NOT_CONTACTED";
+      } else if (statusFilter === "to_contact" || statusFilter === "pending" || statusFilter === "Station To Contact") {
+        matchesStatus = getEffectiveStationContactStatus(c) === "NOT_CONTACTED" && c.status !== "Resolved";
+      } else if (statusFilter === "cc_to_contact") {
+        matchesStatus = getEffectiveStationContactStatus(c) === "CONTACTED" && c.status !== "Resolved" && !c.callCenterFinalRemarks;
       } else if (statusFilter === "station_contacted") {
         matchesStatus = getEffectiveStationContactStatus(c) === "CONTACTED" && c.status !== "Resolved";
+      } else if (statusFilter === "returned_to_cc") {
+        matchesStatus = c.stationResponseStatus === "Returned to Call Center";
+      } else if (statusFilter === "completed_verified") {
+        matchesStatus = c.status === "Resolved" || !!c.callCenterFinalRemarks || c.finalStatus === "Closed" || c.finalStatus === "Completed";
+      } else if (statusFilter === "sla_breached") {
+        const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+        matchesStatus = c.status !== "Resolved" && (ageInfo.workingDaysPassed >= 1 || ageInfo.days >= 1);
+      } else if (statusFilter === "Still Dissatisfied" || statusFilter === "dissatisfied") {
+        matchesStatus = c.status.includes("Dissatisfied") || c.currentSatisfaction === "Dissatisfied" || c.currentSatisfaction === "Very Dissatisfied" || c.feedbackStatus === "Still Dissatisfied";
+      } else if (statusFilter === "Satisfied" || statusFilter === "Resolved") {
+        matchesStatus = c.status === "Resolved" || c.currentSatisfaction === "Satisfied" || c.currentSatisfaction === "Very Satisfied" || c.finalStatus === "Closed" || c.feedbackStatus === "Satisfied";
+      } else if (statusFilter === "Customer Unreachable") {
+        matchesStatus = c.feedbackStatus === "Customer Unreachable" || c.firstAttemptCallStatus === "Customer Unreachable" || c.secondAttemptFeedbackStatus === "Customer Unreachable" || c.firstAttemptCallStatus === "No Answer";
+      } else if (statusFilter === "Follow Up Required") {
+        matchesStatus = c.firstAttemptCallStatus === "Follow Up Required" || c.secondAttemptFeedbackStatus === "Follow Up Required" || c.feedbackStatus === "Follow Up Required";
       } else {
-        matchesStatus = statusFilter === "all" || c.status === statusFilter;
+        matchesStatus = statusFilter === "all" || c.status === statusFilter || c.finalStatus === statusFilter;
       }
 
       // Satisfaction
@@ -479,187 +496,6 @@ export default function AllComplaintsList({
         </div>
       </div>
 
-      {/* PRIMARY FILTER: SERVICE STATION CUSTOMER CONTACT STATUS */}
-      <div className="bg-slate-900 text-white rounded-xl border border-slate-800 p-3.5 shadow-md">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 bg-red-600/30 text-red-400 rounded-lg border border-red-500/40">
-              <PhoneCall className="h-4 w-4" />
-            </span>
-            <div>
-              <span className="text-[11px] font-black tracking-wider uppercase text-slate-100 flex items-center gap-1.5">
-                PRIMARY OPERATIONAL FILTER: SERVICE STATION CONTACT STATUS
-              </span>
-              <span className="text-[10px] text-slate-400 block font-medium">
-                Live status calculated from verified Service Station contact logs &amp; call center feedback
-              </span>
-            </div>
-          </div>
-          {contactStatusFilter !== "ALL" && (
-            <button
-              type="button"
-              onClick={() => {
-                setContactStatusFilter("ALL");
-                setCurrentPage(1);
-              }}
-              className="text-[10px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer underline"
-            >
-              Reset Contact Filter (Show All)
-            </button>
-          )}
-        </div>
-
-        {/* Status Pill Tabs */}
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("ALL");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "ALL" || contactStatusFilter === "all"
-                ? "bg-blue-600 text-white shadow-xs"
-                : "bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60"
-            }`}
-          >
-            <span>ALL COMPLAINTS</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 text-white font-mono">
-              {complaints.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("NOT_CONTACTED");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "NOT_CONTACTED"
-                ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-400"
-                : "bg-rose-950/40 text-rose-300 hover:bg-rose-950/70 border border-rose-900/60"
-            }`}
-          >
-            <span className="h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>
-            <span>🔴 NOT CONTACTED</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-900/80 text-rose-100 font-mono font-bold">
-              {contactStats.notContacted}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("CONTACTED");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "CONTACTED"
-                ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400"
-                : "bg-emerald-950/40 text-emerald-300 hover:bg-emerald-950/70 border border-emerald-900/60"
-            }`}
-          >
-            <span>🟢 CONTACTED</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-900/80 text-emerald-100 font-mono font-bold">
-              {contactStats.contacted}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("CONTACT_ATTEMPTED");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "CONTACT_ATTEMPTED"
-                ? "bg-amber-600 text-white shadow-xs ring-2 ring-amber-400"
-                : "bg-amber-950/40 text-amber-300 hover:bg-amber-950/70 border border-amber-900/60"
-            }`}
-          >
-            <span>🟡 CONTACT ATTEMPTED</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-900/80 text-amber-100 font-mono font-bold">
-              {contactStats.attempted}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("CUSTOMER_UNREACHABLE");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "CUSTOMER_UNREACHABLE"
-                ? "bg-orange-600 text-white shadow-xs ring-2 ring-orange-400"
-                : "bg-orange-950/40 text-orange-300 hover:bg-orange-950/70 border border-orange-900/60"
-            }`}
-          >
-            <span>🟠 CUSTOMER UNREACHABLE</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-orange-900/80 text-orange-100 font-mono font-bold">
-              {contactStats.unreachable}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("PENDING_CONTACT");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "PENDING_CONTACT"
-                ? "bg-slate-600 text-white shadow-xs ring-2 ring-slate-400"
-                : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
-            }`}
-          >
-            <span>⚪ PENDING CONTACT</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-900 text-slate-200 font-mono font-bold">
-              {contactStats.pendingContact}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("SLA_BREACHED");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "SLA_BREACHED"
-                ? "bg-red-700 text-white shadow-xs ring-2 ring-red-400"
-                : "bg-red-950/40 text-red-300 hover:bg-red-950/70 border border-red-900/60"
-            }`}
-          >
-            <ShieldAlert className="h-3.5 w-3.5 text-red-400 shrink-0" />
-            <span>⚠️ SLA BREACHED (&gt;24H)</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-red-900/80 text-red-100 font-mono font-bold">
-              {contactStats.slaBreached}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContactStatusFilter("RETURNED_TO_STATION");
-              setCurrentPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-              contactStatusFilter === "RETURNED_TO_STATION"
-                ? "bg-purple-700 text-white shadow-xs ring-2 ring-purple-400"
-                : "bg-purple-950/40 text-purple-300 hover:bg-purple-950/70 border border-purple-900/60"
-            }`}
-          >
-            <RotateCcw className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-            <span>❌ RETURNED TO STATION</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-900/80 text-purple-100 font-mono font-bold">
-              {contactStats.returned}
-            </span>
-          </button>
-        </div>
-      </div>
-
       {/* Controls & Filter Toolbar */}
       <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
@@ -707,13 +543,28 @@ export default function AllComplaintsList({
               }}
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
-              <option value="all">All Recovery Statuses</option>
-              <option value="to_contact">⚡ Who Has To Contact (Pending Action)</option>
-              <option value="rejected">❌ Response Rejected by Call Center</option>
-              <option value="station_contacted">💬 Station Contacted (Pending & In Progress)</option>
-              <option value="Pending">Pending</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Resolved">Resolved</option>
+              <option value="all">All Recovery Statuses ({complaints.length})</option>
+              <optgroup label="⚡ Workflows & Queues">
+                <option value="cc_to_contact">⚡ Call Center To Contact (Station Contacted)</option>
+                <option value="to_contact">⏳ Station To Contact (Pending Action)</option>
+                <option value="station_contacted">💬 Station Contacted (Pending/In Progress)</option>
+                <option value="rejected">❌ Response Rejected / Returned to Station</option>
+                <option value="returned_to_cc">↩️ Returned to Call Center (by Station)</option>
+                <option value="completed_verified">✅ Completed & Verified</option>
+                <option value="sla_breached">⚠️ SLA Breached (&gt;24H)</option>
+              </optgroup>
+              <optgroup label="📋 Core Statuses">
+                <option value="Pending">🔴 Pending</option>
+                <option value="In Progress">🔵 In Progress</option>
+                <option value="Contacted">🟢 Contacted</option>
+                <option value="Resolved">🟢 Resolved</option>
+              </optgroup>
+              <optgroup label="📞 Feedback & Satisfaction">
+                <option value="Satisfied">🟢 Satisfied</option>
+                <option value="Still Dissatisfied">🔴 Still Dissatisfied</option>
+                <option value="Follow Up Required">🟡 Follow Up Required</option>
+                <option value="Customer Unreachable">🟠 Customer Unreachable</option>
+              </optgroup>
             </select>
           </div>
 

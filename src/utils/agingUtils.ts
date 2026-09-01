@@ -225,25 +225,19 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
 
   if (isActivelyDissatisfied) return false;
 
-  // If the complaint is still in an open/pending status (e.g. Pending, In Progress), it is NOT solved
-  if (c.status === "Pending" || c.status === "In Progress") {
+  // If the complaint is in any open / pending / in-progress status, it is NOT solved and time MUST keep ticking
+  if (
+    c.status === "Pending" || 
+    c.status === "In Progress" || 
+    c.finalStatus === "Open" ||
+    c.finalStatus === "Pending with Aftermarket" ||
+    c.feedbackStatus === "Pending" ||
+    c.feedbackStatus === "Follow Up Required"
+  ) {
     return false;
   }
 
-  const isSatisfied = 
-    c.currentSatisfaction === "Satisfied" || 
-    c.currentSatisfaction === "Very Satisfied" || 
-    c.callCenterFinalSatisfaction === "Satisfied" ||
-    c.callCenterFinalSatisfaction === "Very Satisfied" ||
-    c.firstAttemptCallStatus === "Satisfied" ||
-    c.secondAttemptCallStatus === "Satisfied" ||
-    c.secondAttemptFeedbackStatus === "Satisfied" ||
-    (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
-    (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied") ||
-    c.feedbackStatus === "Satisfied" || 
-    c.feedbackStatus === "Satisfied After Resolution";
-
-  const isResolved = 
+  const isResolvedOrClosed = 
     c.status === "Resolved" || 
     c.finalStatus === "Closed" || 
     c.finalStatus === "Completed" || 
@@ -254,8 +248,12 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
     (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable")) ||
     (c.feedbackStatus === "Customer Unreachable" && (c.attemptCount ?? 0) >= 2);
 
-  // Only freeze time when complaint is officially resolved, satisfied, or closed as unreachable
-  return isSatisfied || isResolved || isUnreachableClosed;
+  const isCallCenterCompletedSatisfied = 
+    (c.callCenterFinalSatisfaction === "Satisfied" || c.callCenterFinalSatisfaction === "Very Satisfied") &&
+    (!!c.callCenterFinalRemarks || isResolvedOrClosed);
+
+  // Only freeze time when complaint is officially resolved, completed & satisfied by call center, or closed as unreachable
+  return isResolvedOrClosed || isUnreachableClosed || isCallCenterCompletedSatisfied;
 };
 
 export const getComplaintAgeInfo = (

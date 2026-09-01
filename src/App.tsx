@@ -31,7 +31,18 @@ import {
   ShieldAlert,
   BarChart2,
   Edit3,
-  CornerDownLeft
+  CornerDownLeft,
+  PhoneCall,
+  CheckCircle2,
+  RotateCcw,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  ArrowRight,
+  ShieldCheck,
+  UserCheck,
+  Check,
+  Workflow
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { Complaint, SatisfactionLevel, FollowUpStatus, AIAnalysis, UserProfile, CallCenterOfficer, StationProfile, WorkstationCalendarDate, CaseHistoryEntry, ContactAttemptEvent } from "./types";
@@ -505,6 +516,7 @@ export default function App() {
 
   // Call Center Quick Filter: To Contact (All Pending CC), 1st Attempt, 2nd Attempt, Rejected List, Completed, Station Pending, All Station Contacted
   const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"to_contact" | "1st_attempt" | "2nd_attempt" | "rejected" | "completed" | "station_pending" | "all">("to_contact");
+  const [showSOPGuide, setShowSOPGuide] = useState<boolean>(false);
 
   // Follow-up form fields
   const [formStatus, setFormStatus] = useState<FollowUpStatus>("Pending");
@@ -1566,24 +1578,65 @@ export default function App() {
           matchesStatus = daysPassed > 10;
         }
       }
-    } else if (statusFilter === "Call Center To Contact (Station Contacted)" || statusFilter === "CC To Contact") {
+    } else if (statusFilter === "Call Center To Contact (Station Contacted)" || statusFilter === "CC To Contact" || statusFilter === "Call Center To Contact") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks;
     } else if (statusFilter === "1st Attempt Required") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
     } else if (statusFilter === "2nd Attempt Required") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
-    } else if (statusFilter === "Rejected") {
+    } else if (statusFilter === "Rejected" || statusFilter === "Response Rejected" || statusFilter === "Returned to Station") {
       matchesStatus = isComplaintRejected(c);
+    } else if (statusFilter === "Returned to Call Center") {
+      matchesStatus = c.stationResponseStatus === "Returned to Call Center";
+    } else if (statusFilter === "Completed" || statusFilter === "Completed & Verified by Call Center") {
+      matchesStatus = isComplaintCompleted(c) || !!c.callCenterFinalRemarks;
     } else if (statusFilter === "Station Contacted (Pending/In-Progress)") {
       matchesStatus = isStationContacted(c) && !isComplaintCompleted(c);
-    } else if (statusFilter === "Station To Contact (Pending Station Action)" || statusFilter === "Pending Station Contact") {
+    } else if (statusFilter === "Station To Contact (Pending Station Action)" || statusFilter === "Pending Station Contact" || statusFilter === "Not Contacted") {
       matchesStatus = !isStationContacted(c) && !isComplaintCompleted(c);
+    } else if (statusFilter === "Contacted") {
+      matchesStatus = isStationContacted(c) || c.status === "Contacted";
+    } else if (statusFilter === "Contact Attempted") {
+      matchesStatus = !!c.firstAttemptCallStatus || (c.attemptCount !== undefined && c.attemptCount > 0);
+    } else if (statusFilter === "Customer Unreachable") {
+      matchesStatus = c.feedbackStatus === "Customer Unreachable" || c.firstAttemptCallStatus === "Customer Unreachable" || c.secondAttemptFeedbackStatus === "Customer Unreachable" || c.firstAttemptCallStatus === "No Answer";
+    } else if (statusFilter === "No Answer") {
+      matchesStatus = c.firstAttemptCallStatus === "No Answer" || c.secondAttemptCallStatus === "No Answer" || c.feedbackStatus === "No Answer";
+    } else if (statusFilter === "Customer Busy") {
+      matchesStatus = c.firstAttemptCallStatus === "Customer Busy" || c.secondAttemptCallStatus === "Customer Busy" || c.feedbackStatus === "Customer Busy";
+    } else if (statusFilter === "Customer Not Interested") {
+      matchesStatus = c.firstAttemptCallStatus === "Customer Not Interested" || c.secondAttemptFeedbackStatus === "Customer Not Interested" || c.feedbackStatus === "Customer Not Interested";
+    } else if (statusFilter === "Invalid Details") {
+      matchesStatus = c.firstAttemptCallStatus === "Invalid Details" || c.firstAttemptCallStatus === "Invalid Number" || c.secondAttemptFeedbackStatus === "Invalid Details" || c.secondAttemptFeedbackStatus === "Invalid Number";
+    } else if (statusFilter === "No solution Received") {
+      matchesStatus = c.secondAttemptFeedbackStatus === "No solution Received" || c.feedbackStatus === "No solution Received";
+    } else if (statusFilter === "Escalated") {
+      matchesStatus = c.secondAttemptFeedbackStatus === "Escalated" || c.feedbackStatus === "Escalated";
+    } else if (statusFilter === "SLA Breached (>24H)") {
+      const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      matchesStatus = !isComplaintCompleted(c) && (ageInfo.workingDaysPassed >= 1 || ageInfo.days >= 1);
+    } else if (statusFilter === "Still Dissatisfied" || statusFilter === "Contacted — Still Dissatisfied" || statusFilter === "Contacted - Still Dissatisfied") {
+      matchesStatus = c.status.includes("Dissatisfied") || c.currentSatisfaction === "Dissatisfied" || c.currentSatisfaction === "Very Dissatisfied" || c.secondAttemptFeedbackStatus === "Still Dissatisfied" || c.feedbackStatus === "Still Dissatisfied" || c.feedbackStatus === "Not Satisfied";
+    } else if (statusFilter === "Satisfied" || statusFilter === "Resolved") {
+      matchesStatus = c.status === "Resolved" || c.currentSatisfaction === "Satisfied" || c.currentSatisfaction === "Very Satisfied" || c.callCenterFinalSatisfaction === "Satisfied" || c.callCenterFinalSatisfaction === "Very Satisfied" || c.finalStatus === "Closed" || c.finalStatus === "Completed" || c.feedbackStatus === "Satisfied";
+    } else if (statusFilter === "Follow Up Required") {
+      matchesStatus = c.firstAttemptCallStatus === "Follow Up Required" || c.secondAttemptFeedbackStatus === "Follow Up Required" || c.feedbackStatus === "Follow Up Required";
+    } else if (statusFilter === "Open") {
+      matchesStatus = c.finalStatus === "Open" || c.status === "Pending";
+    } else if (statusFilter === "Pending with Aftermarket") {
+      matchesStatus = c.finalStatus === "Pending with Aftermarket";
+    } else if (statusFilter === "Solution Received") {
+      matchesStatus = c.finalStatus === "Solution Received";
+    } else if (statusFilter === "Closed") {
+      matchesStatus = c.finalStatus === "Closed" || c.status === "Resolved";
     } else if (statusFilter === "To Contact") {
       matchesStatus = currentUser.role === "callcenter"
         ? (isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks)
         : !isStationContacted(c);
     } else if (statusFilter === "Pending") {
-      matchesStatus = !isStationContacted(c);
+      matchesStatus = !isStationContacted(c) || c.status === "Pending";
+    } else if (statusFilter === "In Progress") {
+      matchesStatus = c.status === "In Progress" || (isStationContacted(c) && !isComplaintCompleted(c));
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
     }
@@ -2419,90 +2472,295 @@ NOTIFY pgrst, 'reload schema';
                 <div id="controls-panel" className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
                   <div className="flex flex-col gap-2.5">
                     
-                    {/* Call Center Filter Tabs (Showing all cases ready for Call Center contact after station contacted, plus status breakdowns) */}
-                    {currentUser.role === "callcenter" && (
-                      <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("to_contact")}
-                          className={`flex-1 min-w-[130px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "to_contact"
-                              ? "bg-white text-blue-700 shadow-xs border border-blue-300 font-extrabold ring-1 ring-blue-400"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                          title="All complaints where Service Station has contacted and Call Center follow-up is pending"
-                        >
-                          ⚡ Call Center To Contact ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("1st_attempt")}
-                          className={`flex-1 min-w-[95px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "1st_attempt"
-                              ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          📞 1st Attempt ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("2nd_attempt")}
-                          className={`flex-1 min-w-[95px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "2nd_attempt"
-                              ? "bg-white text-amber-700 shadow-xs border border-amber-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          🔁 2nd Attempt ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1))).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("rejected")}
-                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "rejected"
-                              ? "bg-white text-rose-700 shadow-xs border border-rose-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          ↩️ Returned / Rejected ({complaints.filter(c => isComplaintRejected(c)).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("completed")}
-                          className={`flex-1 min-w-[85px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "completed"
-                              ? "bg-white text-green-700 shadow-xs border border-green-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          ✅ Completed ({complaints.filter(c => isComplaintCompleted(c) || !!c.callCenterFinalRemarks).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("station_pending")}
-                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "station_pending"
-                              ? "bg-white text-indigo-700 shadow-xs border border-indigo-200 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                          title="Complaints where Service Station has not yet contacted the customer"
-                        >
-                          ⏳ Station Pending ({complaints.filter(c => !isStationContacted(c) && !isComplaintCompleted(c)).length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCallCenterQuickFilter("all")}
-                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                            callCenterQuickFilter === "all"
-                              ? "bg-white text-slate-800 shadow-xs border border-slate-300 font-extrabold"
-                              : "text-slate-600 hover:text-slate-800"
-                          }`}
-                        >
-                          All Contacted ({complaints.filter(c => isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c)).length})
-                        </button>
-                      </div>
-                    )}
+                    {/* Call Center Operations Console & Parallel Verification Hub */}
+                    {currentUser.role === "callcenter" && (() => {
+                      const statTotalContacted = complaints.filter(c => isStationContacted(c)).length;
+                      const statSolvedCC = complaints.filter(c => isStationContacted(c) && (isComplaintCompleted(c) || !!c.callCenterFinalRemarks || c.status === "Resolved" || c.callCenterFinalSatisfaction === "Satisfied")).length;
+                      const statPendingCC = complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks).length;
+                      const stat1stAttempt = complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0)).length;
+                      const stat2ndAttempt = complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1))).length;
+                      const statReturnedCC = complaints.filter(c => isComplaintRejected(c)).length;
+                      const statStationPending = complaints.filter(c => !isStationContacted(c) && !isComplaintCompleted(c)).length;
+                      const ccSolvedRate = statTotalContacted > 0 ? Math.round((statSolvedCC / statTotalContacted) * 100) : 0;
+
+                      return (
+                        <div className="space-y-2.5">
+                          {/* Parallel Cross-Verification Bar */}
+                          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-xl p-3 border border-slate-700 shadow-sm">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-700/70">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1.5 bg-blue-500/20 text-blue-400 rounded-lg border border-blue-400/30">
+                                  <ShieldCheck className="h-4 w-4" />
+                                </span>
+                                <div>
+                                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-100 flex items-center gap-1.5">
+                                    Call Center Parallel Verification Console
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 block font-medium">
+                                    Cross-auditing Service Station contacted cases vs. Call Center verified resolutions
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSOPGuide(!showSOPGuide)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                                    showSOPGuide
+                                      ? "bg-blue-600 text-white border-blue-400 shadow-sm"
+                                      : "bg-slate-800 text-slate-200 hover:bg-slate-700 border-slate-600"
+                                  }`}
+                                >
+                                  <Workflow className="h-3.5 w-3.5 text-blue-300" />
+                                  <span>{showSOPGuide ? "Hide SOP Guide" : "Customer Contact SOP"}</span>
+                                  {showSOPGuide ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Verification Metrics Matrix */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2.5">
+                              <div className="bg-slate-800/80 rounded-lg p-2 border border-slate-700">
+                                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold block">Station Contacted</span>
+                                <div className="flex items-baseline justify-between mt-0.5">
+                                  <span className="text-base font-black text-white font-mono">{statTotalContacted}</span>
+                                  <span className="text-[10px] text-blue-400 font-medium">100% Actioned</span>
+                                </div>
+                              </div>
+
+                              <div 
+                                onClick={() => setCallCenterQuickFilter("completed")}
+                                className="bg-emerald-950/40 hover:bg-emerald-950/60 transition-colors rounded-lg p-2 border border-emerald-800/60 cursor-pointer"
+                              >
+                                <span className="text-[9px] uppercase tracking-wider text-emerald-400 font-bold flex items-center justify-between">
+                                  <span>CC Solved &amp; Verified</span>
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                                </span>
+                                <div className="flex items-baseline justify-between mt-0.5">
+                                  <span className="text-base font-black text-emerald-300 font-mono">{statSolvedCC}</span>
+                                  <span className="text-[10px] text-emerald-400 font-bold font-mono">{ccSolvedRate}% Solved</span>
+                                </div>
+                              </div>
+
+                              <div 
+                                onClick={() => setCallCenterQuickFilter("to_contact")}
+                                className="bg-blue-950/40 hover:bg-blue-950/60 transition-colors rounded-lg p-2 border border-blue-800/60 cursor-pointer"
+                              >
+                                <span className="text-[9px] uppercase tracking-wider text-blue-400 font-bold flex items-center justify-between">
+                                  <span>CC Follow-up Pending</span>
+                                  <Clock className="h-3 w-3 text-blue-400" />
+                                </span>
+                                <div className="flex items-baseline justify-between mt-0.5">
+                                  <span className="text-base font-black text-blue-300 font-mono">{statPendingCC}</span>
+                                  <span className="text-[10px] text-blue-300 font-medium">{stat1stAttempt} 1st / {stat2ndAttempt} 2nd</span>
+                                </div>
+                              </div>
+
+                              <div 
+                                onClick={() => setCallCenterQuickFilter("rejected")}
+                                className="bg-rose-950/40 hover:bg-rose-950/60 transition-colors rounded-lg p-2 border border-rose-800/60 cursor-pointer"
+                              >
+                                <span className="text-[9px] uppercase tracking-wider text-rose-400 font-bold flex items-center justify-between">
+                                  <span>Returned to Station</span>
+                                  <RotateCcw className="h-3 w-3 text-rose-400" />
+                                </span>
+                                <div className="flex items-baseline justify-between mt-0.5">
+                                  <span className="text-base font-black text-rose-300 font-mono">{statReturnedCC}</span>
+                                  <span className="text-[10px] text-rose-400 font-medium">Needs Rework</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Standard Operating Procedure (SOP) Quick Guide */}
+                          {showSOPGuide && (
+                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-3.5 shadow-xs text-slate-800 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="p-1 bg-blue-600 text-white rounded-md">
+                                    <PhoneCall className="h-3.5 w-3.5" />
+                                  </span>
+                                  <span className="text-xs font-black text-blue-950 uppercase tracking-wide">
+                                    Standard Operating Procedure (SOP): Customer Contact Protocol
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-200">
+                                  Ideal Motors CX Protocol
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5 pt-1">
+                                <div className="bg-white p-2.5 rounded-lg border border-blue-100 shadow-2xs">
+                                  <div className="flex items-center gap-1.5 text-blue-700 font-black text-[11px] mb-1">
+                                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">1</span>
+                                    <span>Verify Station Action</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                                    Review technician resolution notes, replaced spare parts, and the exact date the service station contacted the customer.
+                                  </p>
+                                </div>
+
+                                <div className="bg-white p-2.5 rounded-lg border border-blue-100 shadow-2xs">
+                                  <div className="flex items-center gap-1.5 text-blue-700 font-black text-[11px] mb-1">
+                                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">2</span>
+                                    <span>Dial Customer</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                                    Call registered phone (1st Attempt / 2nd Attempt within 08:30–17:00). Inquire if vehicle is operating smoothly post-service.
+                                  </p>
+                                </div>
+
+                                <div className="bg-white p-2.5 rounded-lg border border-blue-100 shadow-2xs">
+                                  <div className="flex items-center gap-1.5 text-blue-700 font-black text-[11px] mb-1">
+                                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">3</span>
+                                    <span>Record CSAT &amp; Status</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                                    Capture feedback: <strong>Satisfied</strong>, <strong>Still Dissatisfied</strong>, <strong>Customer Busy</strong>, or <strong>No Answer</strong>.
+                                  </p>
+                                </div>
+
+                                <div className="bg-white p-2.5 rounded-lg border border-blue-100 shadow-2xs">
+                                  <div className="flex items-center gap-1.5 text-blue-700 font-black text-[11px] mb-1">
+                                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">4</span>
+                                    <span>Finalize or Return</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                                    If Satisfied, mark <strong>Completed</strong>. If Dissatisfied, choose <strong>Reject &amp; Return to Station</strong> for rework.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Actionable Tab Navigation Bar */}
+                          <div className="flex bg-slate-100/90 p-1 rounded-xl gap-1 self-start w-full overflow-x-auto border border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("to_contact")}
+                              className={`flex-1 min-w-[130px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "to_contact"
+                                  ? "bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                              title="All complaints where Service Station has contacted and Call Center follow-up is pending"
+                            >
+                              <span>⚡ CC To Contact</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "to_contact" ? "bg-white/20 text-white" : "bg-blue-100 text-blue-800"
+                              }`}>
+                                {statPendingCC}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("1st_attempt")}
+                              className={`flex-1 min-w-[95px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "1st_attempt"
+                                  ? "bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                            >
+                              <span>📞 1st Attempt</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "1st_attempt" ? "bg-white/20 text-white" : "bg-slate-200 text-slate-800"
+                              }`}>
+                                {stat1stAttempt}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("2nd_attempt")}
+                              className={`flex-1 min-w-[95px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "2nd_attempt"
+                                  ? "bg-amber-600 text-white shadow-xs font-black ring-2 ring-amber-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                            >
+                              <span>🔁 2nd Attempt</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "2nd_attempt" ? "bg-white/20 text-white" : "bg-amber-100 text-amber-900"
+                              }`}>
+                                {stat2ndAttempt}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("completed")}
+                              className={`flex-1 min-w-[100px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "completed"
+                                  ? "bg-emerald-600 text-white shadow-xs font-black ring-2 ring-emerald-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                            >
+                              <Check className="h-3 w-3" />
+                              <span>Solved &amp; Closed</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "completed" ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-900"
+                              }`}>
+                                {statSolvedCC}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("rejected")}
+                              className={`flex-1 min-w-[110px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "rejected"
+                                  ? "bg-rose-600 text-white shadow-xs font-black ring-2 ring-rose-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              <span>Returned / Rejected</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "rejected" ? "bg-white/20 text-white" : "bg-rose-100 text-rose-900"
+                              }`}>
+                                {statReturnedCC}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("station_pending")}
+                              className={`flex-1 min-w-[110px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "station_pending"
+                                  ? "bg-indigo-600 text-white shadow-xs font-black ring-2 ring-indigo-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                              title="Complaints where Service Station has not yet contacted the customer"
+                            >
+                              <span>⏳ Station Pending</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "station_pending" ? "bg-white/20 text-white" : "bg-indigo-100 text-indigo-900"
+                              }`}>
+                                {statStationPending}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCallCenterQuickFilter("all")}
+                              className={`flex-1 min-w-[100px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                                callCenterQuickFilter === "all"
+                                  ? "bg-slate-800 text-white shadow-xs font-black ring-2 ring-slate-400"
+                                  : "text-slate-700 hover:bg-slate-200/70"
+                              }`}
+                            >
+                              <span>All Contacted</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                                callCenterQuickFilter === "all" ? "bg-white/20 text-white" : "bg-slate-200 text-slate-800"
+                              }`}>
+                                {statTotalContacted}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Service Station Filter Tabs (Only showing pending / actionable customers for station) */}
                     {currentUser.role === "agent" && (
@@ -2652,17 +2910,44 @@ NOTIFY pgrst, 'reload schema';
                                 onChange={(e) => setStatusFilter(e.target.value)}
                                 className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
                               >
-                                <option value="All">All Statuses</option>
-                                <option value="Call Center To Contact (Station Contacted)">⚡ Call Center To Contact (After Station Contacted)</option>
-                                <option value="1st Attempt Required">📞 1st Attempt Required (Call Center)</option>
-                                <option value="2nd Attempt Required">🔁 2nd Attempt Required (Call Center)</option>
-                                <option value="Station To Contact (Pending Station Action)">⏳ Station To Contact (Pending Station Action)</option>
-                                <option value="Rejected">❌ Response Rejected by Call Center</option>
-                                <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
-                                <option value="Pending">Pending</option>
-                                <option value="In Progress">In Progress</option>
-                                <option value="Contacted">Contacted</option>
-                                <option value="Resolved">Resolved</option>
+                                <option value="All">All Statuses ({complaints.length})</option>
+                                <optgroup label="⚡ Call Center & Station Queues">
+                                  <option value="Call Center To Contact (Station Contacted)">⚡ Call Center To Contact (Station Contacted)</option>
+                                  <option value="1st Attempt Required">📞 1st Attempt Required (Call Center)</option>
+                                  <option value="2nd Attempt Required">🔁 2nd Attempt Required (Call Center)</option>
+                                  <option value="Station To Contact (Pending Station Action)">⏳ Station To Contact (Pending Action)</option>
+                                  <option value="Station Contacted (Pending/In-Progress)">💬 Station Contacted (Pending & In Progress)</option>
+                                  <option value="Rejected">❌ Response Rejected / Returned to Station</option>
+                                  <option value="Returned to Call Center">↩️ Returned to Call Center (by Station)</option>
+                                  <option value="Completed">✅ Completed & Verified by Call Center</option>
+                                  <option value="SLA Breached (>24H)">⚠️ SLA Breached (&gt;24 Hours)</option>
+                                </optgroup>
+                                <optgroup label="📋 Core Statuses">
+                                  <option value="Pending">🔴 Pending</option>
+                                  <option value="In Progress">🔵 In Progress</option>
+                                  <option value="Contacted">🟢 Contacted</option>
+                                  <option value="Contact Attempted">🟡 Contact Attempted</option>
+                                  <option value="Contacted — Still Dissatisfied">🟠 Contacted — Still Dissatisfied</option>
+                                  <option value="Resolved">🟢 Resolved</option>
+                                </optgroup>
+                                <optgroup label="📞 Customer Feedback & Satisfaction">
+                                  <option value="Satisfied">🟢 Satisfied</option>
+                                  <option value="Still Dissatisfied">🔴 Still Dissatisfied / Not Satisfied</option>
+                                  <option value="Follow Up Required">🟡 Follow Up Required</option>
+                                  <option value="Customer Unreachable">🟠 Customer Unreachable</option>
+                                  <option value="No Answer">📵 No Answer</option>
+                                  <option value="Customer Busy">⏱️ Customer Busy</option>
+                                  <option value="Customer Not Interested">⚪ Customer Not Interested</option>
+                                  <option value="Invalid Details">⚠️ Invalid Details / Number</option>
+                                  <option value="No solution Received">❌ No Solution Received</option>
+                                  <option value="Escalated">🚨 Escalated</option>
+                                </optgroup>
+                                <optgroup label="⚙️ Operational Lifecycle">
+                                  <option value="Open">Open</option>
+                                  <option value="Pending with Aftermarket">Pending with Aftermarket</option>
+                                  <option value="Solution Received">Solution Received</option>
+                                  <option value="Closed">Closed</option>
+                                </optgroup>
                               </select>
                             </div>
 
