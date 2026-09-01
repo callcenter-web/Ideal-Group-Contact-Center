@@ -503,8 +503,8 @@ export default function App() {
   const [startDateFilter, setStartDateFilter] = useState<string>("");
   const [endDateFilter, setEndDateFilter] = useState<string>("");
 
-  // Call Center Quick Filter: 1st Attempt, 2nd Attempt, Rejected List, Completed, All Station Contacted
-  const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"1st_attempt" | "2nd_attempt" | "rejected" | "completed" | "all">("1st_attempt");
+  // Call Center Quick Filter: To Contact (All Pending CC), 1st Attempt, 2nd Attempt, Rejected List, Completed, Station Pending, All Station Contacted
+  const [callCenterQuickFilter, setCallCenterQuickFilter] = useState<"to_contact" | "1st_attempt" | "2nd_attempt" | "rejected" | "completed" | "station_pending" | "all">("to_contact");
 
   // Follow-up form fields
   const [formStatus, setFormStatus] = useState<FollowUpStatus>("Pending");
@@ -1566,6 +1566,8 @@ export default function App() {
           matchesStatus = daysPassed > 10;
         }
       }
+    } else if (statusFilter === "Call Center To Contact (Station Contacted)" || statusFilter === "CC To Contact") {
+      matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks;
     } else if (statusFilter === "1st Attempt Required") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
     } else if (statusFilter === "2nd Attempt Required") {
@@ -1574,7 +1576,13 @@ export default function App() {
       matchesStatus = isComplaintRejected(c);
     } else if (statusFilter === "Station Contacted (Pending/In-Progress)") {
       matchesStatus = isStationContacted(c) && !isComplaintCompleted(c);
-    } else if (statusFilter === "Pending" || statusFilter === "To Contact") {
+    } else if (statusFilter === "Station To Contact (Pending Station Action)" || statusFilter === "Pending Station Contact") {
+      matchesStatus = !isStationContacted(c) && !isComplaintCompleted(c);
+    } else if (statusFilter === "To Contact") {
+      matchesStatus = currentUser.role === "callcenter"
+        ? (isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks)
+        : !isStationContacted(c);
+    } else if (statusFilter === "Pending") {
       matchesStatus = !isStationContacted(c);
     } else {
       matchesStatus = statusFilter === "All" || c.status === statusFilter;
@@ -1583,10 +1591,13 @@ export default function App() {
     // Category filter
     const matchesCategory = categoryFilter === "All" || c.category === categoryFilter;
 
-    // Call Center Quick Filter (Excludes uncontacted customers by service station)
+    // Call Center Quick Filter (Filter by actionability from Service Station to Call Center)
     let matchesCallCenterQuick = true;
     if (currentUser.role === "callcenter") {
-      if (callCenterQuickFilter === "1st_attempt") {
+      if (callCenterQuickFilter === "to_contact") {
+        // All complaints where Service Station HAS contacted, and Call Center follow-up is pending (1st + 2nd attempt)
+        matchesCallCenterQuick = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks;
+      } else if (callCenterQuickFilter === "1st_attempt") {
         // 1st Attempt: Service station HAS contacted, Call Center 1st attempt pending, not rejected, not completed
         matchesCallCenterQuick = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
       } else if (callCenterQuickFilter === "2nd_attempt") {
@@ -1598,6 +1609,9 @@ export default function App() {
       } else if (callCenterQuickFilter === "completed") {
         // Completed: Call Center final remarks logged or Resolved or Satisfied
         matchesCallCenterQuick = isComplaintCompleted(c) || !!c.callCenterFinalRemarks;
+      } else if (callCenterQuickFilter === "station_pending") {
+        // Station Contact Pending: Service Station has not contacted the customer yet
+        matchesCallCenterQuick = !isStationContacted(c) && !isComplaintCompleted(c);
       } else if (callCenterQuickFilter === "all") {
         // All Station Contacted: ONLY complaints contacted by service station or rejected or completed by Call Center
         matchesCallCenterQuick = isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c);
@@ -2405,15 +2419,27 @@ NOTIFY pgrst, 'reload schema';
                 <div id="controls-panel" className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
                   <div className="flex flex-col gap-2.5">
                     
-                    {/* Call Center Filter Tabs (Only showing customers contacted by Service Station) */}
+                    {/* Call Center Filter Tabs (Showing all cases ready for Call Center contact after station contacted, plus status breakdowns) */}
                     {currentUser.role === "callcenter" && (
                       <div className="flex bg-slate-100 p-0.5 rounded-md gap-0.5 self-start w-full overflow-x-auto">
                         <button
                           type="button"
+                          onClick={() => setCallCenterQuickFilter("to_contact")}
+                          className={`flex-1 min-w-[130px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            callCenterQuickFilter === "to_contact"
+                              ? "bg-white text-blue-700 shadow-xs border border-blue-300 font-extrabold ring-1 ring-blue-400"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                          title="All complaints where Service Station has contacted and Call Center follow-up is pending"
+                        >
+                          ⚡ Call Center To Contact ({complaints.filter(c => isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks).length})
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setCallCenterQuickFilter("1st_attempt")}
-                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[95px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "1st_attempt"
-                              ? "bg-white text-blue-700 shadow-xs border border-blue-200"
+                              ? "bg-white text-blue-700 shadow-xs border border-blue-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
@@ -2422,9 +2448,9 @@ NOTIFY pgrst, 'reload schema';
                         <button
                           type="button"
                           onClick={() => setCallCenterQuickFilter("2nd_attempt")}
-                          className={`flex-1 min-w-[100px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[95px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "2nd_attempt"
-                              ? "bg-white text-amber-700 shadow-xs border border-amber-200"
+                              ? "bg-white text-amber-700 shadow-xs border border-amber-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
@@ -2444,9 +2470,9 @@ NOTIFY pgrst, 'reload schema';
                         <button
                           type="button"
                           onClick={() => setCallCenterQuickFilter("completed")}
-                          className={`flex-1 min-w-[90px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[85px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "completed"
-                              ? "bg-white text-green-700 shadow-xs border border-green-200"
+                              ? "bg-white text-green-700 shadow-xs border border-green-200 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
@@ -2454,14 +2480,26 @@ NOTIFY pgrst, 'reload schema';
                         </button>
                         <button
                           type="button"
+                          onClick={() => setCallCenterQuickFilter("station_pending")}
+                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                            callCenterQuickFilter === "station_pending"
+                              ? "bg-white text-indigo-700 shadow-xs border border-indigo-200 font-extrabold"
+                              : "text-slate-600 hover:text-slate-800"
+                          }`}
+                          title="Complaints where Service Station has not yet contacted the customer"
+                        >
+                          ⏳ Station Pending ({complaints.filter(c => !isStationContacted(c) && !isComplaintCompleted(c)).length})
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setCallCenterQuickFilter("all")}
-                          className={`flex-1 min-w-[120px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
+                          className={`flex-1 min-w-[110px] text-center py-1.5 px-2 text-[11px] font-bold rounded-md transition-all cursor-pointer whitespace-nowrap ${
                             callCenterQuickFilter === "all"
-                              ? "bg-white text-slate-800 shadow-xs border border-slate-300"
+                              ? "bg-white text-slate-800 shadow-xs border border-slate-300 font-extrabold"
                               : "text-slate-600 hover:text-slate-800"
                           }`}
                         >
-                          All Station Contacted ({complaints.filter(c => isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c)).length})
+                          All Contacted ({complaints.filter(c => isStationContacted(c) || isComplaintRejected(c) || !!c.callCenterFinalRemarks || isComplaintCompleted(c)).length})
                         </button>
                       </div>
                     )}
@@ -2615,7 +2653,10 @@ NOTIFY pgrst, 'reload schema';
                                 className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-700 cursor-pointer focus:outline-none focus:border-blue-500 font-medium"
                               >
                                 <option value="All">All Statuses</option>
-                                <option value="To Contact">⚡ Who Has To Contact (Action Required)</option>
+                                <option value="Call Center To Contact (Station Contacted)">⚡ Call Center To Contact (After Station Contacted)</option>
+                                <option value="1st Attempt Required">📞 1st Attempt Required (Call Center)</option>
+                                <option value="2nd Attempt Required">🔁 2nd Attempt Required (Call Center)</option>
+                                <option value="Station To Contact (Pending Station Action)">⏳ Station To Contact (Pending Station Action)</option>
                                 <option value="Rejected">❌ Response Rejected by Call Center</option>
                                 <option value="Station Contacted (Pending/In-Progress)">⚡ Station Contacted (Pending & In Progress)</option>
                                 <option value="Pending">Pending</option>
