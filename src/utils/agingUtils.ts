@@ -210,6 +210,26 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
 
   if (isRejected) return false;
 
+  // If customer is actively Dissatisfied / Not Satisfied / Still Dissatisfied, the complaint is NOT solved and time MUST NOT freeze
+  const isActivelyDissatisfied = 
+    c.currentSatisfaction === "Very Dissatisfied" ||
+    c.currentSatisfaction === "Dissatisfied" ||
+    c.feedbackStatus === "Still Dissatisfied" ||
+    c.feedbackStatus === "Not Satisfied" ||
+    c.secondAttemptFeedbackStatus === "Still Dissatisfied" ||
+    c.secondAttemptFeedbackStatus === "Not Satisfied" ||
+    c.status === "Contacted — Still Dissatisfied" ||
+    c.status === "Contacted - Still Dissatisfied" ||
+    c.finalStatus === "Contacted — Still Dissatisfied" ||
+    c.finalStatus === "Contacted - Still Dissatisfied";
+
+  if (isActivelyDissatisfied) return false;
+
+  // If the complaint is still in an open/pending status (e.g. Pending, In Progress), it is NOT solved
+  if (c.status === "Pending" || c.status === "In Progress") {
+    return false;
+  }
+
   const isSatisfied = 
     c.currentSatisfaction === "Satisfied" || 
     c.currentSatisfaction === "Very Satisfied" || 
@@ -219,57 +239,23 @@ export const isComplaintTimeFrozen = (c?: Complaint): boolean => {
     c.secondAttemptCallStatus === "Satisfied" ||
     c.secondAttemptFeedbackStatus === "Satisfied" ||
     (c.secondAttemptCallStatus === "Connected" && c.secondAttemptFeedbackStatus === "Satisfied") ||
-    (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied");
-
-  const isResolved = 
-    c.status === "Resolved" || 
-    c.status === "Contacted — Still Dissatisfied" ||
-    c.status === "Contacted - Still Dissatisfied" ||
-    c.finalStatus === "Closed" || 
-    c.finalStatus === "Completed" || 
-    c.finalStatus === "Resolved" || 
-    c.finalStatus === "Contacted — Still Dissatisfied" ||
-    c.finalStatus === "Contacted - Still Dissatisfied" ||
+    (c.firstAttemptCallStatus === "Connected" && c.feedbackStatus === "Satisfied") ||
     c.feedbackStatus === "Satisfied" || 
     c.feedbackStatus === "Satisfied After Resolution";
 
-  // Check if Service Station/Center process has been completed
-  const isStationDone = !!(
-    (c.stationContactedDate && c.stationContactedDate.trim().length > 0) ||
-    (c.stationResolutionNotes && c.stationResolutionNotes.trim().length > 0) ||
-    c.serviceStationContactStatus === "CONTACTED" ||
-    (c.serviceStationContactedAt && c.serviceStationContactedAt.trim().length > 0) ||
-    c.stationResponseStatus === "Submitted to Call Center"
-  );
+  const isResolved = 
+    c.status === "Resolved" || 
+    c.finalStatus === "Closed" || 
+    c.finalStatus === "Completed" || 
+    c.finalStatus === "Resolved";
 
-  // Check if Call Center process has been completed
-  const isCallCenterDone = !!(
-    (c.callCenterContactedDate && c.callCenterContactedDate.trim().length > 0) ||
-    (c.callCenterFinalRemarks && c.callCenterFinalRemarks.trim().length > 0) ||
-    (c.callCenterFinalSatisfaction && c.callCenterFinalSatisfaction.trim().length > 0) ||
-    c.feedbackStatus === "Still Dissatisfied" ||
-    c.feedbackStatus === "Not Satisfied" ||
-    c.secondAttemptFeedbackStatus === "Still Dissatisfied" ||
-    c.secondAttemptFeedbackStatus === "Not Satisfied"
-  );
-
-  const isUnreachable = 
-    c.feedbackStatus === "Customer Unreachable" || 
-    c.firstAttemptCallStatus === "Customer Unreachable" || 
-    c.firstAttemptCallStatus === "Customer Busy" || 
-    c.firstAttemptCallStatus === "No Answer" ||
-    c.firstAttemptCallStatus === "Invalid Details" ||
-    c.firstAttemptCallStatus === "Invalid Number" ||
-    c.secondAttemptCallStatus === "Customer Unreachable" || 
-    c.secondAttemptCallStatus === "Customer Busy" || 
-    c.secondAttemptCallStatus === "No Answer" ||
-    c.secondAttemptCallStatus === "Invalid Details" ||
-    c.secondAttemptCallStatus === "Invalid Number" ||
+  const isUnreachableClosed = 
     c.finalStatus === "Unreachable" ||
-    (typeof c.finalStatus === "string" && c.finalStatus.includes("Unreachable"));
+    (typeof c.finalStatus === "string" && c.finalStatus.toLowerCase().includes("unreachable")) ||
+    (c.feedbackStatus === "Customer Unreachable" && (c.attemptCount ?? 0) >= 2);
 
-  // Only freeze time when both Service Station AND Call Center processes are completed, OR the complaint is officially resolved/closed/satisfied/unreachable
-  return isSatisfied || isResolved || (isStationDone && isCallCenterDone) || isUnreachable;
+  // Only freeze time when complaint is officially resolved, satisfied, or closed as unreachable
+  return isSatisfied || isResolved || isUnreachableClosed;
 };
 
 export const getComplaintAgeInfo = (
@@ -296,21 +282,11 @@ export const getComplaintAgeInfo = (
 
   const compDate = parseComplaintDate(c.date, c.receivedDateTime);
 
-  // Check if time calculation should be frozen:
-  // 1) Resolved / Closed / Satisfied
-  // 2) Call Center Contacted without unreachable
-  const isResolved = 
-    c.status === "Resolved" || 
-    c.finalStatus === "Closed" || 
-    c.feedbackStatus === "Satisfied" || 
-    c.callCenterFinalSatisfaction === "Satisfied" || 
-    c.callCenterFinalSatisfaction === "Very Satisfied";
-
   const isTimeFrozen = isComplaintTimeFrozen(c);
 
   let effectiveRefDate = referenceDate;
   if (isTimeFrozen) {
-    const resDateStr = c.callCenterContactedDate || c.secondAttemptDate || c.firstAttemptDate || c.solutionDate || c.stationContactedDate || c.updatedAt || c.date;
+    const resDateStr = c.solutionDate || c.callCenterContactedDate || c.secondAttemptDate || c.firstAttemptDate || c.stationContactedDate || c.updatedAt;
     let parsedResDate = parseComplaintDate(resDateStr);
     if (isNaN(parsedResDate.getTime()) || parsedResDate.getTime() <= compDate.getTime()) {
       // Default to 4 hours after creation date if resolution time was date-only
@@ -337,17 +313,11 @@ export const getComplaintAgeInfo = (
 
   if (isTimeFrozen) {
     category = days <= 3 ? "0-3 Days (New)" : days <= 5 ? "3-5 Days (Pending)" : days <= 10 ? "6-10 Days (Escalated)" : ">10 Days (Critical)";
-    badgeColorClass = isResolved 
-      ? "bg-emerald-100 text-emerald-900 border-emerald-400 font-extrabold"
-      : "bg-blue-100 text-blue-900 border-blue-400 font-extrabold";
-    textColorClass = isResolved ? "text-emerald-700" : "text-blue-700";
-    bgColorClass = isResolved ? "bg-emerald-600" : "bg-blue-600";
-    deadlineStatus = isResolved 
-      ? "COMPLETED & RESOLVED (Time Frozen)" 
-      : "CALL CENTER CONTACTED (Time Frozen at Contact)";
-    nextMilestoneText = isResolved
-      ? `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`
-      : `Call Center Contacted in ${formattedTimeString} duration • Timer Frozen on ${c.callCenterContactedDate}`;
+    badgeColorClass = "bg-emerald-100 text-emerald-900 border-emerald-400 font-extrabold";
+    textColorClass = "text-emerald-700";
+    bgColorClass = "bg-emerald-600";
+    deadlineStatus = "COMPLETED & RESOLVED (Time Frozen)";
+    nextMilestoneText = `Resolved in ${formattedTimeString} total duration • Timer Frozen at Resolution Date`;
     return { days, hours, minutes, seconds, workingDaysPassed: days, formattedTimeString, category, deadlineStatus, nextMilestoneText, badgeColorClass, textColorClass, bgColorClass };
   }
 
