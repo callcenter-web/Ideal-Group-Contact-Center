@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Complaint, StationProfile, SystemicEmailLog, UserProfile } from "../types";
+import { Complaint, StationProfile, SystemicEmailLog, UserProfile, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { 
   Building2, 
@@ -33,6 +33,7 @@ interface StationDirectoryAndEmailModalProps {
   currentUser: UserProfile;
   complaints: Complaint[];
   emailLogs: SystemicEmailLog[];
+  calendarDates?: WorkstationCalendarDate[];
   onRefreshEmailLogs?: () => void;
 }
 
@@ -42,6 +43,7 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   currentUser,
   complaints,
   emailLogs,
+  calendarDates = [],
   onRefreshEmailLogs,
 }) => {
   const [activeTab, setActiveTab] = useState<"directory" | "logs">("directory");
@@ -50,6 +52,8 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [expandedStationCode, setExpandedStationCode] = useState<string | null>(null);
   const [filterStationsWithPendingOnly, setFilterStationsWithPendingOnly] = useState<boolean>(false);
+  const [includeCalendarNotice, setIncludeCalendarNotice] = useState<boolean>(true);
+  const [includeErrorReportingNotice, setIncludeErrorReportingNotice] = useState<boolean>(true);
 
   if (!isOpen) return null;
 
@@ -223,6 +227,44 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
       msg += `   * > 5 Days (Escalated): ${agingOver5} case(s)\n\n`;
     }
 
+    // 5. Workstation Calendar & Scheduled Events Advisory
+    if (includeCalendarNotice) {
+      msg += `5. WORKSTATION CALENDAR & SCHEDULED EVENTS ADVISORY:\n`;
+      msg += `   * Please ensure your workshop management and service advisors regularly check the Workstation Calendar & Events in the portal.\n`;
+      msg += `   * Verify all operating days, scheduled holidays, and special working days that govern SLA deadlines.\n`;
+
+      const stationNameLower = station.name.toLowerCase();
+      const stationCodeLower = (station.code || "").toLowerCase();
+      const relevantCalendarDates = (calendarDates || [])
+        .filter(
+          (cd) =>
+            cd.station === "All" ||
+            cd.station.toLowerCase() === stationNameLower ||
+            cd.station.toLowerCase() === stationCodeLower ||
+            cd.station.toLowerCase().includes(stationCodeLower)
+        )
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      if (relevantCalendarDates.length > 0) {
+        msg += `   * Upcoming Scheduled Dates & Events:\n`;
+        relevantCalendarDates.slice(0, 5).forEach((cd) => {
+          const typeLabel = cd.type === "off_day" ? "[Off Day / Holiday]" : "[Special Working Day]";
+          const stLabel = cd.station === "All" ? "All Stations" : cd.station;
+          msg += `     - ${cd.date}: ${typeLabel} ${cd.reason} (${stLabel})\n`;
+        });
+      } else {
+        msg += `   * Standard operational schedule currently applies.\n`;
+      }
+      msg += `\n`;
+    }
+
+    // 6. Error & Discrepancy Reporting Directive
+    if (includeErrorReportingNotice) {
+      msg += `6. DISCREPANCY & ERROR REPORTING DIRECTIVE:\n`;
+      msg += `   * Notice an error or discrepancy? Please feel free to let us know immediately if there are any errors or discrepancies in complaint allocations, vehicle registrations, customer contact details, or assigned SLA dates.\n`;
+      msg += `   * If any case has been assigned to ${station.name} in error, reply directly to callcenter@idealgroup.lk or phone Central Call Center so we can rectify the system records promptly.\n\n`;
+    }
+
     msg += `HOW TO TAKE ACTION:\n`;
     msg += `Please log into the Ideal Group Complaint System Portal to view individual vehicle numbers, customer contact numbers, and complaint descriptions. After contacting the customer and providing a solution, submit 'Date Contacted' and 'Solution Provided' in the system.\n\n`;
     msg += `For central support: callcenter@idealgroup.lk\n\n`;
@@ -275,7 +317,11 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
 
     const pendingCases = getPendingCasesToContact(stationComplaints);
     const targetList = pendingCases.length > 0 ? pendingCases : stationComplaints;
-    const newLogs = dispatchSystemicEmailsForComplaints(targetList);
+    const newLogs = dispatchSystemicEmailsForComplaints(targetList, {
+      includeCalendarNotice,
+      includeErrorReportingNotice,
+      calendarDates,
+    });
 
     setDispatchStatusMsg(`✅ Email successfully dispatched to ${station.name} (${pendingCases.length} pending cases to contact) from callcenter@idealgroup.lk`);
     if (onRefreshEmailLogs) onRefreshEmailLogs();
@@ -307,11 +353,24 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
 
     let bodyText = `From: callcenter@idealgroup.lk\nTo: ${recipients}\nStation: ${station.name}\n\n`;
     if (count === 0) {
-      bodyText += `Dear Station Team,\n\nAll complaints assigned to ${station.name} are currently contacted and resolved. No pending cases requiring contact.\n\nRegards,\nCentral Call Center\ncallcenter@idealgroup.lk`;
+      bodyText += `Dear Station Team,\n\nAll complaints assigned to ${station.name} are currently contacted and resolved. No pending cases requiring contact.\n\n`;
+      if (includeCalendarNotice) {
+        bodyText += `* CALENDAR & EVENTS: Please check your portal Workstation Calendar & Events for scheduled holidays and operational dates impacting SLA.\n`;
+      }
+      if (includeErrorReportingNotice) {
+        bodyText += `* ERROR REPORTING: Please feel free to let us know if there are any errors or discrepancies by replying to this email.\n`;
+      }
+      bodyText += `\nRegards,\nCentral Call Center\ncallcenter@idealgroup.lk`;
     } else {
       bodyText += `Dear ${station.name} Workshop Team,\n\nPlease note the following summary of cases requiring customer contact:\n\n`;
       bodyText += `* Total Cases Pending Contact: ${count}\n`;
       bodyText += `* Newly Appointed (Last 24h): ${newlyAppointedCount}\n\n`;
+      if (includeCalendarNotice) {
+        bodyText += `* CALENDAR & EVENTS: Please review the Workstation Calendar & Events in the portal to verify operating days & holiday SLA timelines.\n`;
+      }
+      if (includeErrorReportingNotice) {
+        bodyText += `* ERROR REPORTING: Please feel free to let us know immediately if there are any errors or discrepancies in allocations or details.\n\n`;
+      }
       bodyText += `Please log into the Ideal Group Complaint System Portal to view individual customer records and record Date Contacted and Solution Provided.\n\nRegards,\nCentral Call Center\nIdeal Group Sri Lanka\ncallcenter@idealgroup.lk`;
     }
 
@@ -443,6 +502,127 @@ export const StationDirectoryAndEmailModal: React.FC<StationDirectoryAndEmailMod
           {/* TAB 1: WORKSTATION DIRECTORY */}
           {activeTab === "directory" && (
             <div className="space-y-4">
+              {/* Configurable Email Content & Directives Options Bar */}
+              <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5 uppercase tracking-wide">
+                      <Mail className="h-3.5 w-3.5 text-blue-600" />
+                      Email Content & Notice Options
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
+                      &bull; Customize operational notices included in station emails & mailto links
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIncludeCalendarNotice(true);
+                        setIncludeErrorReportingNotice(true);
+                      }}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                    >
+                      Enable Both
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIncludeCalendarNotice(false);
+                        setIncludeErrorReportingNotice(false);
+                      }}
+                      className="text-[10px] font-bold text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                    >
+                      Disable Both
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {/* Option 1: Calendar & Events Notice */}
+                  <label
+                    id="email-option-calendar-events"
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                      includeCalendarNotice
+                        ? "bg-blue-50/70 border-blue-200 text-blue-950 shadow-2xs"
+                        : "bg-slate-50/60 border-slate-200 text-slate-500 hover:bg-slate-100/60"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={includeCalendarNotice}
+                      onChange={(e) => setIncludeCalendarNotice(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1 font-bold">
+                        <span className="flex items-center gap-1.5 text-blue-900">
+                          <Calendar className="h-3.5 w-3.5 text-blue-600" />
+                          <span>Review Workstation Calendar & Events</span>
+                        </span>
+                        <span
+                          className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                            includeCalendarNotice
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {includeCalendarNotice ? "INCLUDED" : "EXCLUDED"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                        Tells the service station to check the Workstation Calendar & scheduled events (holidays, off-days & extra working days) that impact SLA deadlines.
+                      </p>
+                      {calendarDates && calendarDates.length > 0 && (
+                        <div className="mt-1.5 text-[10px] text-blue-700 font-semibold flex items-center gap-1">
+                          <span>📌 {calendarDates.length} calendar schedule date(s) registered in portal</span>
+                        </div>
+                      )}
+                    </div>
+                  </label>
+
+                  {/* Option 2: Error Reporting Notice */}
+                  <label
+                    id="email-option-error-reporting"
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                      includeErrorReportingNotice
+                        ? "bg-amber-50/70 border-amber-200 text-amber-950 shadow-2xs"
+                        : "bg-slate-50/60 border-slate-200 text-slate-500 hover:bg-slate-100/60"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={includeErrorReportingNotice}
+                      onChange={(e) => setIncludeErrorReportingNotice(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1 font-bold">
+                        <span className="flex items-center gap-1.5 text-amber-900">
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                          <span>Report Errors & Discrepancies</span>
+                        </span>
+                        <span
+                          className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                            includeErrorReportingNotice
+                              ? "bg-amber-600 text-white"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {includeErrorReportingNotice ? "INCLUDED" : "EXCLUDED"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                        Directs station: <em>"Please feel free to let us know if there are any errors or discrepancies"</em> in complaint allocations, vehicle numbers, or details by contacting Central Call Center.
+                      </p>
+                      <div className="mt-1.5 text-[10px] text-amber-700 font-semibold flex items-center gap-1">
+                        <span>✉️ Direct reply to callcenter@idealgroup.lk</span>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
               <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl text-xs text-blue-950 flex items-start justify-between gap-2.5">
                 <div className="flex items-start gap-2.5">
                   <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />

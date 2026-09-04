@@ -399,7 +399,11 @@ export default function App() {
 
     // If service station changed, dispatch automated email notification to the new station
     if (isStationChanged) {
-      dispatchSystemicEmailsForComplaints([updated]);
+      dispatchSystemicEmailsForComplaints([updated], {
+        calendarDates,
+        includeCalendarNotice: true,
+        includeErrorReportingNotice: true,
+      });
     }
   };
 
@@ -743,7 +747,11 @@ export default function App() {
     saveComplaints(updatedList);
 
     // Auto dispatch systemic emails to workshop personnel for newly added complaints
-    const dispatched = dispatchSystemicEmailsForComplaints(newComplaints);
+    const dispatched = dispatchSystemicEmailsForComplaints(newComplaints, {
+      calendarDates,
+      includeCalendarNotice: true,
+      includeErrorReportingNotice: true,
+    });
     if (dispatched.length > 0) {
       setEmailLogs(prev => [...dispatched, ...prev]);
     }
@@ -856,7 +864,11 @@ export default function App() {
     saveComplaints(updated);
 
     // Auto dispatch systemic email notice for manual complaint
-    const dispatched = dispatchSystemicEmailsForComplaints([newComplaint]);
+    const dispatched = dispatchSystemicEmailsForComplaints([newComplaint], {
+      calendarDates,
+      includeCalendarNotice: true,
+      includeErrorReportingNotice: true,
+    });
     if (dispatched.length > 0) {
       setEmailLogs(prev => [...dispatched, ...prev]);
     }
@@ -1563,21 +1575,6 @@ export default function App() {
       } else {
         matchesStatus = !isStationContacted(c);
       }
-      
-      // If agent selected an SLA Aging bucket
-      if (matchesStatus && agentAgingFilter !== "All") {
-        const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
-        const daysPassed = ageInfo.workingDaysPassed ?? ageInfo.days;
-        if (agentAgingFilter === "0-3") {
-          matchesStatus = daysPassed <= 3;
-        } else if (agentAgingFilter === "3-5") {
-          matchesStatus = daysPassed > 3 && daysPassed <= 5;
-        } else if (agentAgingFilter === "6-10") {
-          matchesStatus = daysPassed > 5 && daysPassed <= 10;
-        } else if (agentAgingFilter === ">10") {
-          matchesStatus = daysPassed > 10;
-        }
-      }
     } else if (statusFilter === "Call Center To Contact (Station Contacted)" || statusFilter === "CC To Contact" || statusFilter === "Call Center To Contact") {
       matchesStatus = isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks;
     } else if (statusFilter === "1st Attempt Required") {
@@ -1710,7 +1707,23 @@ export default function App() {
       }
     }
 
-    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick && matchesAddedDate;
+    // Colour & SLA Aging Filter (Applies to all roles: Call Center, Service Station Agent, and Admin)
+    let matchesAgingColor = true;
+    if (agentAgingFilter !== "All") {
+      const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
+      const daysPassed = ageInfo.workingDaysPassed ?? ageInfo.days;
+      if (agentAgingFilter === "0-3") {
+        matchesAgingColor = daysPassed <= 3;
+      } else if (agentAgingFilter === "3-5") {
+        matchesAgingColor = daysPassed > 3 && daysPassed <= 5;
+      } else if (agentAgingFilter === "6-10") {
+        matchesAgingColor = daysPassed > 5 && daysPassed <= 10;
+      } else if (agentAgingFilter === ">10") {
+        matchesAgingColor = daysPassed > 10;
+      }
+    }
+
+    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick && matchesAddedDate && matchesAgingColor;
   });
 
   // Calculate high-level KPIs for filtered view
@@ -1728,33 +1741,58 @@ export default function App() {
   ).length;
   const recoveryRate = totalCount > 0 ? Math.round((recoveredCount / totalCount) * 100) : 0;
 
-  // Agent Station Pending Complaints Aging Breakdown (0-3, 3-5, 6-10, >10 days)
-  const agentStationPendingComplaints = complaints.filter(
-    (c) => matchesStationCodeOrName(c.station, currentUser.station) && !isStationContacted(c)
-  );
-  const agentAgingBreakdown = {
-    total: agentStationPendingComplaints.length,
-    "0-3": agentStationPendingComplaints.filter((c) => {
+  // Complaints for Calculating Aging / Colour Breakdown Counts in current active context
+  const activeQueueForAging = complaints.filter((c) => {
+    const activeStation = currentUser.role === "agent" ? currentUser.station : stationFilter;
+    if (!matchesStationCodeOrName(c.station, activeStation)) return false;
+
+    if (currentUser.role === "agent") {
+      if (statusFilter === "Rejected") return isComplaintRejected(c);
+      return !isStationContacted(c);
+    } else if (currentUser.role === "callcenter") {
+      if (callCenterQuickFilter === "to_contact") {
+        return isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks;
+      } else if (callCenterQuickFilter === "1st_attempt") {
+        return isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!c.firstAttemptCallStatus || c.attemptCount === 0);
+      } else if (callCenterQuickFilter === "2nd_attempt") {
+        return isStationContacted(c) && !isComplaintRejected(c) && !isComplaintCompleted(c) && !c.callCenterFinalRemarks && (!!c.firstAttemptCallStatus || (c.attemptCount && c.attemptCount >= 1));
+      } else if (callCenterQuickFilter === "rejected") {
+        return isComplaintRejected(c);
+      } else if (callCenterQuickFilter === "completed") {
+        return isComplaintCompleted(c) || !!c.callCenterFinalRemarks;
+      } else if (callCenterQuickFilter === "station_pending") {
+        return !isStationContacted(c) && !isComplaintCompleted(c);
+      }
+    }
+    return true;
+  });
+
+  const agingColorBreakdown = {
+    total: activeQueueForAging.length,
+    "0-3": activeQueueForAging.filter((c) => {
       const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
       const days = age.workingDaysPassed ?? age.days;
       return days <= 3;
     }).length,
-    "3-5": agentStationPendingComplaints.filter((c) => {
+    "3-5": activeQueueForAging.filter((c) => {
       const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
       const days = age.workingDaysPassed ?? age.days;
       return days > 3 && days <= 5;
     }).length,
-    "6-10": agentStationPendingComplaints.filter((c) => {
+    "6-10": activeQueueForAging.filter((c) => {
       const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
       const days = age.workingDaysPassed ?? age.days;
       return days > 5 && days <= 10;
     }).length,
-    ">10": agentStationPendingComplaints.filter((c) => {
+    ">10": activeQueueForAging.filter((c) => {
       const age = getComplaintAgeInfo(c, tickerDate, calendarDates);
       const days = age.workingDaysPassed ?? age.days;
       return days > 10;
     }).length,
   };
+
+  // Backwards-compatibility alias for agent views
+  const agentAgingBreakdown = agingColorBreakdown;
 
   // Unique lists for dropdowns
   const categories = Array.from(new Set(complaints.map((c) => c.category)));
@@ -1957,17 +1995,19 @@ export default function App() {
                 id="btn-open-station-directory"
                 type="button"
                 onClick={() => setShowStationDirectoryModal(true)}
-                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs ${
+                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md border text-[11px] font-bold transition-all cursor-pointer shadow-xs active:scale-98 ${
                   isDark
-                    ? "bg-amber-950/40 border-amber-800 text-amber-300 hover:bg-amber-900/50"
-                    : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
+                    ? "bg-amber-950/50 border-amber-700/80 text-amber-200 hover:bg-amber-900/60 hover:border-amber-600 focus:ring-2 focus:ring-amber-500/30"
+                    : "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 hover:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
                 }`}
-                title="View Workstation Personnel Contacts & Systemic Dispatch Logs"
+                title="View Station Directory, Systemic Email Matrix & Calendar/Events Notices"
               >
-                <Mail className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                <div className={`p-0.5 rounded ${isDark ? "bg-amber-900/60" : "bg-amber-100"}`}>
+                  <Mail className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                </div>
                 <span>Station Contacts & Emails</span>
                 {emailLogs.length > 0 && (
-                  <span className="ml-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                  <span className="ml-0.5 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
                     {emailLogs.length}
                   </span>
                 )}
@@ -2438,11 +2478,12 @@ NOTIFY pgrst, 'reload schema';
               />
               <MetricCard
                 theme={theme}
-                title="Contacted & Not Satisfied"
-                value={contactedCount}
-                subtitle={`${notSatisfiedCount} Not Satisfied • In Recovery`}
-                icon={<Settings className="h-4.5 w-4.5 text-blue-500" />}
-                colorClass="bg-blue-50 border-blue-200 text-blue-700 shadow-sm"
+                title="Still Dissatisfied After the Solution"
+                value={notSatisfiedCount}
+                subtitle={`${contactedCount} Station Contacted • In Recovery`}
+                icon={<AlertCircle className="h-4.5 w-4.5 text-orange-500" />}
+                colorClass="bg-orange-50 border-orange-200 text-orange-700 shadow-sm"
+                onClick={() => setStatusFilter("Still Dissatisfied")}
               />
               <MetricCard
                 theme={theme}
@@ -2795,79 +2836,88 @@ NOTIFY pgrst, 'reload schema';
                             ❌ Rejected List ({complaints.filter(c => matchesStationCodeOrName(c.station, currentUser.station) && isComplaintRejected(c)).length})
                           </button>
                         </div>
-
-                        {/* Pending Customers Aging Breakdown Sub-Filter Strip */}
-                        {statusFilter !== "Rejected" && (
-                          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
-                            <div className="flex items-center gap-1.5 text-slate-700">
-                              <Clock className="w-3.5 h-3.5 text-blue-600" />
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Pending Aging Breakdown:</span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter("All")}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
-                                  agentAgingFilter === "All"
-                                    ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                                }`}
-                              >
-                                All ({agentAgingBreakdown.total})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter("0-3")}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                                  agentAgingFilter === "0-3"
-                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-500"
-                                    : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
-                                }`}
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                                0-3 Days ({agentAgingBreakdown["0-3"]})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter("3-5")}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                                  agentAgingFilter === "3-5"
-                                    ? "bg-amber-600 text-white border-amber-600 shadow-xs ring-1 ring-amber-500"
-                                    : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
-                                }`}
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
-                                3-5 Days ({agentAgingBreakdown["3-5"]})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter("6-10")}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                                  agentAgingFilter === "6-10"
-                                    ? "bg-orange-600 text-white border-orange-600 shadow-xs ring-1 ring-orange-500"
-                                    : "bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100"
-                                }`}
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block"></span>
-                                6-10 Days ({agentAgingBreakdown["6-10"]})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter(">10")}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                                  agentAgingFilter === ">10"
-                                    ? "bg-rose-600 text-white border-rose-600 shadow-xs ring-1 ring-rose-500"
-                                    : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
-                                }`}
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
-                                &gt;10 Days ({agentAgingBreakdown[">10"]})
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
+
+                    {/* Universal Colour & SLA Aging Filter Strip (Available for Call Center, Station Agent, and Admin) */}
+                    <div id="aging-color-filter-strip" className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs">
+                      <div className="flex items-center gap-1.5 text-slate-700">
+                        <Clock className="w-3.5 h-3.5 text-blue-600" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1">
+                          <span>🎨 Colour &amp; SLA Aging Filter:</span>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          id="color-filter-all"
+                          onClick={() => setAgentAgingFilter("All")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
+                            agentAgingFilter === "All"
+                              ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700"
+                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          All ({agingColorBreakdown.total})
+                        </button>
+                        <button
+                          type="button"
+                          id="color-filter-0-3"
+                          onClick={() => setAgentAgingFilter(agentAgingFilter === "0-3" ? "All" : "0-3")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                            agentAgingFilter === "0-3"
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-2 ring-emerald-500 font-black"
+                              : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                          }`}
+                          title="Filter 0-3 Days: Green (New / On-Track)"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shadow-xs"></span>
+                          <span>0-3 Days Green ({agingColorBreakdown["0-3"]})</span>
+                        </button>
+                        <button
+                          type="button"
+                          id="color-filter-3-5"
+                          onClick={() => setAgentAgingFilter(agentAgingFilter === "3-5" ? "All" : "3-5")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                            agentAgingFilter === "3-5"
+                              ? "bg-amber-600 text-white border-amber-600 shadow-xs ring-2 ring-amber-500 font-black"
+                              : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                          }`}
+                          title="Filter 3-5 Days: Amber (Pending Warning)"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shadow-xs"></span>
+                          <span>3-5 Days Amber ({agingColorBreakdown["3-5"]})</span>
+                        </button>
+                        <button
+                          type="button"
+                          id="color-filter-6-10"
+                          onClick={() => setAgentAgingFilter(agentAgingFilter === "6-10" ? "All" : "6-10")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                            agentAgingFilter === "6-10"
+                              ? "bg-orange-600 text-white border-orange-600 shadow-xs ring-2 ring-orange-500 font-black"
+                              : "bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100"
+                          }`}
+                          title="Filter 6-10 Days: Orange (Escalated)"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-orange-500 inline-block shadow-xs"></span>
+                          <span>6-10 Days Orange ({agingColorBreakdown["6-10"]})</span>
+                        </button>
+                        <button
+                          type="button"
+                          id="color-filter-gt-10"
+                          onClick={() => setAgentAgingFilter(agentAgingFilter === ">10" ? "All" : ">10")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
+                            agentAgingFilter === ">10"
+                              ? "bg-rose-600 text-white border-rose-600 shadow-xs ring-2 ring-rose-500 font-black"
+                              : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
+                          }`}
+                          title="Filter >10 Days: Red (Critical SLA Breach)"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-rose-500 inline-block shadow-xs"></span>
+                          <span>&gt;10 Days Red ({agingColorBreakdown[">10"]})</span>
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Search row */}
                     <div className="relative">
@@ -2884,7 +2934,7 @@ NOTIFY pgrst, 'reload schema';
 
                     {/* Filters Row */}
                     <div className="space-y-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                         {(currentUser.role === "admin" || currentUser.role === "callcenter") ? (
                           <>
                             <div className="flex flex-col">
@@ -2967,11 +3017,39 @@ NOTIFY pgrst, 'reload schema';
                             </div>
                           </>
                         ) : (
-                          <div className="sm:col-span-2 flex items-center justify-between text-xs text-slate-600 bg-blue-50/60 border border-blue-100 px-3 py-1.5 rounded-md font-medium">
+                          <div className="sm:col-span-3 flex items-center justify-between text-xs text-slate-600 bg-blue-50/60 border border-blue-100 px-3 py-1.5 rounded-md font-medium">
                             <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Lock Station: <strong className="text-blue-700">{currentUser.station} HQ</strong></span>
                             <span className="text-[11px] text-blue-700 font-semibold">Showing Pending Action Queue Only</span>
                           </div>
                         )}
+
+                        {/* Colour & SLA Aging Filter Dropdown */}
+                        <div className="flex flex-col">
+                          <label className="text-[10px] text-purple-700 font-bold uppercase mb-1 flex items-center justify-between">
+                            <span>🎨 Colour / SLA</span>
+                            {agentAgingFilter !== "All" && (
+                              <button
+                                type="button"
+                                onClick={() => setAgentAgingFilter("All")}
+                                className="text-[9px] text-rose-600 hover:underline cursor-pointer lowercase"
+                              >
+                                reset
+                              </button>
+                            )}
+                          </label>
+                          <select
+                            id="filter-color-aging-dropdown"
+                            value={agentAgingFilter}
+                            onChange={(e) => setAgentAgingFilter(e.target.value as any)}
+                            className="bg-white border border-purple-200 rounded-md px-2 py-1 text-xs text-slate-800 font-bold cursor-pointer focus:outline-none focus:border-purple-500"
+                          >
+                            <option value="All">🎨 All Colours ({agingColorBreakdown.total})</option>
+                            <option value="0-3">🟢 Green: 0-3 Days ({agingColorBreakdown["0-3"]})</option>
+                            <option value="3-5">🟡 Amber: 3-5 Days ({agingColorBreakdown["3-5"]})</option>
+                            <option value="6-10">🟠 Orange: 6-10 Days ({agingColorBreakdown["6-10"]})</option>
+                            <option value=">10">🔴 Red: &gt;10 Days ({agingColorBreakdown[">10"]})</option>
+                          </select>
+                        </div>
 
                         {/* Added Date Filter */}
                         <div className="flex flex-col">
@@ -3036,11 +3114,82 @@ NOTIFY pgrst, 'reload schema';
                 </div>
 
                 {/* Complaints List Header Bar */}
-                <div className="flex items-center justify-between py-1 px-1.5 bg-slate-100 rounded-md border border-slate-200 mb-2">
-                  <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider pl-1">
-                    Complaints Inventory ({filteredComplaints.length})
-                  </span>
-                  <div className="flex gap-1.5">
+                <div className="flex flex-wrap items-center justify-between py-1.5 px-2 bg-slate-100 rounded-md border border-slate-200 mb-2 gap-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider pl-1">
+                      Complaints Inventory ({filteredComplaints.length})
+                    </span>
+                    {agentAgingFilter !== "All" && (
+                      <span className="inline-flex items-center gap-1.5 text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white shadow-2xs">
+                        <span>Colour:</span>
+                        <span className="flex items-center gap-1">
+                          <span className={`w-2 h-2 rounded-full inline-block ${
+                            agentAgingFilter === "0-3" ? "bg-emerald-400" :
+                            agentAgingFilter === "3-5" ? "bg-amber-400" :
+                            agentAgingFilter === "6-10" ? "bg-orange-400" : "bg-rose-400"
+                          }`}></span>
+                          {agentAgingFilter === "0-3" ? "0-3 Days Green" :
+                           agentAgingFilter === "3-5" ? "3-5 Days Amber" :
+                           agentAgingFilter === "6-10" ? "6-10 Days Orange" : ">10 Days Red"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setAgentAgingFilter("All")}
+                          className="ml-0.5 hover:text-rose-300 text-slate-300 font-black cursor-pointer px-0.5"
+                          title="Clear colour filter"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Quick 1-click Color Filter Buttons */}
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1.5 py-0.5 shadow-2xs">
+                      <span className="text-[9px] font-bold text-slate-500 mr-0.5">Colour:</span>
+                      <button
+                        type="button"
+                        onClick={() => setAgentAgingFilter(agentAgingFilter === "0-3" ? "All" : "0-3")}
+                        className={`w-4 h-4 rounded-full bg-emerald-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
+                          agentAgingFilter === "0-3" ? "ring-2 ring-emerald-600 border-white" : "border-transparent opacity-85"
+                        }`}
+                        title="0-3 Days Green (On-Track)"
+                      >
+                        {agentAgingFilter === "0-3" ? "✓" : ""}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAgentAgingFilter(agentAgingFilter === "3-5" ? "All" : "3-5")}
+                        className={`w-4 h-4 rounded-full bg-amber-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
+                          agentAgingFilter === "3-5" ? "ring-2 ring-amber-600 border-white" : "border-transparent opacity-85"
+                        }`}
+                        title="3-5 Days Amber (Pending)"
+                      >
+                        {agentAgingFilter === "3-5" ? "✓" : ""}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAgentAgingFilter(agentAgingFilter === "6-10" ? "All" : "6-10")}
+                        className={`w-4 h-4 rounded-full bg-orange-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
+                          agentAgingFilter === "6-10" ? "ring-2 ring-orange-600 border-white" : "border-transparent opacity-85"
+                        }`}
+                        title="6-10 Days Orange (Escalated)"
+                      >
+                        {agentAgingFilter === "6-10" ? "✓" : ""}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAgentAgingFilter(agentAgingFilter === ">10" ? "All" : ">10")}
+                        className={`w-4 h-4 rounded-full bg-rose-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
+                          agentAgingFilter === ">10" ? "ring-2 ring-rose-600 border-white" : "border-transparent opacity-85"
+                        }`}
+                        title=">10 Days Red (Critical Breach)"
+                      >
+                        {agentAgingFilter === ">10" ? "✓" : ""}
+                      </button>
+                    </div>
+
                     {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
                       <div className="relative flex items-center">
                         {!showDeleteAllConfirm ? (
@@ -3100,12 +3249,24 @@ NOTIFY pgrst, 'reload schema';
                       const itemAge = getComplaintAgeInfo(item, tickerDate, calendarDates);
                       const isUpdatedRecently = recentlyUpdatedStatusIds.has(item.id);
 
+                      // Left color accent based on aging / completion status
+                      const cardLeftColor = 
+                        isComplaintCompleted(item)
+                          ? "border-l-4 border-l-emerald-600"
+                          : itemAge.category.includes("0-3")
+                            ? "border-l-4 border-l-emerald-500"
+                            : itemAge.category.includes("3-5")
+                              ? "border-l-4 border-l-amber-500"
+                              : itemAge.category.includes("6-10")
+                                ? "border-l-4 border-l-orange-500"
+                                : "border-l-4 border-l-rose-600";
+
                       return (
                         <div
                           id={`complaint-card-${item.id}`}
                           key={item.id}
                           onClick={() => setSelectedComplaintId(item.id)}
-                          className={`p-3.5 rounded-lg border transition-all duration-500 cursor-pointer select-none text-left relative overflow-hidden ${
+                          className={`p-3.5 rounded-lg border transition-all duration-500 cursor-pointer select-none text-left relative overflow-hidden ${cardLeftColor} ${
                             isUpdatedRecently
                               ? "border-amber-400 bg-amber-50/90 dark:bg-amber-950/40 shadow-md ring-2 ring-amber-400/80 animate-pulse"
                               : isSelected 
@@ -3147,10 +3308,37 @@ NOTIFY pgrst, 'reload schema';
                             <span className="inline-flex items-center text-[10px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600 font-bold">
                               {item.category}
                             </span>
-                            <span className={`inline-flex items-center text-[9px] font-black border px-2 py-0.5 rounded-full ${itemAge.badgeColorClass}`}>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const target = 
+                                  itemAge.category.includes("0-3") ? "0-3" :
+                                  itemAge.category.includes("3-5") ? "3-5" :
+                                  itemAge.category.includes("6-10") ? "6-10" : ">10";
+                                setAgentAgingFilter(prev => prev === target ? "All" : target);
+                              }}
+                              className={`inline-flex items-center text-[9px] font-black border px-2 py-0.5 rounded-full cursor-pointer hover:opacity-85 transition-all ${itemAge.badgeColorClass} ${
+                                agentAgingFilter !== "All" && (
+                                  (agentAgingFilter === "0-3" && itemAge.category.includes("0-3")) ||
+                                  (agentAgingFilter === "3-5" && itemAge.category.includes("3-5")) ||
+                                  (agentAgingFilter === "6-10" && itemAge.category.includes("6-10")) ||
+                                  (agentAgingFilter === ">10" && itemAge.category.includes(">10"))
+                                ) ? "ring-2 ring-blue-600 shadow-xs scale-105" : ""
+                              }`}
+                              title="Click to filter complaints by this SLA colour category"
+                            >
                               <Clock className="h-2.5 w-2.5 mr-1" />
                               {itemAge.category}
-                            </span>
+                              {agentAgingFilter !== "All" && (
+                                (agentAgingFilter === "0-3" && itemAge.category.includes("0-3")) ||
+                                (agentAgingFilter === "3-5" && itemAge.category.includes("3-5")) ||
+                                (agentAgingFilter === "6-10" && itemAge.category.includes("6-10")) ||
+                                (agentAgingFilter === ">10" && itemAge.category.includes(">10"))
+                              ) && (
+                                <span className="ml-1 text-[8px] bg-slate-900 text-white px-1 rounded font-bold">Filtered</span>
+                              )}
+                            </button>
                             {isStationContacted(item) && item.stationResponseStatus !== "Rejected" && !isComplaintCompleted(item) && !item.callCenterFinalRemarks && (
                               item.firstAttemptCallStatus ? (
                                 <span className="inline-flex items-center text-[9px] bg-amber-100 border border-amber-300 px-2 py-0.5 rounded text-amber-800 font-extrabold uppercase">
@@ -4785,6 +4973,7 @@ NOTIFY pgrst, 'reload schema';
           onClose={() => setShowStationDirectoryModal(false)}
           currentUser={currentUser}
           complaints={complaints}
+          calendarDates={calendarDates}
           emailLogs={emailLogs}
           onRefreshEmailLogs={() => {
             fetch("/api/email-logs")

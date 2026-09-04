@@ -1,8 +1,14 @@
-import { Complaint, StationProfile, SystemicEmailLog } from "../types";
+import { Complaint, StationProfile, SystemicEmailLog, WorkstationCalendarDate } from "../types";
 import { STATIONS } from "../demoData";
 import { saveEmailLogsCentral } from "./centralDbSync";
 import { isStationContacted, isComplaintRejected } from "./stationUtils";
 import { isComplaintPending, isComplaintResolved, isActiveCCRejectionRequired } from "./workflowTallyUtils";
+
+export interface SystemicEmailOptions {
+  includeCalendarNotice?: boolean;
+  includeErrorReportingNotice?: boolean;
+  calendarDates?: WorkstationCalendarDate[];
+}
 
 // Web Audio API synth chime for real-time Call Center audio alerts
 export function playCallCenterNotificationSound() {
@@ -68,8 +74,13 @@ export function getPendingCasesToContact(assignedComplaints: Complaint[]): Compl
 // Strictly contains summary counts, newly appointed times and counts for each, and pending to contact counts without individual case details
 export function generateSystemicEmailContent(
   station: StationProfile,
-  assignedComplaints: Complaint[]
+  assignedComplaints: Complaint[],
+  options?: SystemicEmailOptions
 ): { recipients: string[]; subject: string; bodyHtml: string } {
+  const includeCalendarNotice = options?.includeCalendarNotice !== false;
+  const includeErrorReportingNotice = options?.includeErrorReportingNotice !== false;
+  const calendarDates = options?.calendarDates || [];
+
   const recipients = station.officers
     ? station.officers.map((o) => o.email)
     : station.email
@@ -186,6 +197,82 @@ export function generateSystemicEmailContent(
         .map((o) => `<li><strong>${o.name}</strong> (${o.role}) &bull; Email: <a href="mailto:${o.email}" style="color: #0284c7; text-decoration: none;">${o.email}</a> &bull; Tel: <strong>${o.phone}</strong></li>`)
         .join("")
     : `<li>Email: ${station.email} &bull; Tel: ${station.phone}</li>`;
+
+  const stationNameLower = station.name.toLowerCase();
+  const stationCodeLower = (station.code || "").toLowerCase();
+  const relevantCalendarDates = calendarDates
+    .filter(
+      (cd) =>
+        cd.station === "All" ||
+        cd.station.toLowerCase() === stationNameLower ||
+        cd.station.toLowerCase() === stationCodeLower ||
+        cd.station.toLowerCase().includes(stationCodeLower)
+    )
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const calendarNoticeHtml = includeCalendarNotice
+    ? `
+      <!-- Workstation Calendar & Scheduled Events Advisory Card -->
+      <div style="padding: 14px 16px; background-color: #f0f9ff; border: 1px solid #bae6fd; border-left: 4px solid #0284c7; border-radius: 8px; margin-bottom: 20px;">
+        <div style="font-size: 13px; font-weight: 800; color: #0369a1; margin-bottom: 4px;">
+          📅 Workstation Calendar & Scheduled Events Advisory
+        </div>
+        <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.5; color: #334155;">
+          Please ensure your workshop management and service advisors regularly check the <strong>Workstation Calendar & Events</strong> in the portal to verify operating days, upcoming holidays, and extra working days that govern SLA deadlines.
+        </p>
+        ${
+          relevantCalendarDates.length > 0
+            ? `
+          <div style="background-color: #ffffff; border: 1px solid #e0f2fe; border-radius: 6px; padding: 10px 12px; margin-top: 8px;">
+            <div style="font-size: 11px; font-weight: 800; color: #0369a1; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">
+              📌 Scheduled Station Calendar Events & Dates:
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+              ${relevantCalendarDates.slice(0, 5).map((cd, idx) => `
+                <tr style="border-bottom: 1px solid #f1f5f9; ${idx % 2 === 0 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;'}">
+                  <td style="padding: 5px 8px; font-weight: 700; color: #0f172a; width: 95px;">
+                    ${cd.date}
+                  </td>
+                  <td style="padding: 5px 8px; width: 145px;">
+                    <span style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; ${
+                      cd.type === "off_day"
+                        ? "background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca;"
+                        : "background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0;"
+                    }">
+                      ${cd.type === "off_day" ? "🛑 Off Day / Holiday" : "⚡ Extra Working Day"}
+                    </span>
+                  </td>
+                  <td style="padding: 5px 8px; color: #475569; font-weight: 500;">
+                    ${cd.reason} <span style="color: #94a3b8; font-size: 10px;">(${cd.station === "All" ? "All Stations" : cd.station})</span>
+                  </td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>
+        `
+            : `
+          <div style="font-size: 11px; color: #64748b; font-style: italic; background-color: #ffffff; padding: 6px 10px; border-radius: 4px; border: 1px solid #e2e8f0;">
+            ℹ️ Standard operational schedule applies. Check the portal calendar for newly scheduled holiday announcements.
+          </div>
+        `
+        }
+      </div>
+    `
+    : "";
+
+  const errorReportingNoticeHtml = includeErrorReportingNotice
+    ? `
+      <!-- Error & Discrepancy Reporting Directive -->
+      <div style="padding: 14px 16px; background-color: #fffbeb; border: 1px solid #fed7aa; border-left: 4px solid #f59e0b; border-radius: 8px; margin-bottom: 20px;">
+        <div style="font-size: 13px; font-weight: 800; color: #b45309; margin-bottom: 4px;">
+          ⚠️ Discrepancy & Error Reporting Notice
+        </div>
+        <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #78350f;">
+          <strong>Notice an error or discrepancy?</strong> Please feel free to let us know immediately if there are any errors or discrepancies in complaint allocations, vehicle registrations, customer contact details, or assigned SLA dates. If any case has been assigned to <strong>${station.name}</strong> in error, reply directly to <a href="mailto:callcenter@idealgroup.lk" style="color: #b45309; font-weight: 800; text-decoration: underline;">callcenter@idealgroup.lk</a> or contact Central CX Support so we can promptly rectify the system records.
+        </p>
+      </div>
+    `
+    : "";
 
   // Crisp, clean Light Mode Email Template
   const bodyHtml = `
@@ -358,6 +445,10 @@ export function generateSystemicEmailContent(
             </table>
           </div>
 
+          ${calendarNoticeHtml}
+
+          ${errorReportingNoticeHtml}
+
           <!-- Action Notice: Log into Portal -->
           <div style="padding: 14px 16px; background-color: #f0f9ff; border: 1px solid #bae6fd; border-left: 4px solid #0284c7; border-radius: 6px; font-size: 12px; color: #0369a1; margin-bottom: 20px;">
             <p style="margin: 0 0 4px 0; font-weight: 800; color: #0369a1; font-size: 13px;">💻 How to Take Action</p>
@@ -401,7 +492,8 @@ export function saveSystemicEmailLogs(logs: SystemicEmailLog[]) {
 
 // Trigger systemic email dispatch for a batch of complaints per station
 export function dispatchSystemicEmailsForComplaints(
-  complaints: Complaint[]
+  complaints: Complaint[],
+  options?: SystemicEmailOptions
 ): SystemicEmailLog[] {
   const logs: SystemicEmailLog[] = [...inMemoryEmailLogs];
   const newDispatchedLogs: SystemicEmailLog[] = [];
@@ -426,7 +518,7 @@ export function dispatchSystemicEmailsForComplaints(
       // If there are pending cases, or if this is a direct dispatch
       const casesToInclude = pendingCases.length > 0 ? pendingCases : group;
 
-      const emailContent = generateSystemicEmailContent(profile, casesToInclude);
+      const emailContent = generateSystemicEmailContent(profile, casesToInclude, options);
       const emailLog: SystemicEmailLog = {
         id: "EML-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
         station: profile.name,
