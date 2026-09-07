@@ -1707,23 +1707,7 @@ export default function App() {
       }
     }
 
-    // Colour & SLA Aging Filter (Applies to all roles: Call Center, Service Station Agent, and Admin)
-    let matchesAgingColor = true;
-    if (agentAgingFilter !== "All") {
-      const ageInfo = getComplaintAgeInfo(c, tickerDate, calendarDates);
-      const daysPassed = ageInfo.workingDaysPassed ?? ageInfo.days;
-      if (agentAgingFilter === "0-3") {
-        matchesAgingColor = daysPassed <= 3;
-      } else if (agentAgingFilter === "3-5") {
-        matchesAgingColor = daysPassed > 3 && daysPassed <= 5;
-      } else if (agentAgingFilter === "6-10") {
-        matchesAgingColor = daysPassed > 5 && daysPassed <= 10;
-      } else if (agentAgingFilter === ">10") {
-        matchesAgingColor = daysPassed > 10;
-      }
-    }
-
-    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick && matchesAddedDate && matchesAgingColor;
+    return matchesSearch && matchesStation && matchesStatus && matchesCategory && matchesCallCenterQuick && matchesAddedDate;
   });
 
   // Calculate high-level KPIs for filtered view
@@ -1802,9 +1786,10 @@ export default function App() {
     switch (level) {
       case "Very Dissatisfied":
         return <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Very Dissatisfied</span>;
+      case "Still Dissatisfied":
+        return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Still Dissatisfied After the Solution</span>;
       case "Dissatisfied":
       case "Not Satisfied":
-      case "Still Dissatisfied":
         return <span className="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Not Satisfied</span>;
       case "Neutral":
         return <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Neutral</span>;
@@ -1827,7 +1812,7 @@ export default function App() {
         return <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Contacted</span>;
       case "Contacted — Still Dissatisfied":
       case "Contacted - Still Dissatisfied":
-        return <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Contacted — Still Dissatisfied</span>;
+        return <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Still Dissatisfied After the Solution</span>;
       case "Resolved":
         return <span className="bg-green-50 text-green-700 border border-green-200 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">Resolved</span>;
       default:
@@ -1846,9 +1831,11 @@ export default function App() {
     else if (val === "Not Interested to Talk") colorClass = "bg-slate-100 text-slate-700 border-slate-300";
     else if (val === "Escalated") colorClass = "bg-rose-50 text-rose-700 border-rose-200";
     
+    const displayLabel = val === "Still Dissatisfied" ? "Still Dissatisfied After the Solution" : val;
+
     return (
       <span className={`inline-flex items-center text-[10px] font-black border px-2 py-0.5 rounded-full ${colorClass}`}>
-        {val}
+        {displayLabel}
       </span>
     );
   };
@@ -2675,19 +2662,35 @@ NOTIFY pgrst, 'reload schema';
                           )}
 
                           {/* Actionable Tab Navigation Bar */}
-                          <div className="flex bg-slate-100/90 p-1 rounded-xl gap-1 self-start w-full overflow-x-auto border border-slate-200">
+                          <div 
+                            id="cc-verification-tabs-bar"
+                            className="flex flex-wrap sm:flex-nowrap items-center bg-slate-100/95 p-1.5 rounded-xl gap-1.5 self-start w-full overflow-x-auto border border-slate-200/90 shadow-2xs"
+                          >
                             <button
                               type="button"
-                              onClick={() => setCallCenterQuickFilter("to_contact")}
-                              className={`flex-1 min-w-[130px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              id="tab-btn-pending-verification"
+                              onClick={() => {
+                                setCallCenterQuickFilter("to_contact");
+                                setStatusFilter("All");
+                                setStationFilter("All");
+                                setDateFilter("All");
+                                setStartDateFilter("");
+                                setEndDateFilter("");
+                                setSearchQuery("");
+                                setAgentAgingFilter("All");
+                              }}
+                              className={`flex-1 min-w-[200px] text-center py-2 px-3 text-[11px] font-black rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 ${
                                 callCenterQuickFilter === "to_contact"
-                                  ? "bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-400"
-                                  : "text-slate-700 hover:bg-slate-200/70"
+                                  ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-500/50"
+                                  : "bg-white text-slate-700 hover:bg-slate-200/80 border border-slate-200/90"
                               }`}
-                              title="All complaints where Service Station has contacted and Call Center follow-up is pending"
+                              title="Show all complaints where Service Center contacted customers and Call Center verification is pending at once without filters"
                             >
-                              <span>⚡ CC To Contact</span>
-                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-amber-300">⚡</span>
+                                <span>All Pending CC Verification (Station Contacted)</span>
+                              </span>
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-black ${
                                 callCenterQuickFilter === "to_contact" ? "bg-white/20 text-white" : "bg-blue-100 text-blue-800"
                               }`}>
                                 {statPendingCC}
@@ -2697,7 +2700,7 @@ NOTIFY pgrst, 'reload schema';
                             <button
                               type="button"
                               onClick={() => setCallCenterQuickFilter("1st_attempt")}
-                              className={`flex-1 min-w-[95px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 min-w-[105px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                                 callCenterQuickFilter === "1st_attempt"
                                   ? "bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-400"
                                   : "text-slate-700 hover:bg-slate-200/70"
@@ -2714,7 +2717,7 @@ NOTIFY pgrst, 'reload schema';
                             <button
                               type="button"
                               onClick={() => setCallCenterQuickFilter("2nd_attempt")}
-                              className={`flex-1 min-w-[95px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 min-w-[105px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                                 callCenterQuickFilter === "2nd_attempt"
                                   ? "bg-amber-600 text-white shadow-xs font-black ring-2 ring-amber-400"
                                   : "text-slate-700 hover:bg-slate-200/70"
@@ -2731,7 +2734,7 @@ NOTIFY pgrst, 'reload schema';
                             <button
                               type="button"
                               onClick={() => setCallCenterQuickFilter("completed")}
-                              className={`flex-1 min-w-[100px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 min-w-[105px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                                 callCenterQuickFilter === "completed"
                                   ? "bg-emerald-600 text-white shadow-xs font-black ring-2 ring-emerald-400"
                                   : "text-slate-700 hover:bg-slate-200/70"
@@ -2749,7 +2752,7 @@ NOTIFY pgrst, 'reload schema';
                             <button
                               type="button"
                               onClick={() => setCallCenterQuickFilter("rejected")}
-                              className={`flex-1 min-w-[110px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 min-w-[115px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                                 callCenterQuickFilter === "rejected"
                                   ? "bg-rose-600 text-white shadow-xs font-black ring-2 ring-rose-400"
                                   : "text-slate-700 hover:bg-slate-200/70"
@@ -2767,7 +2770,7 @@ NOTIFY pgrst, 'reload schema';
                             <button
                               type="button"
                               onClick={() => setCallCenterQuickFilter("station_pending")}
-                              className={`flex-1 min-w-[110px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 min-w-[115px] text-center py-2 px-2.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                                 callCenterQuickFilter === "station_pending"
                                   ? "bg-indigo-600 text-white shadow-xs font-black ring-2 ring-indigo-400"
                                   : "text-slate-700 hover:bg-slate-200/70"
@@ -2798,6 +2801,26 @@ NOTIFY pgrst, 'reload schema';
                                 {statTotalContacted}
                               </span>
                             </button>
+
+                            {(statusFilter !== "All" || stationFilter !== "All" || dateFilter !== "All" || searchQuery) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStatusFilter("All");
+                                  setStationFilter("All");
+                                  setDateFilter("All");
+                                  setStartDateFilter("");
+                                  setEndDateFilter("");
+                                  setSearchQuery("");
+                                  setAgentAgingFilter("All");
+                                }}
+                                className="text-[10px] font-extrabold text-blue-700 bg-white hover:bg-blue-50 border border-blue-200 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 shrink-0 shadow-2xs"
+                                title="Reset all active filters and show all complaints at once"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                <span>Show All at Once</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -2839,86 +2862,6 @@ NOTIFY pgrst, 'reload schema';
                       </div>
                     )}
 
-                    {/* Universal Colour & SLA Aging Filter Strip (Available for Call Center, Station Agent, and Admin) */}
-                    <div id="aging-color-filter-strip" className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs">
-                      <div className="flex items-center gap-1.5 text-slate-700">
-                        <Clock className="w-3.5 h-3.5 text-blue-600" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1">
-                          <span>🎨 Colour &amp; SLA Aging Filter:</span>
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <button
-                          type="button"
-                          id="color-filter-all"
-                          onClick={() => setAgentAgingFilter("All")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
-                            agentAgingFilter === "All"
-                              ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700"
-                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                          }`}
-                        >
-                          All ({agingColorBreakdown.total})
-                        </button>
-                        <button
-                          type="button"
-                          id="color-filter-0-3"
-                          onClick={() => setAgentAgingFilter(agentAgingFilter === "0-3" ? "All" : "0-3")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                            agentAgingFilter === "0-3"
-                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-2 ring-emerald-500 font-black"
-                              : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
-                          }`}
-                          title="Filter 0-3 Days: Green (New / On-Track)"
-                        >
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shadow-xs"></span>
-                          <span>0-3 Days Green ({agingColorBreakdown["0-3"]})</span>
-                        </button>
-                        <button
-                          type="button"
-                          id="color-filter-3-5"
-                          onClick={() => setAgentAgingFilter(agentAgingFilter === "3-5" ? "All" : "3-5")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                            agentAgingFilter === "3-5"
-                              ? "bg-amber-600 text-white border-amber-600 shadow-xs ring-2 ring-amber-500 font-black"
-                              : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
-                          }`}
-                          title="Filter 3-5 Days: Amber (Pending Warning)"
-                        >
-                          <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shadow-xs"></span>
-                          <span>3-5 Days Amber ({agingColorBreakdown["3-5"]})</span>
-                        </button>
-                        <button
-                          type="button"
-                          id="color-filter-6-10"
-                          onClick={() => setAgentAgingFilter(agentAgingFilter === "6-10" ? "All" : "6-10")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                            agentAgingFilter === "6-10"
-                              ? "bg-orange-600 text-white border-orange-600 shadow-xs ring-2 ring-orange-500 font-black"
-                              : "bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100"
-                          }`}
-                          title="Filter 6-10 Days: Orange (Escalated)"
-                        >
-                          <span className="w-2 h-2 rounded-full bg-orange-500 inline-block shadow-xs"></span>
-                          <span>6-10 Days Orange ({agingColorBreakdown["6-10"]})</span>
-                        </button>
-                        <button
-                          type="button"
-                          id="color-filter-gt-10"
-                          onClick={() => setAgentAgingFilter(agentAgingFilter === ">10" ? "All" : ">10")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border flex items-center gap-1 ${
-                            agentAgingFilter === ">10"
-                              ? "bg-rose-600 text-white border-rose-600 shadow-xs ring-2 ring-rose-500 font-black"
-                              : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
-                          }`}
-                          title="Filter >10 Days: Red (Critical SLA Breach)"
-                        >
-                          <span className="w-2 h-2 rounded-full bg-rose-500 inline-block shadow-xs"></span>
-                          <span>&gt;10 Days Red ({agingColorBreakdown[">10"]})</span>
-                        </button>
-                      </div>
-                    </div>
-
                     {/* Search row */}
                     <div className="relative">
                       <input
@@ -2934,7 +2877,7 @@ NOTIFY pgrst, 'reload schema';
 
                     {/* Filters Row */}
                     <div className="space-y-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                         {(currentUser.role === "admin" || currentUser.role === "callcenter") ? (
                           <>
                             <div className="flex flex-col">
@@ -3023,34 +2966,6 @@ NOTIFY pgrst, 'reload schema';
                           </div>
                         )}
 
-                        {/* Colour & SLA Aging Filter Dropdown */}
-                        <div className="flex flex-col">
-                          <label className="text-[10px] text-purple-700 font-bold uppercase mb-1 flex items-center justify-between">
-                            <span>🎨 Colour / SLA</span>
-                            {agentAgingFilter !== "All" && (
-                              <button
-                                type="button"
-                                onClick={() => setAgentAgingFilter("All")}
-                                className="text-[9px] text-rose-600 hover:underline cursor-pointer lowercase"
-                              >
-                                reset
-                              </button>
-                            )}
-                          </label>
-                          <select
-                            id="filter-color-aging-dropdown"
-                            value={agentAgingFilter}
-                            onChange={(e) => setAgentAgingFilter(e.target.value as any)}
-                            className="bg-white border border-purple-200 rounded-md px-2 py-1 text-xs text-slate-800 font-bold cursor-pointer focus:outline-none focus:border-purple-500"
-                          >
-                            <option value="All">🎨 All Colours ({agingColorBreakdown.total})</option>
-                            <option value="0-3">🟢 Green: 0-3 Days ({agingColorBreakdown["0-3"]})</option>
-                            <option value="3-5">🟡 Amber: 3-5 Days ({agingColorBreakdown["3-5"]})</option>
-                            <option value="6-10">🟠 Orange: 6-10 Days ({agingColorBreakdown["6-10"]})</option>
-                            <option value=">10">🔴 Red: &gt;10 Days ({agingColorBreakdown[">10"]})</option>
-                          </select>
-                        </div>
-
                         {/* Added Date Filter */}
                         <div className="flex flex-col">
                           <label className="text-[10px] text-blue-600 font-bold uppercase mb-1 flex items-center justify-between">
@@ -3119,77 +3034,9 @@ NOTIFY pgrst, 'reload schema';
                     <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider pl-1">
                       Complaints Inventory ({filteredComplaints.length})
                     </span>
-                    {agentAgingFilter !== "All" && (
-                      <span className="inline-flex items-center gap-1.5 text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white shadow-2xs">
-                        <span>Colour:</span>
-                        <span className="flex items-center gap-1">
-                          <span className={`w-2 h-2 rounded-full inline-block ${
-                            agentAgingFilter === "0-3" ? "bg-emerald-400" :
-                            agentAgingFilter === "3-5" ? "bg-amber-400" :
-                            agentAgingFilter === "6-10" ? "bg-orange-400" : "bg-rose-400"
-                          }`}></span>
-                          {agentAgingFilter === "0-3" ? "0-3 Days Green" :
-                           agentAgingFilter === "3-5" ? "3-5 Days Amber" :
-                           agentAgingFilter === "6-10" ? "6-10 Days Orange" : ">10 Days Red"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setAgentAgingFilter("All")}
-                          className="ml-0.5 hover:text-rose-300 text-slate-300 font-black cursor-pointer px-0.5"
-                          title="Clear colour filter"
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    )}
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Quick 1-click Color Filter Buttons */}
-                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1.5 py-0.5 shadow-2xs">
-                      <span className="text-[9px] font-bold text-slate-500 mr-0.5">Colour:</span>
-                      <button
-                        type="button"
-                        onClick={() => setAgentAgingFilter(agentAgingFilter === "0-3" ? "All" : "0-3")}
-                        className={`w-4 h-4 rounded-full bg-emerald-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
-                          agentAgingFilter === "0-3" ? "ring-2 ring-emerald-600 border-white" : "border-transparent opacity-85"
-                        }`}
-                        title="0-3 Days Green (On-Track)"
-                      >
-                        {agentAgingFilter === "0-3" ? "✓" : ""}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAgentAgingFilter(agentAgingFilter === "3-5" ? "All" : "3-5")}
-                        className={`w-4 h-4 rounded-full bg-amber-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
-                          agentAgingFilter === "3-5" ? "ring-2 ring-amber-600 border-white" : "border-transparent opacity-85"
-                        }`}
-                        title="3-5 Days Amber (Pending)"
-                      >
-                        {agentAgingFilter === "3-5" ? "✓" : ""}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAgentAgingFilter(agentAgingFilter === "6-10" ? "All" : "6-10")}
-                        className={`w-4 h-4 rounded-full bg-orange-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
-                          agentAgingFilter === "6-10" ? "ring-2 ring-orange-600 border-white" : "border-transparent opacity-85"
-                        }`}
-                        title="6-10 Days Orange (Escalated)"
-                      >
-                        {agentAgingFilter === "6-10" ? "✓" : ""}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAgentAgingFilter(agentAgingFilter === ">10" ? "All" : ">10")}
-                        className={`w-4 h-4 rounded-full bg-rose-500 hover:scale-110 transition-transform cursor-pointer border flex items-center justify-center text-[8px] font-black text-white ${
-                          agentAgingFilter === ">10" ? "ring-2 ring-rose-600 border-white" : "border-transparent opacity-85"
-                        }`}
-                        title=">10 Days Red (Critical Breach)"
-                      >
-                        {agentAgingFilter === ">10" ? "✓" : ""}
-                      </button>
-                    </div>
-
                     {(currentUser.role === "admin" || currentUser.role === "callcenter") && (
                       <div className="relative flex items-center">
                         {!showDeleteAllConfirm ? (
@@ -3234,6 +3081,30 @@ NOTIFY pgrst, 'reload schema';
                     )}
                   </div>
                 </div>
+
+                {/* Call Center All Pending Verification Notice */}
+                {currentUser.role === "callcenter" && callCenterQuickFilter === "to_contact" && (
+                  <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border border-blue-200/90 rounded-lg p-2.5 mb-2 shadow-2xs flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-600 text-white rounded-lg shadow-2xs">
+                        <PhoneCall className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-blue-950">
+                            Complaints Pending Call Center Verification ({filteredComplaints.length} cases)
+                          </span>
+                          <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full font-mono">
+                            Showing at once
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-blue-700 font-medium">
+                          All complaints where Service Station has contacted the customer are shown directly without filter restrictions.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Complaints List Container */}
                 <div id="complaints-list-wrapper" className="space-y-1.5 max-h-[550px] overflow-y-auto pr-1">
@@ -3308,37 +3179,13 @@ NOTIFY pgrst, 'reload schema';
                             <span className="inline-flex items-center text-[10px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600 font-bold">
                               {item.category}
                             </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const target = 
-                                  itemAge.category.includes("0-3") ? "0-3" :
-                                  itemAge.category.includes("3-5") ? "3-5" :
-                                  itemAge.category.includes("6-10") ? "6-10" : ">10";
-                                setAgentAgingFilter(prev => prev === target ? "All" : target);
-                              }}
-                              className={`inline-flex items-center text-[9px] font-black border px-2 py-0.5 rounded-full cursor-pointer hover:opacity-85 transition-all ${itemAge.badgeColorClass} ${
-                                agentAgingFilter !== "All" && (
-                                  (agentAgingFilter === "0-3" && itemAge.category.includes("0-3")) ||
-                                  (agentAgingFilter === "3-5" && itemAge.category.includes("3-5")) ||
-                                  (agentAgingFilter === "6-10" && itemAge.category.includes("6-10")) ||
-                                  (agentAgingFilter === ">10" && itemAge.category.includes(">10"))
-                                ) ? "ring-2 ring-blue-600 shadow-xs scale-105" : ""
-                              }`}
-                              title="Click to filter complaints by this SLA colour category"
+                            <span
+                              className={`inline-flex items-center text-[9px] font-black border px-2 py-0.5 rounded-full ${itemAge.badgeColorClass}`}
+                              title="Complaint SLA Aging Category"
                             >
                               <Clock className="h-2.5 w-2.5 mr-1" />
                               {itemAge.category}
-                              {agentAgingFilter !== "All" && (
-                                (agentAgingFilter === "0-3" && itemAge.category.includes("0-3")) ||
-                                (agentAgingFilter === "3-5" && itemAge.category.includes("3-5")) ||
-                                (agentAgingFilter === "6-10" && itemAge.category.includes("6-10")) ||
-                                (agentAgingFilter === ">10" && itemAge.category.includes(">10"))
-                              ) && (
-                                <span className="ml-1 text-[8px] bg-slate-900 text-white px-1 rounded font-bold">Filtered</span>
-                              )}
-                            </button>
+                            </span>
                             {isStationContacted(item) && item.stationResponseStatus !== "Rejected" && !isComplaintCompleted(item) && !item.callCenterFinalRemarks && (
                               item.firstAttemptCallStatus ? (
                                 <span className="inline-flex items-center text-[9px] bg-amber-100 border border-amber-300 px-2 py-0.5 rounded text-amber-800 font-extrabold uppercase">
@@ -3368,6 +3215,29 @@ NOTIFY pgrst, 'reload schema';
                               </span>
                             )}
                           </div>
+
+                          {/* Service Center Contact Details Callout for Call Center Verification */}
+                          {isStationContacted(item) && !isComplaintCompleted(item) && !item.callCenterFinalRemarks && (
+                            <div className="bg-blue-50/90 border border-blue-200/90 rounded-md p-2 mt-2 space-y-1 text-left">
+                              <div className="flex items-center justify-between gap-1 flex-wrap">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-blue-900 flex items-center gap-1">
+                                  <PhoneCall className="h-3 w-3 text-blue-600" />
+                                  Service Center Contacted Customer • Call Center Verification Pending
+                                </span>
+                                {item.stationContactedDate && (
+                                  <span className="text-[9px] font-bold text-blue-800 bg-white border border-blue-200 px-1.5 py-0.5 rounded">
+                                    Contacted: {item.stationContactedDate}
+                                  </span>
+                                )}
+                              </div>
+                              {item.stationResolutionNotes && (
+                                <div className="text-[11px] text-slate-700 font-medium bg-white/90 p-1.5 rounded border border-blue-100">
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase block">Service Station Resolution Notes:</span>
+                                  <p className="italic line-clamp-2">"{item.stationResolutionNotes}"</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {item.stationResponseStatus === "Rejected" && item.stationResponseRejectionReason && (
                             <div className="text-[11px] font-bold text-rose-800 bg-rose-50 p-2 rounded-md border border-rose-200 mt-2.5 space-y-0.5">
@@ -4202,7 +4072,7 @@ NOTIFY pgrst, 'reload schema';
                               >
                                 <option value="Satisfied">Satisfied (Pass to Complete)</option>
                                 <option value="Completed">Completed (Pass to Complete)</option>
-                                <option value="Still Dissatisfied">Still Dissatisfied (Contacted & Customer Not Satisfied)</option>
+                                <option value="Still Dissatisfied">Still Dissatisfied After the Solution</option>
                                 <option value="Follow Up Required">Follow Up Required</option>
                                 <option value="Not Satisfied">Not Satisfied</option>
                                 <option value="No solution Received">No solution Received</option>
@@ -4437,7 +4307,7 @@ NOTIFY pgrst, 'reload schema';
                                 className="w-full bg-white border border-slate-200 rounded-md py-1.5 px-2 text-xs text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500 font-semibold"
                               >
                                 <option value="Satisfied After Resolution">Satisfied After Resolution</option>
-                                <option value="Still Dissatisfied">Still Dissatisfied</option>
+                                <option value="Still Dissatisfied">Still Dissatisfied After the Solution</option>
                                 <option value="No Solution Received">No Solution Received</option>
                                 <option value="Customer Unreachable">Customer Unreachable</option>
                                 <option value="Follow-up Required">Follow-up Required</option>

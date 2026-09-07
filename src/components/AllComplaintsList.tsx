@@ -561,7 +561,7 @@ export default function AllComplaintsList({
               </optgroup>
               <optgroup label="📞 Feedback & Satisfaction">
                 <option value="Satisfied">🟢 Satisfied</option>
-                <option value="Still Dissatisfied">🔴 Still Dissatisfied</option>
+                <option value="Still Dissatisfied">🔴 Still Dissatisfied After the Solution</option>
                 <option value="Follow Up Required">🟡 Follow Up Required</option>
                 <option value="Customer Unreachable">🟠 Customer Unreachable</option>
               </optgroup>
@@ -926,7 +926,9 @@ export default function AllComplaintsList({
                           ) : (
                             <Clock className="h-3 w-3 text-red-600" />
                           )}
-                          {c.status || "Pending"}
+                          {(c.status === "Contacted — Still Dissatisfied" || c.status === "Contacted - Still Dissatisfied") 
+                            ? "Still Dissatisfied After the Solution" 
+                            : (c.status || "Pending")}
                         </span>
                       </td>
 
